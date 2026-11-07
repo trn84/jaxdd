@@ -72,3 +72,32 @@ def test_unsupported_input_is_refused_by_name(tmp_path) -> None:
     setup_file.write_text(setup_file.read_text().replace("R_series = 0", "R_series = 1E-4", 1))
     with pytest.raises(NotImplementedError, match="R_series"):
         check_supported(read_setup(setup_file))
+
+
+@pytest.mark.parametrize("case", ["frozen_1e17_x1_thin_light", "steady_1e17_thin_light"])
+def test_jv_with_ions_reproduces_simss(case: str) -> None:
+    """Frozen after a pre-bias, and free at every voltage: SimSS's curve to 2e-5 of its scale."""
+    setup = read_setup(DATA / case / "simulation_setup.txt")
+    check_supported(setup)
+    ref = np.genfromtxt(DATA / case / "JV.dat", names=True)
+    res = solve_jv(build_device(setup), ref["Vint"], bernoulli_name="simss")
+    assert res.converged.all()
+    scale = np.max(np.abs(ref["Jext"]))
+    assert np.max(np.abs(res.J - ref["Jext"])) < 2e-5 * scale
+
+
+def test_free_ions_keep_their_number() -> None:
+    """Invariant: the steady state moves the ions, never creates them — the trapezoidal number
+    in their layer is N·L at any bias."""
+    import jax.numpy as jnp
+
+    from jaxdd import solver as S
+
+    dev = build_device(read_setup(DATA / "steady_1e17_thin_light" / "simulation_setup.txt"))
+    ion = {k: jnp.asarray(v) if isinstance(v, np.ndarray) else v
+           for k, v in S._ion_setup(dev).items()}  # fmt: skip
+    rng = np.random.default_rng(0)
+    V = jnp.asarray(rng.normal(0.0, 0.3, len(dev.x)))
+    logs = S._ion_logs(V, ion)
+    g = S._ion_constraints(V, logs[0], logs[1], ion)
+    assert np.allclose(np.asarray(g), 0.0, atol=1e-12)

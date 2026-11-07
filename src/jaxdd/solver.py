@@ -36,6 +36,11 @@ jax.config.update("jax_enable_x64", True)
 
 __all__ = ["JVResult", "bernoulli", "solve_jv"]
 
+#: A Newton step below this (V_T, relative densities) that no longer falls is round-off: the
+#: solution, three orders below SIMsalabim's own `tolDens` of 1e-5.
+ROUND_OFF_FLOOR = 1e-6
+STALL_STEPS = 3
+
 #: Densities below this share of the largest `N_c` do not count for convergence (m⁻³ there).
 DENSITY_FLOOR = 1e-12
 
@@ -111,6 +116,10 @@ def _stencils(dev: Device) -> dict[str, jnp.ndarray]:
         "Nt": dev.srh_Nt[i], "Cn": dev.srh_Cn[i], "Cp": dev.srh_Cp[i],
         "nt0": dev.srh_nt0[i], "pt0": dev.srh_pt0[i],
         "G": dev.G[i],
+        # Ions: a mobile region's mask (Boltzmann in V with a normalisation solved for) and
+        # fixed densities (immobile, or frozen after a pre-bias).
+        "a_mask": dev.anion_mask[i].astype(float), "c_mask": dev.cation_mask[i].astype(float),
+        "a_fix": dev.anion_fixed[i], "c_fix": dev.cation_fixed[i],
         "n_floor": np.full(NP, DENSITY_FLOOR * dev.N_c.max()),
         # Row scales: each equation over the size of its terms, for a well-conditioned solve.
         "sP": 1.0 / (Q * dev.N_c[i]),
@@ -124,14 +133,26 @@ def _recombination(n, p, s):
     return s["kd"] * (n * p - s["ni2"]) + jnp.where(s["Nt"] > 0, srh, 0.0)
 
 
-def _row(left, mid, right, s, Vt, g_frac, B=bernoulli):
+def _ion_densities(V, la, lc, s, Vt):
+    """Anions and cations at a point: fixed, plus Boltzmann in V where they are mobile (the
+    zero-current profile of SIMsalabim's `Calc_Ion_Distribution_Steady_State`)."""
+    anion = s["a_fix"] + s["a_mask"] * jnp.exp(la + V / Vt)
+    cation = s["c_fix"] + s["c_mask"] * jnp.exp(lc - V / Vt)
+    return anion, cation
+
+
+def _row(left, mid, right, s, Vt, g_frac, la, lc, B=bernoulli):
     """The three residuals of one interior point from `(V, ln n, ln p)` at it and its two
-    neighbours."""
+    neighbours, and the ions' normalisations `la`, `lc`."""
     V = jnp.stack([left[0], mid[0], right[0]])
     n = jnp.exp(jnp.stack([left[1], mid[1], right[1]]))
     p = jnp.exp(jnp.stack([left[2], mid[2], right[2]]))
+    anion, cation = _ion_densities(V[1], la, lc, s, Vt)
     poisson = (
-        s["fac_l"] * V[0] + s["fac_m"] * V[1] + s["fac_u"] * V[2] - Q * (n[1] - p[1] + s["dop"])
+        s["fac_l"] * V[0]
+        + s["fac_m"] * V[1]
+        + s["fac_u"] * V[2]
+        - Q * (n[1] - p[1] + s["dop"] + anion - cation)
     )
     gn = (V + s["offn"]) / Vt
     gp = (V + s["offp"]) / Vt
@@ -150,12 +171,30 @@ def _row(left, mid, right, s, Vt, g_frac, B=bernoulli):
 
 
 def _kernels(B):
-    """The batched residual and Jacobian blocks of `_row` with Bernoulli function `B`."""
+    """The batched residual, its Jacobian blocks and its derivative in the ions'
+    normalisations, of `_row` with Bernoulli function `B`."""
     row = functools.partial(_row, B=B)
+    axes = (0, 0, 0, 0, None, None, None, None)
     return (
-        jax.vmap(row, in_axes=(0, 0, 0, 0, None, None)),
-        jax.vmap(jax.jacfwd(row, argnums=(0, 1, 2)), in_axes=(0, 0, 0, 0, None, None)),
+        jax.vmap(row, in_axes=axes),
+        jax.vmap(jax.jacfwd(row, argnums=(0, 1, 2)), in_axes=axes),
+        jax.vmap(jax.jacfwd(row, argnums=(6, 7)), in_axes=axes),
     )
+
+
+def _ion_constraints(V_full, la, lc, ion):
+    """`(g_a, g_c)`: each mobile species' number over its total, less 1 (trapezoidal over its
+    region, as SIMsalabim's `Rescale_Ion_Density`); 0 for a species without one."""
+
+    def species(mask, total, sign, log_norm):
+        dens = mask * jnp.exp(log_norm + sign * V_full / ion["Vt"])
+        number = jnp.sum(0.5 * (dens[1:] + dens[:-1]) * mask[1:] * mask[:-1] * ion["hL"])
+        return jnp.where(total > 0, number / jnp.where(total > 0, total, 1.0) - 1.0, 0.0)
+
+    return jnp.stack([
+        species(ion["a_mask"], ion["a_total"], 1.0, la),
+        species(ion["c_mask"], ion["c_total"], -1.0, lc),
+    ])  # fmt: skip
 
 
 def _block_thomas(A, B, C, d):
@@ -183,28 +222,56 @@ def _block_thomas(A, B, C, d):
 
 
 @functools.partial(jax.jit, static_argnames="bernoulli_name")
-def _newton_step(y, bounds, s, Vt, g_frac, bernoulli_name="exact"):
-    """One damped Newton step on the interior unknowns `y` (NP × 3)."""
-    row_val, row_jac = _kernels(BERNOULLI[bernoulli_name])
+def _newton_step(y, logs, bounds, s, ion, Vt, g_frac, bernoulli_name="exact"):
+    """One damped Newton step on the interior unknowns `y` (NP × 3) and the ions'
+    normalisations `logs` = `(ln C_anion, ln C_cation)`.
+
+    Free ions make the system block-tridiagonal bordered by two rows and columns (each
+    normalisation enters every Poisson row of its region, its constraint every potential):
+    solved by the block Thomas sweep on three right-hand sides and a 2×2 Schur complement
+    (Sherman–Morrison–Woodbury, PLAN.md §3.3).
+    """
+    row_val, row_jac, row_ions = _kernels(BERNOULLI[bernoulli_name])
+    la, lc = logs[0], logs[1]
     full = jnp.concatenate([bounds[0][None], y, bounds[1][None]])
     left, mid, right = full[:-2], full[1:-1], full[2:]
-    F = row_val(left, mid, right, s, Vt, g_frac)
-    A, B, C = row_jac(left, mid, right, s, Vt, g_frac)
-    delta = _block_thomas(A, B, C, -F)
+    F = row_val(left, mid, right, s, Vt, g_frac, la, lc)
+    A, B, C = row_jac(left, mid, right, s, Vt, g_frac, la, lc)
+    U = jnp.stack(row_ions(left, mid, right, s, Vt, g_frac, la, lc), axis=-1)  # NP × 3 × 2
+
+    def constraints(V_interior, logs_):
+        V_full = jnp.concatenate([bounds[0][:1], V_interior, bounds[1][:1]])
+        return _ion_constraints(V_full, logs_[0], logs_[1], ion)
+
+    g = constraints(full[1:-1, 0], logs)
+    dg_dV, D = jax.jacfwd(constraints, argnums=(0, 1))(full[1:-1, 0], logs)  # 2 × NP, 2 × 2
+    # A species without a mobile region: its normalisation is held (an identity row).
+    D = D + jnp.diag(jnp.where(jnp.array([ion["a_total"], ion["c_total"]]) > 0, 0.0, 1.0))
+    W = jnp.zeros((y.shape[0], 3, 2)).at[:, 0, :].set(dg_dV.T)
+
+    X = _block_thomas(A, B, C, jnp.concatenate([-F[..., None], U], axis=-1))
+    XF, XU = X[..., 0], X[..., 1:]
+    schur = D - jnp.einsum("irk,irl->kl", W, XU)
+    d_logs = jnp.linalg.solve(schur, -g - jnp.einsum("irk,ir->k", W, XF))
+    delta = XF - XU @ d_logs
     # Damping per point, as SIMsalabim limits its potential update (maxDelV): no potential
     # step past 10 V_T and no density step past a factor e^5.
     caps = jnp.array([10.0 * Vt, 5.0, 5.0])
     step = jnp.clip(delta, -caps, caps)
+    d_logs = jnp.clip(d_logs, -5.0, 5.0)
     new = y + step
     # Converged by the potential in V_T and the densities relatively — a density far below any
     # that matters (n_floor) is weighted out: its logarithm is round-off at the end.
     dens = jnp.exp(new[:, 1:])
     weight = dens / (dens + s["n_floor"][:, None])
-    size = jnp.maximum(jnp.max(jnp.abs(step[:, 0])) / Vt, jnp.max(jnp.abs(step[:, 1:]) * weight))
-    return new, size
+    size = jnp.maximum(
+        jnp.maximum(jnp.max(jnp.abs(step[:, 0])) / Vt, jnp.max(jnp.abs(step[:, 1:]) * weight)),
+        jnp.max(jnp.abs(d_logs)),
+    )
+    return new, logs + d_logs, size
 
 
-def _poisson_row(left, mid, right, s, Vt, ref_left, ref_mid, ref_right):
+def _poisson_row(left, mid, right, s, Vt, ref_left, ref_mid, ref_right, la, lc):
     """Poisson's residual with the quasi-Fermi levels held: `n ∝ exp(V/V_T)`, `p ∝ exp(−V/V_T)`
     from the reference state, as SIMsalabim's `Solve_Poisson` moves them."""
     shift = jnp.stack([left - ref_left[0], mid - ref_mid[0], right - ref_right[0]]) / Vt
@@ -212,23 +279,43 @@ def _poisson_row(left, mid, right, s, Vt, ref_left, ref_mid, ref_right):
     ln_p = jnp.stack([ref_left[2], ref_mid[2], ref_right[2]]) - shift
     V = jnp.stack([left, mid, right])
     n, p = jnp.exp(ln_n[1]), jnp.exp(ln_p[1])
-    poisson = s["fac_l"] * V[0] + s["fac_m"] * V[1] + s["fac_u"] * V[2] - Q * (n - p + s["dop"])
+    anion, cation = _ion_densities(V[1], la, lc, s, Vt)
+    poisson = (
+        s["fac_l"] * V[0]
+        + s["fac_m"] * V[1]
+        + s["fac_u"] * V[2]
+        - Q * (n - p + s["dop"] + anion - cation)
+    )
     return poisson * s["sP"]
 
 
-_poisson_jac = jax.vmap(
-    jax.jacfwd(_poisson_row, argnums=(0, 1, 2)), in_axes=(0, 0, 0, 0, None, 0, 0, 0)
-)
-_poisson_val = jax.vmap(_poisson_row, in_axes=(0, 0, 0, 0, None, 0, 0, 0))
+_P_AXES = (0, 0, 0, 0, None, 0, 0, 0, None, None)
+_poisson_jac = jax.vmap(jax.jacfwd(_poisson_row, argnums=(0, 1, 2)), in_axes=_P_AXES)
+_poisson_val = jax.vmap(_poisson_row, in_axes=_P_AXES)
+
+
+def _ion_logs(V_full, ion):
+    """The normalisations that put each mobile species' total into its region at `V`."""
+
+    def species(mask, total, sign):
+        dens = mask * jnp.exp(sign * V_full / ion["Vt"])
+        number = jnp.sum(0.5 * (dens[1:] + dens[:-1]) * mask[1:] * mask[:-1] * ion["hL"])
+        return jnp.where(total > 0, jnp.log(jnp.where(total > 0, total, 1.0) / number), 0.0)
+
+    return jnp.stack([species(ion["a_mask"], ion["a_total"], 1.0),
+                      species(ion["c_mask"], ion["c_total"], -1.0)])  # fmt: skip
 
 
 @jax.jit
-def _poisson_step(y, bounds, s, Vt):
-    """One Newton step of Poisson's equation alone; the densities follow the potential."""
+def _poisson_step(y, bounds, s, ion, Vt):
+    """One Newton step of Poisson's equation alone; the densities follow the potential, the
+    mobile ions' normalisations are re-fitted to it (held during the step)."""
     full = jnp.concatenate([bounds[0][None], y, bounds[1][None]])
     V = full[:, 0]
-    F = _poisson_val(V[:-2], V[1:-1], V[2:], s, Vt, full[:-2], full[1:-1], full[2:])
-    lo, mid, up = _poisson_jac(V[:-2], V[1:-1], V[2:], s, Vt, full[:-2], full[1:-1], full[2:])
+    la, lc = _ion_logs(V, ion)
+    args = (s, Vt, full[:-2], full[1:-1], full[2:], la, lc)
+    F = _poisson_val(V[:-2], V[1:-1], V[2:], *args)
+    lo, mid, up = _poisson_jac(V[:-2], V[1:-1], V[2:], *args)
     dV = jax.lax.linalg.tridiagonal_solve(lo.at[0].set(0.0), mid, up.at[-1].set(0.0), -F[:, None])[
         :, 0
     ]
@@ -284,32 +371,89 @@ def _initial(dev: Device, Vint: float):
     return np.stack([V, np.log(n), np.log(p)], -1)
 
 
+def _ion_setup(dev: Device) -> dict:
+    """What the ions' constraints need, over the full grid."""
+    return {
+        "Vt": dev.Vt, "hL": dev.h[:-1] * dev.L,
+        "a_mask": dev.anion_mask.astype(float), "c_mask": dev.cation_mask.astype(float),
+        "a_total": dev.anion_total, "c_total": dev.cation_total,
+    }  # fmt: skip
+
+
+def _freeze(s: dict, ion: dict, y, logs, bounds, Vt) -> tuple[dict, dict]:
+    """The mobile ions of the solution `y` as fixed densities, no longer solved for (FauxPV's
+    `fixIons` with its patch: frozen after the pre-bias, in Poisson's equation too)."""
+    V = y[:, 0]
+    s = dict(s)
+    s["a_fix"] = s["a_fix"] + s["a_mask"] * jnp.exp(logs[0] + V / Vt)
+    s["c_fix"] = s["c_fix"] + s["c_mask"] * jnp.exp(logs[1] - V / Vt)
+    s["a_mask"] = jnp.zeros_like(s["a_mask"])
+    s["c_mask"] = jnp.zeros_like(s["c_mask"])
+    ion = dict(ion, a_mask=ion["a_mask"] * 0, c_mask=ion["c_mask"] * 0, a_total=0.0, c_total=0.0)
+    return s, ion
+
+
 def solve_jv(dev: Device, voltages: np.ndarray, g_frac: float | None = None,
              tol: float = 1e-10, max_iter: int = 200,
              bernoulli_name: str = "exact") -> JVResult:  # fmt: skip
-    """The J-V curve at `voltages` (internal = external here), each solved from the last."""
+    """The J-V curve at `voltages` (internal = external here), each solved from the last.
+
+    With `preCond`, the device is first solved at `Vpre` with its ions free; with `fixIons`
+    they are then held for the scan (SIMsalabim's sequence, FauxPV's patched `fixIons`).
+    """
     g_frac = dev.G_frac if g_frac is None else g_frac
     s = {k: jnp.asarray(v) for k, v in _stencils(dev).items()}
-    y = jnp.asarray(_initial(dev, float(voltages[0]))[1:-1])
-    J, conv, its = [], [], []
-    for Vint in voltages:
-        bounds = jnp.array([
+    ion = {k: jnp.asarray(v) if isinstance(v, np.ndarray) else v
+           for k, v in _ion_setup(dev).items()}  # fmt: skip
+    first = dev.V_pre if dev.pre_cond else float(voltages[0])
+    y_full = _initial(dev, first)
+    y = jnp.asarray(y_full[1:-1])
+    logs = _ion_logs(jnp.asarray(y_full[:, 0]), ion)
+    if dev.fix_ions and not dev.pre_cond:
+        # Held from the start: the ions as SIMsalabim initialises them, uniform in their layer.
+        s, ion = _freeze(s, ion, y, logs, None, dev.Vt)
+
+    def bounds_at(Vint):
+        return jnp.array([
             [dev.V0 - 0.5 * Vint, np.log(dev.n_left), np.log(dev.p_left)],
             [dev.VL + 0.5 * Vint, np.log(dev.n_right), np.log(dev.p_right)],
         ])  # fmt: skip
-        if Vint == voltages[0]:
-            for _ in range(max_iter):
-                y, size = _poisson_step(y, bounds, s, dev.Vt)
-                if float(size) < 1e-8:
-                    break
-        ok = False
-        it = 0
-        while it < max_iter:
-            it += 1
-            y, size = _newton_step(y, bounds, s, dev.Vt, g_frac, bernoulli_name)
-            if float(size) < tol:
-                ok = True
-                break
+
+    def settle(y, logs, s, ion, Vint):
+        """Newton to `tol`, or to the round-off floor: a step below `ROUND_OFF_FLOOR` that has
+        stopped falling for `STALL_STEPS` iterations (strong frozen charge leaves the potential
+        a few 1e-8 V_T of noise)."""
+        bounds = bounds_at(Vint)
+        sizes: list[float] = []
+        while len(sizes) < max_iter:
+            y, logs, size = _newton_step(y, logs, bounds, s, ion, dev.Vt, g_frac, bernoulli_name)
+            sizes.append(float(size))
+            if sizes[-1] < tol:
+                return y, logs, True, len(sizes)
+            recent = sizes[-STALL_STEPS - 1 :]
+            if (len(recent) > STALL_STEPS and max(recent) < ROUND_OFF_FLOOR
+                    and min(recent[1:]) >= 0.1 * recent[0]):  # fmt: skip
+                return y, logs, True, len(sizes)
+        return y, logs, False, len(sizes)
+
+    for _ in range(max_iter):
+        y, size = _poisson_step(y, bounds_at(first), s, ion, dev.Vt)
+        if float(size) < 1e-8:
+            break
+    logs = _ion_logs(
+        jnp.concatenate([bounds_at(first)[0][:1], y[:, 0], bounds_at(first)[1][:1]]), ion
+    )
+    if dev.pre_cond:
+        y, logs, ok, _ = settle(y, logs, s, ion, dev.V_pre)
+        if not ok:
+            raise RuntimeError(f"no convergence at the pre-bias {dev.V_pre} V")
+        if dev.fix_ions:
+            s, ion = _freeze(s, ion, y, logs, None, dev.Vt)
+
+    J, conv, its = [], [], []
+    for Vint in voltages:
+        y, logs, ok, it = settle(y, logs, s, ion, float(Vint))
+        bounds = bounds_at(float(Vint))
         full = np.concatenate(
             [np.asarray(bounds[0])[None], np.asarray(y), np.asarray(bounds[1])[None]]
         )

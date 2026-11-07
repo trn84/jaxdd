@@ -69,7 +69,9 @@ def read_setup(path: Path) -> Setup:
     return Setup(raw=raw, layers=tuple(layers), directory=path.parent)
 
 
-#: Stage A (PLAN.md §2.1): the values a supported input must have. Anything else is refused by
+#: Stage A (PLAN.md §2.1): the values a supported input must have. Ions are supported in one
+#: layer per region, steady (free at every voltage) or held after a pre-bias (`preCond`,
+#: `fixIons`, with FauxPV's patch that keeps Poisson from moving them). Anything else is refused by
 #: name, never approximated.
 _SETUP_REQUIRED = {
     "S_n_L": -1.0,
@@ -87,8 +89,6 @@ _LAYER_REQUIRED = {
     "N_t_int": 0.0,
     "fieldDepG": 0.0,
     "useLangevin": 0.0,
-    "N_anion": 0.0,
-    "N_cation": 0.0,
 }
 
 
@@ -111,6 +111,8 @@ def check_supported(setup: Setup) -> None:
             problems.append(
                 f"layer {k}: charged bulk traps (bulkTrapType {layer.i('bulkTrapType')})"
             )
+        if layer.i("ionsMayEnter") and k > 1 and setup.layers[k - 2].i("ionsMayEnter"):
+            problems.append(f"layers {k - 1}–{k}: an ionic region across layers")
         if layer.raw.get("bulkTrapFile", "none") != "none":
             problems.append(f"layer {k}: bulkTrapFile = {layer.raw['bulkTrapFile']}")
     if problems:

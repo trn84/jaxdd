@@ -109,6 +109,20 @@ class Device:
     G_frac: float
     i0: tuple[int, ...]
     i1: tuple[int, ...]
+    # Ions (SIMsalabim's `Init_Ionic_Region`, one layer per region in Stage A): per species, the
+    # mobile region's mask and the number of ions per area it holds (N·L of the layer), or a
+    # fixed density where they cannot move.
+    anion_mask: np.ndarray
+    cation_mask: np.ndarray
+    anion_total: float
+    cation_total: float
+    anion_fixed: np.ndarray
+    cation_fixed: np.ndarray
+    # SIMsalabim's pre-bias: solve at `V_pre` with the ions free first (`preCond`), then hold
+    # them for the scan (`fixIons`).
+    pre_cond: bool
+    V_pre: float
+    fix_ions: bool
 
 
 def _generation(setup: Setup, x: np.ndarray, lid: np.ndarray, layer_gen: np.ndarray,
@@ -171,6 +185,25 @@ def build_device(setup: Setup) -> Device:
     G = _generation(setup, x, lid, layer_gen, total)
     G[0] = G[-1] = 0.0
 
+    ions = {}
+    for species, conc_name, mob_name in (("anion", "N_anion", "mu_anion"),
+                                         ("cation", "N_cation", "mu_cation")):  # fmt: skip
+        mask = np.zeros(NP + 2, dtype=bool)
+        fixed = np.zeros(NP + 2)
+        ion_total = 0.0
+        for j, ly in enumerate(layers):
+            conc, mob = ly.f(conc_name), ly.f(mob_name)
+            if conc == 0:
+                continue
+            if mob == 0:
+                fixed[i0[j] : i1[j] + 1] = conc
+                continue
+            if mask.any():
+                raise NotImplementedError(f"mobile {species}s in more than one layer")
+            mask[i0[j] : i1[j] + 1] = True
+            ion_total += ly.f("L") * conc
+        ions[species] = (mask, ion_total, fixed)
+
     dos = Vt * np.log(N_c / N_c[0])
     W_L, W_R = setup.f("W_L"), setup.f("W_R")
     if setup.i("leftElec") != -1:
@@ -192,4 +225,9 @@ def build_device(setup: Setup) -> Device:
         p_right=float(N_c[-1] * np.exp(-(E_v[-1] - W_R) / Vt)),
         W_L=W_L, W_R=W_R, G_frac=setup.f("G_frac"),
         i0=tuple(i0), i1=tuple(i1),
+        anion_mask=ions["anion"][0], cation_mask=ions["cation"][0],
+        anion_total=ions["anion"][1], cation_total=ions["cation"][1],
+        anion_fixed=ions["anion"][2], cation_fixed=ions["cation"][2],
+        pre_cond=bool(setup.i("preCond")), V_pre=setup.f("Vpre"),
+        fix_ions=bool(setup.i("fixIons")),
     )  # fmt: skip

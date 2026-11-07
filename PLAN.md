@@ -234,7 +234,7 @@ are LGPL-3.0 (or GPL-3.0) themselves. **`jaxdd` is released under LGPL-3.0** (de
 wherever that helps — boundary conditions, interfaces, ions, the convergence safeguards —
 which takes most of the risk out of M1–M2. What that requires:
 
-- `LICENSE` (LGPL-3.0, with the GPL-3.0 text it extends) in the repository.
+- `COPYING.LESSER` (LGPL-3.0) and `COPYING` (the GPL-3.0 it supplements) in the repository.
 - Where code follows SIMsalabim's, the original copyright notice kept and a prominent note that
   it was translated and changed, with the date (GPL-3.0 §5 a). A file `NOTICE` lists which
   modules derive from which SIMsalabim units.

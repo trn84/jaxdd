@@ -10,7 +10,11 @@ Newton steps per voltage. **The 1000-device gate (§7) is met against a converge
 device beyond 1e-3 is SimSS stopping early at its default tolerance — the first voltage of a
 scan above all — and SimSS run tighter lands on jaxdd to 1e-8 ([DIFFERENCES.md](DIFFERENCES.md)).
 jaxdd takes the physically correct answer where SimSS approximates; each difference is
-documented and switchable. Next: batching (M3).
+documented and switchable. **M3 on CPU built**: `jaxdd.batch.solve_batch` (`jit` of a `vmap`
+over devices; Newton in `lax.while_loop`, voltages in `lax.scan`, pre-bias and freezing by
+masks), the batch equal to the one-device solver to 1e-10, every voltage of every test device
+converged, also the hard case of §10 (by the settled-current criterion). On a laptop CPU 1.2
+devices/s: the throughput question is the A100's (`validation/bench.py`, §8 M3).
 
 A one-dimensional drift-diffusion solver for semiconductor devices — perovskite solar cells
 first — written in JAX so that it solves **hundreds of thousands of devices at once** on GPUs:
@@ -313,7 +317,7 @@ Tolerances are a decision (D3); the ones above are FauxPV's off-grid tolerances 
 | **M0b** | JAX on one A100: `jax_enable_x64`, a batched `lax.scan` block-Thomas solve of 10⁵ × 400 × 3×3 in FP64, its bandwidth and the batch size that fits; the same on CPU | A100 | 1 day | ≥ 50 % of the card's bandwidth, or the scan is replaced (Pallas kernel) before M1 builds on it |
 | **M1** ✓ | One device, CPU, x64: Poisson + continuity, SG, coupled Newton, contacts, offsets, thermionic interface, SRH + direct, generation profile; no ions. Both variable sets (D2) | laptop | 1–2 weeks | ion-free gate of §7 |
 | **M2** ✓ | Ions: frozen (pre-bias, then fixed) and free (bordered system) | laptop | 1–2 weeks | both ion gates of §7 |
-| **M3** | Batched: `vmap`, masked `while_loop`, continuation with sub-steps; on one A100 | A100 | 1 week | **go/no-go: ≥ 50× the server's 7.8 devices/s on one A100, at the §7 accuracy** |
+| **M3** | Batched: `vmap`, masked `while_loop`, continuation with sub-steps; on one A100. **CPU part done 2026-11-07**; the A100 run on RunPod (§8a) | A100 | 1 week | **go/no-go: ≥ 50× the server's 7.8 devices/s on one A100, at the §7 accuracy** |
 | **M4** | Mesh: graded, r-adaptive; the convergence study of §4 | RZ | 1 week | 400 points or fewer meet the gates on the hardest devices, or bucketing is justified |
 | **M5** | FauxPV backend: `dd_tables.py --backend jaxdd`, the table format; a stored table reproduced to tolerance | FauxPV + RZ | 1 week | 48-point `reproduce` within §7 |
 | **M6** | Adaptive axes (§5): error-driven axis refinement; first use on M20-00b's open layer axes (D0 a) | FauxPV + RZ | 1–2 weeks | the refined axes meet the off-grid tolerance with fewer devices than the hand-made ones |
@@ -322,6 +326,39 @@ Tolerances are a decision (D3); the ones above are FauxPV's off-grid tolerances 
 
 Total to the first useful table (M0–M5): **5–8 weeks** of focused work, most of it M1–M2
 (physics and robustness), not the GPU part. M3 decides early, before M4–M6 are spent.
+
+## 8a The A100 run (RunPod)
+
+In a running pod with an A100 (any CUDA 12 image with Python ≥ 3.11):
+
+```bash
+git clone <jaxdd repository> && cd jaxdd
+python -m venv .venv && .venv/bin/pip install -q -e ".[dev]" "jax[cuda12]"
+.venv/bin/python -c "import jax; print(jax.devices())"          # must list a CUDA device
+.venv/bin/python -m pytest -q                                    # the CPU tests, now on the GPU
+.venv/bin/python validation/bench.py 1024 1024                   # warm-up size
+.venv/bin/python validation/bench.py 16384 4096                  # the M3 number
+```
+
+`bench.py` needs nothing but the repository (variants of the committed SimSS inputs, fixed
+seed) and prints devices per second against SimSS's 7.8 on the 64-core server. The M3 gate:
+≥ 390 devices/s (50×). Try batch sizes 1024–8192; note the GPU's memory (`nvidia-smi`).
+
+## 8b Proposal: a steric limit on ion accumulation (FauxPV and jaxdd together)
+
+**Why.** The hard case of §10 is not only numerical. Frozen at full accumulation, 1e18 cm⁻³ of
+ions pile up in nanometre layers at the interfaces at 1.5e21 cm⁻³, 1500 times their mean and
+close to the perovskite's lattice-site density (~1e22 cm⁻³). Boltzmann statistics let ions stack
+without limit; real vacancies cannot. The carrier-free bulk between such layers is what leaves the
+solver at its round-off floor, in SimSS as in jaxdd.
+
+**What.** The modified Poisson–Boltzmann (Bikerman) occupancy for the ions: `n_ion = N_max /
+(1 + exp(...))`-like saturation at a site density `N_max`, in the free steady state and so in the
+frozen profile. Physically the better model; it caps the peaks and removes the near-singular
+regime at its source. It departs from SimSS (DIFFERENCES.md, switchable, SimSS's Boltzmann the
+reproduction), and it changes what FauxPV's `x_ion` means at high ion density, so FauxPV's tables
+and jaxdd would adopt it together, with `N_max` from a source (a literature value for the halide
+vacancy site density, `TODO(physics)` until found).
 
 ## 9 Licence and attribution
 

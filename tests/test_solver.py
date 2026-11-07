@@ -101,3 +101,19 @@ def test_free_ions_keep_their_number() -> None:
     logs = S._ion_logs(V, ion)
     g = S._ion_constraints(V, logs[0], logs[1], ion)
     assert np.allclose(np.asarray(g), 0.0, atol=1e-12)
+
+
+def test_batch_matches_the_one_device_solver() -> None:
+    """The batched solver (`vmap` over devices, `while_loop` per voltage) gives each device's
+    curve as the one-device solver does, with and without ions, in one batch."""
+    from jaxdd.batch import prepare, solve_batch
+
+    cases = ["thin_l1_light", "frozen_1e17_x1_thin_light", "steady_1e17_thin_light"]
+    devices = [build_device(read_setup(DATA / c / "simulation_setup.txt")) for c in cases]
+    V = np.round(np.arange(-0.2, 1.3 + 1e-9, 0.1), 6)
+    J, ok, _ = solve_batch(prepare(devices), V, bernoulli_name="simss")
+    assert np.asarray(ok).all()
+    for k, dev in enumerate(devices):
+        single = solve_jv(dev, V, bernoulli_name="simss")
+        scale = np.max(np.abs(single.J))
+        assert np.max(np.abs(np.asarray(J[k]) - single.J)) < 1e-6 * scale

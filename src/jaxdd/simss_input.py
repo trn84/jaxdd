@@ -115,5 +115,9 @@ def check_supported(setup: Setup) -> None:
             problems.append(f"layers {k - 1}–{k}: an ionic region across layers")
         if layer.raw.get("bulkTrapFile", "none") != "none":
             problems.append(f"layer {k}: bulkTrapFile = {layer.raw['bulkTrapFile']}")
+    mobile = any(ly.f("N_anion") * ly.f("mu_anion") > 0 or ly.f("N_cation") * ly.f("mu_cation") > 0
+                 for ly in setup.layers)  # fmt: skip
+    if mobile and setup.i("fixIons") and not setup.i("preCond"):
+        problems.append("fixIons = 1 without preCond (ions held at their initial uniform density)")
     if problems:
         raise NotImplementedError("not in jaxdd's Stage A:\n  " + "\n  ".join(problems))

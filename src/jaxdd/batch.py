@@ -48,6 +48,10 @@ __all__ = ["prepare", "solve_batch"]
 CURRENT_TOL = 1e-5
 #: ... while the Newton step is already below this (V_T, relative densities).
 CURRENT_STEP_CAP = 1e-3
+#: In the quadratic regime (a step below `QUADRATIC_TOL` and below `QUADRATIC_RATIO` of the one
+#: before) the error left is about the step squared, so Newton stops there.
+QUADRATIC_TOL = 1e-5
+QUADRATIC_RATIO = 1e-2
 
 
 def _device_tree(dev: Device) -> dict:
@@ -179,7 +183,9 @@ def _newton_solve(y, logs, d, s, ion, Vint, g_frac, B, tol, max_iter, linear="th
             return _ion_constraints(V_full, logs_[0], logs_[1], ion)
 
         g = constraints(full[1:-1, 0], logs)
-        dg_dV, D = jax.jacfwd(constraints, argnums=(0, 1))(full[1:-1, 0], logs)
+        # Two outputs of NP inputs: reverse mode, two passes (forward mode took NP passes and
+        # 90 % of a Newton step).
+        dg_dV, D = jax.jacrev(constraints, argnums=(0, 1))(full[1:-1, 0], logs)
         D = D + jnp.diag(jnp.where(jnp.stack([ion["a_total"], ion["c_total"]]) > 0, 0.0, 1.0))
         W = jnp.zeros((y.shape[0], 3, 2)).at[:, 0, :].set(dg_dV.T)
         X = LINEAR_SOLVERS[linear](A, Bb, C, jnp.concatenate([-F[..., None], U], axis=-1))
@@ -221,7 +227,12 @@ def _newton_solve(y, logs, d, s, ion, Vint, g_frac, B, tol, max_iter, linear="th
             & (size < CURRENT_STEP_CAP)
             & (jnp.max(jnp.abs(J_hist - J_now)) < CURRENT_TOL * scale)
         )
-        return (size < tol) | stalled | settled
+        # Newton converges quadratically: a step that is small and a hundredth of the one
+        # before leaves an error of about its square (1e-10 at 1e-5), so the next step, which
+        # would only confirm it, is not taken.
+        prev = size_hist[-2]
+        quadratic = (it > 1) & (size < QUADRATIC_TOL) & (size < QUADRATIC_RATIO * prev)
+        return (size < tol) | stalled | settled | quadratic
 
     def body(carry):
         y, logs, size_hist, J_hist, it, _ = carry
@@ -273,13 +284,19 @@ def _solve_one(d, voltages, B, tol, max_iter, linear):
     s, ion = _freeze(s, ion, y, logs, Vt, (d["pre_cond"] > 0) & (d["fix_ions"] > 0))
 
     def scan(carry, Vint):
-        y, logs = carry
-        y, logs, J, ok, it = _newton_solve(
-            y, logs, d, s, ion, Vint, g_frac, B, tol, max_iter, linear
+        # The start: the last two solutions extrapolated linearly in the voltage (SIMsalabim's
+        # `Extrapolate_Solution`); at the first voltage, the pre-bias solution as it is.
+        y, logs, y_prev, logs_prev, V_last, V_before = carry
+        ratio = jnp.where(V_last != V_before, (Vint - V_last) / (V_last - V_before), 0.0)
+        guess = y + ratio * (y - y_prev)
+        logs_guess = logs + ratio * (logs - logs_prev)
+        y_new, logs_new, J, ok, it = _newton_solve(
+            guess, logs_guess, d, s, ion, Vint, g_frac, B, tol, max_iter, linear
         )
-        return (y, logs), (J, ok, it)
+        return (y_new, logs_new, y, logs, Vint, V_last), (J, ok, it)
 
-    _, (J, ok, its) = jax.lax.scan(scan, (y, logs), voltages)
+    start = (y, logs, y, logs, first, first)
+    _, (J, ok, its) = jax.lax.scan(scan, start, voltages)
     return J, ok & pre_ok, its
 
 

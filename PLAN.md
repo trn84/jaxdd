@@ -377,6 +377,19 @@ reduction, then eight systems of 50 rows swept side by side — 100 sequential s
 800, three levels of extra arithmetic instead of nine). `"auto"` is the sweep until the A100
 says otherwise.
 
+**Fourth run** (9fda49c): the sweep 323 devices/s at batch 4096 (`_mm` +22 %), 341 at 16384 —
+now saturated, no longer latency-bound; the hybrid 289. **Then two findings, both general:**
+
+- *Fewer Newton steps.* The start of each voltage extrapolated from the last two solutions
+  (SIMsalabim's `Extrapolate_Solution`) and the step that only confirms quadratic convergence
+  dropped: 4.58 → 2.78 steps per device and voltage, 5.41 → 3.64 for the batch (the maximum
+  per voltage), the results unchanged.
+- *A forward-mode Jacobian with two outputs.* `validation/breakdown.py` timed each part of a
+  step: the ions' constraint, differentiated by `jax.jacfwd` — NP forward passes for two
+  outputs — took **644 of 716 ms** (CPU, batch 256). `jax.jacrev`: 1.2 ms. The step is now
+  77 ms, the sweep (41) and the Jacobian blocks (26) the rest. One CPU core: 1.8 → **19.2
+  devices/s, 38× SimSS on one core.**
+
 ## 8b Proposal: a steric limit on ion accumulation (FauxPV and jaxdd together)
 
 **Why.** The hard case of §10 is not only numerical. Frozen at full accumulation, 1e18 cm⁻³ of

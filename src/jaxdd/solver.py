@@ -353,7 +353,8 @@ def _newton_step(y, logs, bounds, s, ion, Vt, g_frac, bernoulli_name="exact", li
         return _ion_constraints(V_full, logs_[0], logs_[1], ion)
 
     g = constraints(full[1:-1, 0], logs)
-    dg_dV, D = jax.jacfwd(constraints, argnums=(0, 1))(full[1:-1, 0], logs)  # 2 × NP, 2 × 2
+    # Two outputs of NP + 2 inputs: reverse mode, two passes (forward mode took NP; M3).
+    dg_dV, D = jax.jacrev(constraints, argnums=(0, 1))(full[1:-1, 0], logs)  # 2 × NP, 2 × 2
     # A species without a mobile region: its normalisation is held (an identity row).
     D = D + jnp.diag(jnp.where(jnp.array([ion["a_total"], ion["c_total"]]) > 0, 0.0, 1.0))
     W = jnp.zeros((y.shape[0], 3, 2)).at[:, 0, :].set(dg_dV.T)

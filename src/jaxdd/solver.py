@@ -219,15 +219,23 @@ def _inverse3(m):
     return co / det[..., None, None]
 
 
+def _mm(a, b):
+    """`a @ b` for 3×3 blocks (`... × 3 × 3` times `... × 3 × k`), written as multiply and sum
+    so that XLA fuses it with the arithmetic around it. `@` on such small matrices becomes a
+    batched GEMM of its own on a GPU: a kernel per product, launched in every step of a sweep
+    and every level of the reduction (M3)."""
+    return jnp.sum(a[..., :, :, None] * b[..., None, :, :], axis=-2)
+
+
 def _block_thomas(A, B, C, d):
     """Solve the block-tridiagonal system `A[i]·x[i−1] + B[i]·x[i] + C[i]·x[i+1] = d[i]`."""
 
     def forward(carry, blocks):
         c_prev, d_prev = carry
         a, b, c, r = blocks
-        m_inv = _inverse3(b - a @ c_prev)  # one block
-        c_new = m_inv @ c
-        d_new = m_inv @ (r - a @ d_prev)
+        m_inv = _inverse3(b - _mm(a, c_prev))  # one block
+        c_new = _mm(m_inv, c)
+        d_new = _mm(m_inv, r - _mm(a, d_prev))
         return (c_new, d_new), (c_new, d_new)
 
     zero_c = jnp.zeros_like(C[0])
@@ -236,22 +244,15 @@ def _block_thomas(A, B, C, d):
 
     def backward(x_next, blocks):
         c, r = blocks
-        x = r - c @ x_next
+        x = r - _mm(c, x_next)
         return x, x
 
     _, x = jax.lax.scan(backward, zero_d, (cp, dp), reverse=True, unroll=SWEEP_UNROLL)
     return x
 
 
-def _block_pcr(A, B, C, d):
-    """The same system by parallel cyclic reduction (M3): each level, every row eliminates its
-    neighbours at distance `s` at once and couples to those at `2s`; after ⌈log₂ N⌉ levels the
-    rows are uncoupled and `x = B⁻¹·d`. Nine levels for 400 points instead of 800 sequential
-    steps — more arithmetic (N log N), far less latency, which is what a GPU pays for here.
-
-    `A[0]` and `C[N−1]` must be zero (they are: the boundary values are known). Outside the
-    system a row is the identity with no right-hand side.
-    """
+def _pcr_levels(A, B, C, d, levels):
+    """`levels` levels of cyclic reduction: afterwards row `i` couples only to `i ± 2^levels`."""
     n = A.shape[0]
     eye = jnp.broadcast_to(jnp.eye(3), B.shape)
     zero_m = jnp.zeros_like(A)
@@ -264,23 +265,69 @@ def _block_pcr(A, B, C, d):
         return jnp.concatenate([X[s:], fill[:s]])
 
     s = 1
-    while s < n:
+    for _ in range(levels):
+        if s >= n:
+            break
         B_inv = _inverse3(B)
-        alpha = -A @ down(B_inv, s, eye)
-        gamma = -C @ up(B_inv, s, eye)
+        alpha = -_mm(A, down(B_inv, s, eye))
+        gamma = -_mm(C, up(B_inv, s, eye))
         A, B, C, d = (
-            alpha @ down(A, s, zero_m),
-            B + alpha @ down(C, s, zero_m) + gamma @ up(A, s, zero_m),
-            gamma @ up(C, s, zero_m),
-            d + alpha @ down(d, s, zero_d) + gamma @ up(d, s, zero_d),
+            _mm(alpha, down(A, s, zero_m)),
+            B + _mm(alpha, down(C, s, zero_m)) + _mm(gamma, up(A, s, zero_m)),
+            _mm(gamma, up(C, s, zero_m)),
+            d + _mm(alpha, down(d, s, zero_d)) + _mm(gamma, up(d, s, zero_d)),
         )
         s *= 2
-    return _inverse3(B) @ d
+    return A, B, C, d
 
 
-#: How the Newton system is solved: the block Thomas sweep (least arithmetic; the CPU's), or
-#: parallel cyclic reduction (least latency; for a GPU).
-LINEAR_SOLVERS = {"thomas": _block_thomas, "pcr": _block_pcr}
+#: Levels of cyclic reduction before the hybrid hands over to the sweep: 2^3 = 8 independent
+#: systems of N/8 rows, swept side by side (Zhang, Cohen and Owens, PPoPP 2010).
+HYBRID_LEVELS = 3
+
+
+def _block_hybrid(A, B, C, d, levels=HYBRID_LEVELS):
+    """Cyclic reduction for `levels` levels, then the block Thomas sweep on the `2^levels`
+    systems it leaves, all at once: `2·N/2^levels` sequential steps instead of `2·N`, at the
+    cost of `levels` levels of extra arithmetic instead of `log₂ N` (PCR)."""
+    n = A.shape[0]
+    stride = 2**levels
+    pad = (-n) % stride
+    if pad:
+        eye = jnp.broadcast_to(jnp.eye(3), (pad, 3, 3))
+        A = jnp.concatenate([A, jnp.zeros((pad, 3, 3))])
+        B = jnp.concatenate([B, eye])
+        C = jnp.concatenate([C, jnp.zeros((pad, 3, 3))])
+        d = jnp.concatenate([d, jnp.zeros((pad, *d.shape[1:]))])
+    A, B, C, d = _pcr_levels(A, B, C, d, levels)
+    m = A.shape[0] // stride
+
+    def split(X):  # row i = j·stride + r  →  X[j, r]
+        return X.reshape(m, stride, *X.shape[1:])
+
+    x = jax.vmap(_block_thomas, in_axes=1, out_axes=1)(split(A), split(B), split(C), split(d))
+    return x.reshape(m * stride, *x.shape[2:])[:n]
+
+
+def _block_pcr(A, B, C, d):
+    """The same system by parallel cyclic reduction (M3): each level, every row eliminates its
+    neighbours at distance `s` at once and couples to those at `2s`; after ⌈log₂ N⌉ levels the
+    rows are uncoupled and `x = B⁻¹·d`. Nine levels for 400 points instead of 800 sequential
+    steps — more arithmetic (N log N), far less latency, which is what a GPU pays for here.
+
+    `A[0]` and `C[N−1]` must be zero (they are: the boundary values are known). Outside the
+    system a row is the identity with no right-hand side.
+    """
+    n = A.shape[0]
+    levels = max(1, (n - 1).bit_length())
+    A, B, C, d = _pcr_levels(A, B, C, d, levels)
+    return _mm(_inverse3(B), d)
+
+
+#: How the Newton system is solved: the block Thomas sweep (least arithmetic; the CPU's),
+#: parallel cyclic reduction (least latency, but log₂ N passes over every block: bandwidth-bound
+#: on an A100, 81 against the sweep's 265 devices/s), or the hybrid of the two.
+LINEAR_SOLVERS = {"thomas": _block_thomas, "pcr": _block_pcr, "hybrid": _block_hybrid}
 
 
 @functools.partial(jax.jit, static_argnames=("bernoulli_name", "linear"))

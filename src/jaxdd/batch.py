@@ -292,8 +292,8 @@ def _solve_batch(batch, voltages, tol, max_iter, bernoulli_name, linear):
 
 def solve_batch(batch, voltages, tol=1e-10, max_iter=60, bernoulli_name="exact", linear="auto"):
     """J-V curves of a batch (`prepare`) at `voltages`: `(J, converged, iterations)`, each
-    batch × voltages. `linear`: `"thomas"`, `"pcr"`, or `"auto"` — parallel cyclic reduction
-    on a GPU, where latency rules, the block Thomas sweep on a CPU."""
+    batch × voltages. `linear`: `"thomas"`, `"pcr"`, `"hybrid"`, or `"auto"` — the block Thomas
+    sweep, fastest measured so far on a CPU and on an A100 (265 devices/s against PCR's 81)."""
     if linear == "auto":
-        linear = "thomas" if jax.default_backend() == "cpu" else "pcr"
+        linear = "thomas"
     return _solve_batch(batch, voltages, tol, max_iter, bernoulli_name, linear)

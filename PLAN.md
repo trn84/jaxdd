@@ -368,6 +368,15 @@ reduction built** (`solver._block_pcr`, `linear="pcr"`, the default on a GPU): n
 fully parallel block eliminations instead of the 2 × 400-step sweep; the same results as the
 sweep on every reference case, a test against the dense solve.
 
+**Third run** (13a1f61, 16384 devices, batch 4096): the sweep **265 devices/s (34×)** — the
+closed-form inverse nearly doubled it — and PCR **81 devices/s**: its nine levels each pass over
+every block of every device, some 40 GB per Newton step at this batch, so it is bandwidth-bound
+where the sweep was latency-bound. Since then: the 3×3 products written elementwise (`_mm`, no
+GEMM call per product, fusable), and the **PCR–Thomas hybrid** (`"hybrid"`: three levels of
+reduction, then eight systems of 50 rows swept side by side — 100 sequential steps instead of
+800, three levels of extra arithmetic instead of nine). `"auto"` is the sweep until the A100
+says otherwise.
+
 ## 8b Proposal: a steric limit on ion accumulation (FauxPV and jaxdd together)
 
 **Why.** The hard case of §10 is not only numerical. Frozen at full accumulation, 1e18 cm⁻³ of

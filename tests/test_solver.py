@@ -122,7 +122,7 @@ def test_batch_matches_the_one_device_solver() -> None:
 def test_parallel_cyclic_reduction_solves_what_the_thomas_sweep_solves() -> None:
     """Invariant: both linear solvers give the solution of the same block-tridiagonal system
     (the dense solve's, to round-off), with several right-hand sides."""
-    from jaxdd.solver import _block_pcr, _block_thomas
+    from jaxdd.solver import _block_hybrid, _block_pcr, _block_thomas
 
     rng = np.random.default_rng(1)
     n = 37  # not a power of two: the last level reaches past the end
@@ -138,6 +138,6 @@ def test_parallel_cyclic_reduction_solves_what_the_thomas_sweep_solves() -> None
         if i < n - 1:
             full[3 * i : 3 * i + 3, 3 * i + 3 : 3 * i + 6] = C[i]
     ref = np.linalg.solve(full, d.reshape(3 * n, 2))
-    for solve in (_block_thomas, _block_pcr):
+    for solve in (_block_thomas, _block_pcr, _block_hybrid):
         x = np.asarray(solve(*map(jnp.asarray, (A, B, C, d))))
         assert np.max(np.abs(x.reshape(3 * n, 2) - ref)) < 1e-12

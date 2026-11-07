@@ -53,6 +53,30 @@ with its FP64 tensor cores) and H100 (34 / 67) do FP64 at full rate; consumer GP
 for a bandwidth-bound solver less of a loss than the ratio suggests, but the exponentials are
 not bandwidth-bound. Consumer GPUs are measured in M3 as well, not assumed.
 
+## 1a M0 — measured (2026-11-07)
+
+One chunk of 40 devices (80 SimSS runs) of FauxPV's M20-00b ion grid, one container, one core
+of the laptop:
+
+| Part | Before | After the fix below |
+|---|---|---|
+| container start and stop | 0.33 s per chunk | the same |
+| writing the inputs (Python) | 4.5 s (0.11 s per device) | the same |
+| SimSS | 94.6 s | 81.0 s |
+| reading the outputs | 0.1 s | the same |
+| disk written | 1.2 GB | 8 MB |
+
+**Overhead is 5–6 %**: Docker and files are not the bottleneck, SimSS is. **The fix:** SimSS 5.36
+wrote its internal variables to a file literally named `none` (14.7 MB per run) although
+`varFile = none`; `outputRatio = 0` stops it, with bit-identical curves (FauxPV 7e483de). On
+the server, where 128 workers wrote it at once, the saving is likely larger than the 14 % here.
+
+**The time is in a few devices.** The 8 slowest of 80 runs took 74 % of the chunk's SimSS time,
+up to 9.8 s each, all at `ℓ` 0.2–0.5 on 700–1000 nm absorbers; a run at `ℓ` ≥ 1 takes about
+0.2 s (median 0.24 s). For `jaxdd` this is §3.4's lockstep problem in numbers: batches must
+be sorted by difficulty (`ℓ`, absorber), or the hard tenth sets the pace of all. It also says
+where the solver's robustness work goes (M1–M2).
+
 ## 2 Scope
 
 ### 2.1 The physics FauxPV's tables need (phase 1)
@@ -214,7 +238,7 @@ Tolerances are a decision (D3); the ones above are FauxPV's off-grid tolerances 
 
 | | Work | Where | Size | Gate to continue |
 |---|---|---|---|---|
-| **M0** | Profile one FauxPV chunk: container start, file I/O, SimSS's own time. The baseline in devices/s per core | FauxPV, server | 1 day | — (if the overhead is half, FauxPV halves its runs at once) |
+| **M0** | Profile one FauxPV chunk: container start, file I/O, SimSS's own time. **Done 2026-11-07** (§1a): overhead 5 %; the var-file fix took 14 % off a chunk | FauxPV | 1 day | — |
 | **M1** | One device, CPU, x64: Poisson + continuity, SG, coupled Newton, contacts, offsets, thermionic interface, SRH + direct, generation profile; no ions. Both variable sets (D2) | laptop | 1–2 weeks | ion-free gate of §7 |
 | **M2** | Ions: frozen (pre-bias, then fixed) and free (bordered system) | laptop | 1–2 weeks | both ion gates of §7 |
 | **M3** | Batched: `vmap`, masked `while_loop`, continuation with sub-steps; on one A100 or H100 (RZ), and on a consumer GPU for comparison | RZ | 1 week | **go/no-go: ≥ 50× the server's 7.8 devices/s on one GPU, at the §7 accuracy** |

@@ -347,6 +347,22 @@ python -m venv .venv && .venv/bin/pip install -q -e ".[dev]" "jax[cuda12]"
 seed) and prints devices per second against SimSS's 7.8 on the 64-core server. The M3 gate:
 ≥ 390 devices/s (50×). Try batch sizes 1024–8192; note the GPU's memory (`nvidia-smi`).
 
+### First A100 run (2026-11-07, RunPod, commit aab0162)
+
+| Devices, batch | Seconds per batch | Devices/s | × SimSS (64 cores) |
+|---|---|---|---|
+| 1024, 1024 | 21.0 | 48.7 | 6.2 |
+| 16384, 4096 | 28.5 | 143.5 | 18.4 |
+
+All 999 424 points converged. A batch four times larger took only 36 % longer: the A100 waited
+on latency, not bandwidth — about 45 ms per Newton step whatever the batch, the 2 × 400
+sequential steps of the block Thomas sweep each launching their own kernels, two batched LUs
+(`jnp.linalg.solve` on 3×3) among them. Changed after it (commit after aab0162): the 3×3
+inverse in closed form (elementwise, fusable) and the sweep unrolled by 8; on one CPU core
+1.7 → 2.0 devices/s, the results unchanged. Next on the A100: the same benchmark, and batches
+of 8192–32768. If latency still dominates, the sweep as one Pallas kernel, or parallel cyclic
+reduction (log₂ 400 ≈ 9 levels instead of 400 steps).
+
 ## 8b Proposal: a steric limit on ion accumulation (FauxPV and jaxdd together)
 
 **Why.** The hard case of §10 is not only numerical. Frozen at full accumulation, 1e18 cm⁻³ of

@@ -197,27 +197,49 @@ def _ion_constraints(V_full, la, lc, ion):
     ])  # fmt: skip
 
 
+#: Grid points per kernel in the block Thomas sweep: unrolling lets XLA fuse several of the
+#: sweep's sequential steps into one kernel, which on a GPU is what the sweep costs (M3).
+SWEEP_UNROLL = 8
+
+
+def _inverse3(m):
+    """The inverse of a 3×3 matrix by its adjugate: elementwise arithmetic only, so that XLA
+    fuses it into the sweep's kernel instead of calling a batched LU per grid point (M3). The
+    rows are scaled to their terms' size (`_stencils`), which keeps the determinant well away
+    from round-off."""
+    a, b, c = m[0, 0], m[0, 1], m[0, 2]
+    d, e, f = m[1, 0], m[1, 1], m[1, 2]
+    g, h, i = m[2, 0], m[2, 1], m[2, 2]
+    co = jnp.array([
+        [e * i - f * h, c * h - b * i, b * f - c * e],
+        [f * g - d * i, a * i - c * g, c * d - a * f],
+        [d * h - e * g, b * g - a * h, a * e - b * d],
+    ])  # fmt: skip
+    det = a * co[0, 0] + b * co[1, 0] + c * co[2, 0]
+    return co / det
+
+
 def _block_thomas(A, B, C, d):
     """Solve the block-tridiagonal system `A[i]·x[i−1] + B[i]·x[i] + C[i]·x[i+1] = d[i]`."""
 
     def forward(carry, blocks):
         c_prev, d_prev = carry
         a, b, c, r = blocks
-        m = b - a @ c_prev
-        c_new = jnp.linalg.solve(m, c)
-        d_new = jnp.linalg.solve(m, r - a @ d_prev)
+        m_inv = _inverse3(b - a @ c_prev)
+        c_new = m_inv @ c
+        d_new = m_inv @ (r - a @ d_prev)
         return (c_new, d_new), (c_new, d_new)
 
     zero_c = jnp.zeros_like(C[0])
     zero_d = jnp.zeros_like(d[0])
-    _, (cp, dp) = jax.lax.scan(forward, (zero_c, zero_d), (A, B, C, d))
+    _, (cp, dp) = jax.lax.scan(forward, (zero_c, zero_d), (A, B, C, d), unroll=SWEEP_UNROLL)
 
     def backward(x_next, blocks):
         c, r = blocks
         x = r - c @ x_next
         return x, x
 
-    _, x = jax.lax.scan(backward, zero_d, (cp, dp), reverse=True)
+    _, x = jax.lax.scan(backward, zero_d, (cp, dp), reverse=True, unroll=SWEEP_UNROLL)
     return x
 
 

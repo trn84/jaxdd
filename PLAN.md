@@ -362,5 +362,5 @@ name, the institute's legal office has the last word.
 | D5 | Where it lives | its own repo on Forgejo; `fauxpv/projects/` | **its own repo**: it is useful without FauxPV, and FauxPV only calls it from `tools/` |
 | D6 | M0 first | yes; no | **done** (§1a): overhead 5 %, the var-file fix 14 % |
 | D7 | General or FauxPV's | a solver for FauxPV's tables; a general SimSS-compatible batched solver | **general, decided 2026-11-07**: general in structure and input, staged in physics (§2) |
-| D9 | First GPU platform | A100 (CUDA); MI50 (ROCm) | **A100, decided 2026-11-07**: JAX works there as is; the MI50 port (M8) once the solver is done |
 | D8 | Input format | SIMsalabim's parameter files; a format of its own; both | **SIMsalabim's files** as the interface (every SimSS user's sweep runs unchanged), a Python API of pytrees beside it for batches built in code |
+| D9 | First GPU platform | A100 (CUDA); MI50 (ROCm) | **A100, decided 2026-11-07**: JAX works there as is; the MI50 port (M8) once the solver is done |

@@ -11,13 +11,12 @@ Hand-over note, kept current at the end of a working session. The full plan is
 | M1 ion-free steady state, one device | done; matches SimSS to 1–2e-6 of the current scale with its Bernoulli approximation |
 | M2 ions (free; frozen after a pre-bias) | done; within 2e-5 |
 | §7 gate, 1000 devices of FauxPV's table | met against a converged SimSS: every miss is SimSS stopping early (DIFFERENCES.md §1) |
-| M3 batched (`jaxdd.batch.solve_batch`) | built and right on CPU; **A100 gate (≥ 390 devices/s, 50× SimSS on 64 cores) open** |
+| M3 batched (`jaxdd.batch.solve_batch`) | **done 2026-11-08: A100 1198 devices/s at batch 16384, 154× SimSS on 64 cores** (gate 390/s) |
 
-**A100 results so far** (RunPod, `validation/bench.py`): 143 → 265 → 323 → 341 devices/s
-(batch 16384, before the last commit). Commit 5dde971 removed 90 % of a Newton step (the ions'
-constraint was differentiated by `jax.jacfwd`; now `jax.jacrev`) and cut the Newton steps by
-40 % (extrapolated starts, quadratic stop): one CPU core went 1.8 → 19.2 devices/s. **Not yet
-measured on the A100.**
+**A100 results** (RunPod, `validation/bench.py`, batch 16384 unless noted): 143 → 265 → 323 →
+341 → **1198 devices/s** (5dde971: the ions' constraint by `jax.jacrev` instead of `jacfwd`,
+extrapolated starts, the quadratic stop). Breakdown of one Newton step (`breakdown.py`, 67 ms for
+16384 devices): Jacobian blocks + ion columns 46 ms, sweep 15, the rest 6.
 
 Linear solvers: `thomas` (block sweep; fastest so far everywhere, the default), `pcr` (81
 devices/s on the A100: bandwidth-bound), `hybrid` (PCR 3 levels + sweep; 289 against the sweep's
@@ -25,15 +24,14 @@ devices/s on the A100: bandwidth-bound), `hybrid` (PCR 3 levels + sweep; 289 aga
 
 ## Next
 
-1. **A100 run of 5dde971** (instructions below): `bench.py` for `thomas` and `hybrid`, and
-   `validation/breakdown.py 16384`, which times each part of a Newton step. Expected: past the
-   gate.
-2. By the breakdown: if the sweep and the Jacobian blocks dominate, a fused kernel for them
-   (Pallas, or CUDA through `jax.ffi`) — the user's question of 2026-11-07; the whole Newton step
-   as one CUDA/HIP kernel only if jaxdd is to run millions of devices for good.
-3. Then M4 (mesh study), M5 (`dd_tables.py --backend jaxdd` in FauxPV: recompute the table
-   points SimSS's `errJ` flags, and the M20-00b ion grid), M6 (adaptive axes).
-4. Proposal PLAN.md §8b, for FauxPV and jaxdd together: a steric (Bikerman) limit on ion
+1. **Choose:** speed further or put it to use.
+   - Speed: assemble the Jacobian by edges (each interval's flux once) and in one `jacfwd`,
+     estimated 1.5–2× (about a day); a fused kernel only if far more is needed.
+   - Use (M5): `jaxdd` as a backend of FauxPV's `tools/dd_tables.py` — the ion grid of M20-00b
+     (918 050 devices, ~40 h on the CPU server) in ~13 min on one A100, and the table points
+     SimSS's `errJ` flags recomputed.
+2. M4 (mesh study), M6 (adaptive axes).
+3. Proposal PLAN.md §8b, for FauxPV and jaxdd together: a steric (Bikerman) limit on ion
    accumulation. Not started.
 
 ## Known limits

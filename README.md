@@ -7,7 +7,7 @@ output. First use: the drift-diffusion tables of
 [FauxPV](https://git.bugraturan.de/trn84/fauxpv) (`tools/dd_tables.py`).
 
 **Status: M1–M2 built** (one device, CPU; SimSS's steady state with ions), see [`PLAN.md`](PLAN.md).
-Where jaxdd differs from SIMsalabim, and why: [`DIFFERENCES.md`](DIFFERENCES.md).
+Where jaxdd differs from SIMsalabim, and why: [`DIFFERENCES.md`](DIFFERENCES.md). Current state and next steps: [`NEXT.md`](NEXT.md).
 
 ## Try it
 

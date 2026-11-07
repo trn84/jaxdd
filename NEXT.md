@@ -38,6 +38,15 @@ devices/s on the A100: bandwidth-bound), `hybrid` (PCR 3 levels + sweep; 289 aga
 
 ## Known limits
 
+- **The Newton shortcuts cost no accuracy that matters** (`validation/shortcuts.py`, 2014
+  devices: FauxPV's 1000-point sample light and dark, and the ion cases; 2026-11-08): against
+  the same solver run strict (`solve_batch(..., strict=True)`, Newton to a 1e-10 step), the
+  largest difference in J is 1.8e-6 of the generation current (the hard frozen case below),
+  the 99th percentile 8.5e-9, the median 2e-10; no device beyond 1e-4. They save 27 % of the
+  Newton steps (2.60 against 3.56 per voltage). Unconverged with them: 3 points, all in the
+  hard frozen case in the dark (strict: 59 there, without the settled-current criterion).
+  Every point carries its `converged` flag; nothing is cut off silently.
+
 - l 0.2 with 1e18 cm⁻³ ions frozen at full accumulation: the potential keeps a few 1e-5 V_T of
   round-off noise in the carrier-free bulk; converged by the settled current (noise ≤ 3e-6 of
   the scale). SimSS skips a third of those voltages.

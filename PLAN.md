@@ -1,7 +1,12 @@
 # Plan — `jaxdd`: a batched 1D drift-diffusion solver in JAX, on GPUs
 
-Status: **draft, 2026-11-07.** Nothing built. Written while FauxPV's M20-00b ion grid (918 050
-devices) runs on the 64-core server for an estimated 33–40 h.
+Status: **M1 and M2 built (2026-11-07), on one device on the CPU.** `src/jaxdd` solves SimSS's
+discrete equations (SIMsalabim's input files, its grid, Scharfetter–Gummel in the generalised
+potentials, its integral current) by a coupled Newton method with autodiff Jacobian blocks;
+ions free, frozen after a pre-bias, or immobile. Against SimSS 5.36 on 12 devices of FauxPV's
+table, light and dark: with SimSS's own Bernoulli approximation within 1–2e-6 of the current
+scale without ions (7e-9 where SimSS is converged tighter) and within 2e-5 with ions; about six
+Newton steps per voltage. Next: the 1000-device gate (§7), then batching (M3).
 
 A one-dimensional drift-diffusion solver for semiconductor devices — perovskite solar cells
 first — written in JAX so that it solves **hundreds of thousands of devices at once** on GPUs:
@@ -302,8 +307,8 @@ Tolerances are a decision (D3); the ones above are FauxPV's off-grid tolerances 
 |---|---|---|---|---|
 | **M0** | Profile one FauxPV chunk: container start, file I/O, SimSS's own time. **Done 2026-11-07** (§1a): overhead 5 %; the var-file fix took 14 % off a chunk | FauxPV | 1 day | — |
 | **M0b** | JAX on one A100: `jax_enable_x64`, a batched `lax.scan` block-Thomas solve of 10⁵ × 400 × 3×3 in FP64, its bandwidth and the batch size that fits; the same on CPU | A100 | 1 day | ≥ 50 % of the card's bandwidth, or the scan is replaced (Pallas kernel) before M1 builds on it |
-| **M1** | One device, CPU, x64: Poisson + continuity, SG, coupled Newton, contacts, offsets, thermionic interface, SRH + direct, generation profile; no ions. Both variable sets (D2) | laptop | 1–2 weeks | ion-free gate of §7 |
-| **M2** | Ions: frozen (pre-bias, then fixed) and free (bordered system) | laptop | 1–2 weeks | both ion gates of §7 |
+| **M1** ✓ | One device, CPU, x64: Poisson + continuity, SG, coupled Newton, contacts, offsets, thermionic interface, SRH + direct, generation profile; no ions. Both variable sets (D2) | laptop | 1–2 weeks | ion-free gate of §7 |
+| **M2** ✓ | Ions: frozen (pre-bias, then fixed) and free (bordered system) | laptop | 1–2 weeks | both ion gates of §7 |
 | **M3** | Batched: `vmap`, masked `while_loop`, continuation with sub-steps; on one A100 | A100 | 1 week | **go/no-go: ≥ 50× the server's 7.8 devices/s on one A100, at the §7 accuracy** |
 | **M4** | Mesh: graded, r-adaptive; the convergence study of §4 | RZ | 1 week | 400 points or fewer meet the gates on the hardest devices, or bucketing is justified |
 | **M5** | FauxPV backend: `dd_tables.py --backend jaxdd`, the table format; a stored table reproduced to tolerance | FauxPV + RZ | 1 week | 48-point `reproduce` within §7 |

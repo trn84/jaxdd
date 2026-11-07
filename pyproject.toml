@@ -1,0 +1,27 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "jaxdd"
+version = "0.0.1"
+description = "A batched 1D drift-diffusion solver in JAX, after SIMsalabim"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "LGPL-3.0-only" }
+dependencies = ["jax>=0.4.30", "numpy>=2.0"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "ruff>=0.5"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/jaxdd"]
+
+[tool.ruff]
+line-length = 100
+src = ["src", "tests"]
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
+ignore = ["RUF001", "RUF002", "RUF003"]

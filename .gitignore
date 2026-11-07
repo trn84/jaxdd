@@ -8,3 +8,5 @@ build/
 dist/
 # Results and reference curves large enough to need their own home
 data/*.npz
+# Validation results written by scripts
+validation/*.json

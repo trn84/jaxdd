@@ -19,9 +19,6 @@ from jaxdd.solver import solve_jv
 
 V = np.round(np.arange(-0.2, 1.3 + 1e-9, 0.025), 6)
 BERN = "simss"
-LINEAR = "auto"
-if len(sys.argv) > 1 and sys.argv[1].startswith("--linear="):
-    LINEAR = sys.argv.pop(1).split("=")[1]
 
 
 def main(cases: list[Path]) -> None:
@@ -32,11 +29,11 @@ def main(cases: list[Path]) -> None:
         devices.append(build_device(setup))
     batch = prepare(devices)
     start = time.perf_counter()
-    J, ok, its = solve_batch(batch, V, bernoulli_name=BERN, linear=LINEAR)
+    J, ok, its = solve_batch(batch, V, bernoulli_name=BERN)
     J.block_until_ready()
     first = time.perf_counter() - start
     start = time.perf_counter()
-    J, ok, its = solve_batch(batch, V, bernoulli_name=BERN, linear=LINEAR)
+    J, ok, its = solve_batch(batch, V, bernoulli_name=BERN)
     J.block_until_ready()
     again = time.perf_counter() - start
     J, ok, its = np.asarray(J), np.asarray(ok), np.asarray(its)

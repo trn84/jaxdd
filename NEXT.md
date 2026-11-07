@@ -18,9 +18,8 @@ Hand-over note, kept current at the end of a working session. The full plan is
 extrapolated starts, the quadratic stop). Breakdown of one Newton step (`breakdown.py`, 67 ms for
 16384 devices): Jacobian blocks + ion columns 46 ms, sweep 15, the rest 6.
 
-Linear solvers: `thomas` (block sweep; fastest so far everywhere, the default), `pcr` (81
-devices/s on the A100: bandwidth-bound), `hybrid` (PCR 3 levels + sweep; 289 against the sweep's
-323).
+The Newton system is solved by the block Thomas sweep; parallel cyclic reduction and a
+PCR–Thomas hybrid were built, measured slower everywhere, and taken out (PLAN.md §8a).
 
 ## Next
 
@@ -59,9 +58,8 @@ python3 -m venv .venv && .venv/bin/pip install -q --upgrade pip
 .venv/bin/pip install -q -e ".[dev]" "jax[cuda12]"
 .venv/bin/python -c "import jax; print(jax.__version__, jax.devices())"   # CudaDevice
 .venv/bin/python -m pytest -q
-.venv/bin/python validation/bench.py 16384 4096 thomas  2>&1 | tee bench_thomas_4096.txt
-.venv/bin/python validation/bench.py 65536 16384 thomas 2>&1 | tee bench_thomas_16384.txt
-.venv/bin/python validation/bench.py 65536 16384 hybrid 2>&1 | tee bench_hybrid_16384.txt
+.venv/bin/python validation/bench.py 16384 4096  2>&1 | tee bench_4096.txt
+.venv/bin/python validation/bench.py 65536 16384 2>&1 | tee bench_16384.txt
 cd validation && ../.venv/bin/python breakdown.py 16384 2>&1 | tee ../breakdown_16384.txt
 ```
 

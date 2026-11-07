@@ -27,9 +27,9 @@ from jaxdd.constants import Q
 from jaxdd.device import Device
 from jaxdd.solver import (
     BERNOULLI,
-    LINEAR_SOLVERS,
     ROUND_OFF_FLOOR,
     STALL_STEPS,
+    _block_thomas,
     _ion_constraints,
     _ion_logs,
     _ion_setup,
@@ -164,9 +164,7 @@ def _poisson_solve(y, d, s, ion, Vint, max_iter):
     return y
 
 
-def _newton_solve(
-    y, logs, d, s, ion, Vint, g_frac, B, tol, max_iter, linear="thomas", strict=False
-):
+def _newton_solve(y, logs, d, s, ion, Vint, g_frac, B, tol, max_iter, strict=False):
     """Newton at one voltage until converged (module docstring) or `max_iter`."""
     row_val, row_jac, row_ions = _kernels(B)
     bounds = _bounds(d, Vint)
@@ -190,7 +188,7 @@ def _newton_solve(
         dg_dV, D = jax.jacrev(constraints, argnums=(0, 1))(full[1:-1, 0], logs)
         D = D + jnp.diag(jnp.where(jnp.stack([ion["a_total"], ion["c_total"]]) > 0, 0.0, 1.0))
         W = jnp.zeros((y.shape[0], 3, 2)).at[:, 0, :].set(dg_dV.T)
-        X = LINEAR_SOLVERS[linear](A, Bb, C, jnp.concatenate([-F[..., None], U], axis=-1))
+        X = _block_thomas(A, Bb, C, jnp.concatenate([-F[..., None], U], axis=-1))
         XF, XU = X[..., 0], X[..., 1:]
         schur = D - jnp.einsum("irk,irl->kl", W, XU)
         d_logs = jnp.linalg.solve(schur, -g - jnp.einsum("irk,ir->k", W, XF))
@@ -274,7 +272,7 @@ def _freeze(s, ion, y, logs, Vt, flag):
     return s, ion
 
 
-def _solve_one(d, voltages, B, tol, max_iter, linear, strict):
+def _solve_one(d, voltages, B, tol, max_iter, strict):
     """One device's J-V curve: the pre-bias stage, then the scan."""
     s, ion, Vt, g_frac = d["s"], d["ion"], d["Vt"], d["g_frac"]
     first = jnp.where(d["pre_cond"] > 0, d["V_pre"], voltages[0])
@@ -283,7 +281,7 @@ def _solve_one(d, voltages, B, tol, max_iter, linear, strict):
     bounds = _bounds(d, first)
     logs = _ion_logs(jnp.concatenate([bounds[0][:1], y[:, 0], bounds[1][:1]]), ion)
     y, logs, _, pre_ok, _ = _newton_solve(
-        y, logs, d, s, ion, first, g_frac, B, tol, max_iter, linear, strict
+        y, logs, d, s, ion, first, g_frac, B, tol, max_iter, strict
     )
     s, ion = _freeze(s, ion, y, logs, Vt, (d["pre_cond"] > 0) & (d["fix_ions"] > 0))
 
@@ -295,7 +293,7 @@ def _solve_one(d, voltages, B, tol, max_iter, linear, strict):
         guess = y + ratio * (y - y_prev)
         logs_guess = logs + ratio * (logs - logs_prev)
         y_new, logs_new, J, ok, it = _newton_solve(
-            guess, logs_guess, d, s, ion, Vint, g_frac, B, tol, max_iter, linear, strict
+            guess, logs_guess, d, s, ion, Vint, g_frac, B, tol, max_iter, strict
         )
         return (y_new, logs_new, y, logs, Vint, V_last), (J, ok, it)
 
@@ -304,23 +302,16 @@ def _solve_one(d, voltages, B, tol, max_iter, linear, strict):
     return J, ok & pre_ok, its
 
 
-@functools.partial(jax.jit, static_argnames=("bernoulli_name", "max_iter", "linear", "strict"))
-def _solve_batch(batch, voltages, tol, max_iter, bernoulli_name, linear, strict):
+@functools.partial(jax.jit, static_argnames=("bernoulli_name", "max_iter", "strict"))
+def _solve_batch(batch, voltages, tol, max_iter, bernoulli_name, strict):
     B = BERNOULLI[bernoulli_name]
-    one = functools.partial(
-        _solve_one, B=B, tol=tol, max_iter=max_iter, linear=linear, strict=strict
-    )
+    one = functools.partial(_solve_one, B=B, tol=tol, max_iter=max_iter, strict=strict)
     return jax.vmap(one, in_axes=(0, None))(batch, voltages)
 
 
-def solve_batch(
-    batch, voltages, tol=1e-10, max_iter=60, bernoulli_name="exact", linear="auto", strict=False
-):
+def solve_batch(batch, voltages, tol=1e-10, max_iter=60, bernoulli_name="exact", strict=False):
     """J-V curves of a batch (`prepare`) at `voltages`: `(J, converged, iterations)`, each
-    batch × voltages. `linear`: `"thomas"`, `"pcr"`, `"hybrid"`, or `"auto"` — the block Thomas
-    sweep, fastest measured so far on a CPU and on an A100 (265 devices/s against PCR's 81).
+    batch × voltages.
     `strict`: Newton only to `tol` (or the round-off floor) — no quadratic stop, no settled
     current; for checking the shortcuts, at about one more step per voltage."""
-    if linear == "auto":
-        linear = "thomas"
-    return _solve_batch(batch, voltages, tol, max_iter, bernoulli_name, linear, strict)
+    return _solve_batch(batch, voltages, tol, max_iter, bernoulli_name, strict)

@@ -228,7 +228,12 @@ def _mm(a, b):
 
 
 def _block_thomas(A, B, C, d):
-    """Solve the block-tridiagonal system `A[i]·x[i−1] + B[i]·x[i] + C[i]·x[i+1] = d[i]`."""
+    """Solve the block-tridiagonal system `A[i]·x[i−1] + B[i]·x[i] + C[i]·x[i+1] = d[i]`.
+
+    Parallel cyclic reduction and a hybrid of it with this sweep were built and measured (M3,
+    commits 13a1f61, 9fda49c) and taken out again: slower everywhere — on an A100 at batch 16384
+    the sweep 1198 devices/s, the hybrid 824, PCR about a third of the sweep, its log₂ N passes
+    over every block bandwidth-bound. PLAN.md §8a."""
 
     def forward(carry, blocks):
         c_prev, d_prev = carry
@@ -251,87 +256,8 @@ def _block_thomas(A, B, C, d):
     return x
 
 
-def _pcr_levels(A, B, C, d, levels):
-    """`levels` levels of cyclic reduction: afterwards row `i` couples only to `i ± 2^levels`."""
-    n = A.shape[0]
-    eye = jnp.broadcast_to(jnp.eye(3), B.shape)
-    zero_m = jnp.zeros_like(A)
-    zero_d = jnp.zeros_like(d)
-
-    def down(X, s, fill):  # X[i - s], `fill` where i - s < 0
-        return jnp.concatenate([fill[:s], X[: n - s]])
-
-    def up(X, s, fill):  # X[i + s], `fill` where i + s >= n
-        return jnp.concatenate([X[s:], fill[:s]])
-
-    s = 1
-    for _ in range(levels):
-        if s >= n:
-            break
-        B_inv = _inverse3(B)
-        alpha = -_mm(A, down(B_inv, s, eye))
-        gamma = -_mm(C, up(B_inv, s, eye))
-        A, B, C, d = (
-            _mm(alpha, down(A, s, zero_m)),
-            B + _mm(alpha, down(C, s, zero_m)) + _mm(gamma, up(A, s, zero_m)),
-            _mm(gamma, up(C, s, zero_m)),
-            d + _mm(alpha, down(d, s, zero_d)) + _mm(gamma, up(d, s, zero_d)),
-        )
-        s *= 2
-    return A, B, C, d
-
-
-#: Levels of cyclic reduction before the hybrid hands over to the sweep: 2^3 = 8 independent
-#: systems of N/8 rows, swept side by side (Zhang, Cohen and Owens, PPoPP 2010).
-HYBRID_LEVELS = 3
-
-
-def _block_hybrid(A, B, C, d, levels=HYBRID_LEVELS):
-    """Cyclic reduction for `levels` levels, then the block Thomas sweep on the `2^levels`
-    systems it leaves, all at once: `2·N/2^levels` sequential steps instead of `2·N`, at the
-    cost of `levels` levels of extra arithmetic instead of `log₂ N` (PCR)."""
-    n = A.shape[0]
-    stride = 2**levels
-    pad = (-n) % stride
-    if pad:
-        eye = jnp.broadcast_to(jnp.eye(3), (pad, 3, 3))
-        A = jnp.concatenate([A, jnp.zeros((pad, 3, 3))])
-        B = jnp.concatenate([B, eye])
-        C = jnp.concatenate([C, jnp.zeros((pad, 3, 3))])
-        d = jnp.concatenate([d, jnp.zeros((pad, *d.shape[1:]))])
-    A, B, C, d = _pcr_levels(A, B, C, d, levels)
-    m = A.shape[0] // stride
-
-    def split(X):  # row i = j·stride + r  →  X[j, r]
-        return X.reshape(m, stride, *X.shape[1:])
-
-    x = jax.vmap(_block_thomas, in_axes=1, out_axes=1)(split(A), split(B), split(C), split(d))
-    return x.reshape(m * stride, *x.shape[2:])[:n]
-
-
-def _block_pcr(A, B, C, d):
-    """The same system by parallel cyclic reduction (M3): each level, every row eliminates its
-    neighbours at distance `s` at once and couples to those at `2s`; after ⌈log₂ N⌉ levels the
-    rows are uncoupled and `x = B⁻¹·d`. Nine levels for 400 points instead of 800 sequential
-    steps — more arithmetic (N log N), far less latency, which is what a GPU pays for here.
-
-    `A[0]` and `C[N−1]` must be zero (they are: the boundary values are known). Outside the
-    system a row is the identity with no right-hand side.
-    """
-    n = A.shape[0]
-    levels = max(1, (n - 1).bit_length())
-    A, B, C, d = _pcr_levels(A, B, C, d, levels)
-    return _mm(_inverse3(B), d)
-
-
-#: How the Newton system is solved: the block Thomas sweep (least arithmetic; the CPU's),
-#: parallel cyclic reduction (least latency, but log₂ N passes over every block: bandwidth-bound
-#: on an A100, 81 against the sweep's 265 devices/s), or the hybrid of the two.
-LINEAR_SOLVERS = {"thomas": _block_thomas, "pcr": _block_pcr, "hybrid": _block_hybrid}
-
-
-@functools.partial(jax.jit, static_argnames=("bernoulli_name", "linear"))
-def _newton_step(y, logs, bounds, s, ion, Vt, g_frac, bernoulli_name="exact", linear="thomas"):
+@functools.partial(jax.jit, static_argnames="bernoulli_name")
+def _newton_step(y, logs, bounds, s, ion, Vt, g_frac, bernoulli_name="exact"):
     """One damped Newton step on the interior unknowns `y` (NP × 3) and the ions'
     normalisations `logs` = `(ln C_anion, ln C_cation)`.
 
@@ -359,7 +285,7 @@ def _newton_step(y, logs, bounds, s, ion, Vt, g_frac, bernoulli_name="exact", li
     D = D + jnp.diag(jnp.where(jnp.array([ion["a_total"], ion["c_total"]]) > 0, 0.0, 1.0))
     W = jnp.zeros((y.shape[0], 3, 2)).at[:, 0, :].set(dg_dV.T)
 
-    X = LINEAR_SOLVERS[linear](A, B, C, jnp.concatenate([-F[..., None], U], axis=-1))
+    X = _block_thomas(A, B, C, jnp.concatenate([-F[..., None], U], axis=-1))
     XF, XU = X[..., 0], X[..., 1:]
     schur = D - jnp.einsum("irk,irl->kl", W, XU)
     d_logs = jnp.linalg.solve(schur, -g - jnp.einsum("irk,ir->k", W, XF))

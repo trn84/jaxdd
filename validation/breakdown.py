@@ -17,7 +17,7 @@ import jax.numpy as jnp
 from bench import variants
 
 from jaxdd.batch import _bounds, _current, _initial, prepare
-from jaxdd.solver import BERNOULLI, LINEAR_SOLVERS, _ion_constraints, _kernels
+from jaxdd.solver import BERNOULLI, _block_thomas, _ion_constraints, _kernels
 
 REPEATS = 5
 
@@ -78,10 +78,7 @@ def main(batch_size: int = 256) -> None:
     total += timed("residual (rows)", jax.jit(jax.vmap(residual)), batch)
     total += timed("Jacobian blocks + ion columns (jacfwd)", jax.jit(jax.vmap(jacobian)), batch)
     total += timed("ion constraint (jacrev)", jax.jit(jax.vmap(constraint)), batch)
-    for name, solve in LINEAR_SOLVERS.items():
-        ms = timed(f"linear solve: {name}", jax.jit(jax.vmap(solve)), A, B, C, rhs)
-        if name == "thomas":
-            total += ms
+    total += timed("linear solve (block sweep)", jax.jit(jax.vmap(_block_thomas)), A, B, C, rhs)
     total += timed("current", jax.jit(jax.vmap(current)), batch)
     print(f"  {'sum of the parts (with the sweep)':38s} {total:9.2f} ms")
 

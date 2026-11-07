@@ -400,6 +400,10 @@ estimated 1.5–2×; a fused kernel stays the large lever (some 15–30× from t
 bandwidth), no longer needed for the gate. FauxPV's ion grid (918 050 devices, ~40 h on the
 64-core server) would take about 13 min on one A100 — that is M5.
 
+**PCR and the hybrid taken out (2026-11-08):** slower than the sweep on every measurement, on
+the A100 and on a CPU, at every batch size; the code is in the history (13a1f61, 9fda49c), the
+sweep is the only linear solver, and `solve_batch` has no `linear` argument any more.
+
 ## 8b Proposal: a steric limit on ion accumulation (FauxPV and jaxdd together)
 
 **Why.** The hard case of §10 is not only numerical. Frozen at full accumulation, 1e18 cm⁻³ of

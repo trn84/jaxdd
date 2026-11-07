@@ -87,7 +87,7 @@ where the solver's robustness work goes (M1–M2).
 
 | | FP64 (TFLOP/s) | Memory bandwidth | Memory | Software |
 |---|---|---|---|---|
-| AMD Instinct MI50 (gfx906), ×4 owned | 6.7 per card (half its FP32) | 1 TB/s per card | 16 or 32 GB HBM2 | ROCm: **gfx906 is deprecated (ROCm 6.3) and unsupported in current releases**; no official JAX/ROCm build targets it |
+| AMD Instinct MI50 (gfx906), ×4 owned | 6.7 per card (half its FP32) | 1 TB/s per card | **16 GB** HBM2 per card | ROCm: **gfx906 is deprecated (ROCm 6.3) and unsupported in current releases**; no official JAX/ROCm build targets it |
 | NVIDIA A100 | 9.7 (19.5 with FP64 tensor cores) | 1.5–2 TB/s | 40/80 GB | CUDA; JAX's best-supported platform |
 | NVIDIA H100 | 34 (67) | 3.4 TB/s | 80 GB | CUDA |
 
@@ -263,8 +263,9 @@ requirement on the API (§6), not only on throughput.
   `shard_map`) — not `pmap`, which JAX has superseded; the devices are independent, so no
   communication. On the four MI50 one batch per card.
 - **Memory.** About 30 arrays of 400 points in FP64 per device (~100 kB) and the Jacobian's
-  3×3 blocks (~90 kB): about 200 kB, so 10⁵ devices in about 20 GB. An 80 GB card holds
-  3–4·10⁵ per batch.
+  3×3 blocks (~90 kB): about 200 kB, so 10⁵ devices in about 20 GB. A 16 GB MI50 holds about
+  6·10⁴ per batch with room for XLA's buffers, the four together 2.4·10⁵ per wave; an 80 GB
+  A100/H100 3–4·10⁵. Batch size is a parameter, measured in M0b, not a constant.
 - **I/O.** FauxPV's table format (`simss_tables.npz`: `J_light`, `J_dark`, `errJ`, QFLS on the
   same axes), so `tools/dd_tables.py` gains a `--backend jaxdd` and nothing downstream changes.
 - **FauxPV never imports it at run time** for F0 (its tables are data). If F3 adopts it later,

@@ -1,6 +1,8 @@
 """Throughput of the batched solver: N variants of the reference devices, on whatever JAX runs.
 
-    python validation/bench.py [N] [batch]      # e.g. 4096 1024 on an A100, 64 64 on a laptop
+    python validation/bench.py [N] [batch] [linear]   # e.g. 16384 4096 pcr on an A100
+
+`linear`: `auto` (PCR on a GPU, Thomas on a CPU), `thomas` or `pcr`.
 
 Needs only this repository: the variants are the committed SimSS inputs under `tests/data`
 with the trap density, the ion density and the transport layers' doping drawn at random (a
@@ -47,18 +49,18 @@ def variants(n: int, seed: int = 20261107) -> list:
     return devices
 
 
-def main(n: int = 64, batch_size: int = 64) -> None:
-    print(f"JAX {jax.__version__} on {jax.devices()}")
+def main(n: int = 64, batch_size: int = 64, linear: str = "auto") -> None:
+    print(f"JAX {jax.__version__} on {jax.devices()}, linear solver {linear}")
     devices = variants(n)
     batches = [prepare(devices[i : i + batch_size]) for i in range(0, n, batch_size)]
     start = time.perf_counter()
-    J, ok, _ = solve_batch(batches[0], V)
+    J, ok, _ = solve_batch(batches[0], V, linear=linear)
     J.block_until_ready()
     print(f"compilation and first batch of {batch_size}: {time.perf_counter() - start:.1f} s")
     start = time.perf_counter()
     converged = 0
     for b in batches:
-        J, ok, _ = solve_batch(b, V)
+        J, ok, _ = solve_batch(b, V, linear=linear)
         J.block_until_ready()
         converged += int(np.asarray(ok).sum())
     seconds = time.perf_counter() - start
@@ -77,4 +79,5 @@ def main(n: int = 64, batch_size: int = 64) -> None:
 
 
 if __name__ == "__main__":
-    main(*(int(a) for a in sys.argv[1:3]))
+    numbers = [int(a) for a in sys.argv[1:3]]
+    main(*numbers, *sys.argv[3:4])

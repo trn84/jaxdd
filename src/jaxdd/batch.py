@@ -27,9 +27,9 @@ from jaxdd.constants import Q
 from jaxdd.device import Device
 from jaxdd.solver import (
     BERNOULLI,
+    LINEAR_SOLVERS,
     ROUND_OFF_FLOOR,
     STALL_STEPS,
-    _block_thomas,
     _ion_constraints,
     _ion_logs,
     _ion_setup,
@@ -160,7 +160,7 @@ def _poisson_solve(y, d, s, ion, Vint, max_iter):
     return y
 
 
-def _newton_solve(y, logs, d, s, ion, Vint, g_frac, B, tol, max_iter):
+def _newton_solve(y, logs, d, s, ion, Vint, g_frac, B, tol, max_iter, linear="thomas"):
     """Newton at one voltage until converged (module docstring) or `max_iter`."""
     row_val, row_jac, row_ions = _kernels(B)
     bounds = _bounds(d, Vint)
@@ -182,7 +182,7 @@ def _newton_solve(y, logs, d, s, ion, Vint, g_frac, B, tol, max_iter):
         dg_dV, D = jax.jacfwd(constraints, argnums=(0, 1))(full[1:-1, 0], logs)
         D = D + jnp.diag(jnp.where(jnp.stack([ion["a_total"], ion["c_total"]]) > 0, 0.0, 1.0))
         W = jnp.zeros((y.shape[0], 3, 2)).at[:, 0, :].set(dg_dV.T)
-        X = _block_thomas(A, Bb, C, jnp.concatenate([-F[..., None], U], axis=-1))
+        X = LINEAR_SOLVERS[linear](A, Bb, C, jnp.concatenate([-F[..., None], U], axis=-1))
         XF, XU = X[..., 0], X[..., 1:]
         schur = D - jnp.einsum("irk,irl->kl", W, XU)
         d_logs = jnp.linalg.solve(schur, -g - jnp.einsum("irk,ir->k", W, XF))
@@ -259,7 +259,7 @@ def _freeze(s, ion, y, logs, Vt, flag):
     return s, ion
 
 
-def _solve_one(d, voltages, B, tol, max_iter):
+def _solve_one(d, voltages, B, tol, max_iter, linear):
     """One device's J-V curve: the pre-bias stage, then the scan."""
     s, ion, Vt, g_frac = d["s"], d["ion"], d["Vt"], d["g_frac"]
     first = jnp.where(d["pre_cond"] > 0, d["V_pre"], voltages[0])
@@ -267,22 +267,33 @@ def _solve_one(d, voltages, B, tol, max_iter):
     y = _poisson_solve(y, d, s, ion, first, max_iter)
     bounds = _bounds(d, first)
     logs = _ion_logs(jnp.concatenate([bounds[0][:1], y[:, 0], bounds[1][:1]]), ion)
-    y, logs, _, pre_ok, _ = _newton_solve(y, logs, d, s, ion, first, g_frac, B, tol, max_iter)
+    y, logs, _, pre_ok, _ = _newton_solve(
+        y, logs, d, s, ion, first, g_frac, B, tol, max_iter, linear
+    )
     s, ion = _freeze(s, ion, y, logs, Vt, (d["pre_cond"] > 0) & (d["fix_ions"] > 0))
 
     def scan(carry, Vint):
         y, logs = carry
-        y, logs, J, ok, it = _newton_solve(y, logs, d, s, ion, Vint, g_frac, B, tol, max_iter)
+        y, logs, J, ok, it = _newton_solve(
+            y, logs, d, s, ion, Vint, g_frac, B, tol, max_iter, linear
+        )
         return (y, logs), (J, ok, it)
 
     _, (J, ok, its) = jax.lax.scan(scan, (y, logs), voltages)
     return J, ok & pre_ok, its
 
 
-@functools.partial(jax.jit, static_argnames=("bernoulli_name", "max_iter"))
-def solve_batch(batch, voltages, tol=1e-10, max_iter=60, bernoulli_name="exact"):
-    """J-V curves of a batch (`prepare`) at `voltages`: `(J, converged, iterations)`, each
-    batch × voltages."""
+@functools.partial(jax.jit, static_argnames=("bernoulli_name", "max_iter", "linear"))
+def _solve_batch(batch, voltages, tol, max_iter, bernoulli_name, linear):
     B = BERNOULLI[bernoulli_name]
-    one = functools.partial(_solve_one, B=B, tol=tol, max_iter=max_iter)
+    one = functools.partial(_solve_one, B=B, tol=tol, max_iter=max_iter, linear=linear)
     return jax.vmap(one, in_axes=(0, None))(batch, voltages)
+
+
+def solve_batch(batch, voltages, tol=1e-10, max_iter=60, bernoulli_name="exact", linear="auto"):
+    """J-V curves of a batch (`prepare`) at `voltages`: `(J, converged, iterations)`, each
+    batch × voltages. `linear`: `"thomas"`, `"pcr"`, or `"auto"` — parallel cyclic reduction
+    on a GPU, where latency rules, the block Thomas sweep on a CPU."""
+    if linear == "auto":
+        linear = "thomas" if jax.default_backend() == "cpu" else "pcr"
+    return _solve_batch(batch, voltages, tol, max_iter, bernoulli_name, linear)

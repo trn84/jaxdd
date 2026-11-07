@@ -203,20 +203,20 @@ SWEEP_UNROLL = 8
 
 
 def _inverse3(m):
-    """The inverse of a 3×3 matrix by its adjugate: elementwise arithmetic only, so that XLA
-    fuses it into the sweep's kernel instead of calling a batched LU per grid point (M3). The
-    rows are scaled to their terms' size (`_stencils`), which keeps the determinant well away
-    from round-off."""
-    a, b, c = m[0, 0], m[0, 1], m[0, 2]
-    d, e, f = m[1, 0], m[1, 1], m[1, 2]
-    g, h, i = m[2, 0], m[2, 1], m[2, 2]
-    co = jnp.array([
-        [e * i - f * h, c * h - b * i, b * f - c * e],
-        [f * g - d * i, a * i - c * g, c * d - a * f],
-        [d * h - e * g, b * g - a * h, a * e - b * d],
-    ])  # fmt: skip
-    det = a * co[0, 0] + b * co[1, 0] + c * co[2, 0]
-    return co / det
+    """The inverse of 3×3 matrices (`... × 3 × 3`) by the adjugate: elementwise arithmetic only,
+    so that XLA fuses it instead of calling a batched LU per grid point (M3). The rows are
+    scaled to their terms' size (`_stencils`), which keeps the determinant well away from
+    round-off."""
+    a, b, c = m[..., 0, 0], m[..., 0, 1], m[..., 0, 2]
+    d, e, f = m[..., 1, 0], m[..., 1, 1], m[..., 1, 2]
+    g, h, i = m[..., 2, 0], m[..., 2, 1], m[..., 2, 2]
+    co = jnp.stack([
+        jnp.stack([e * i - f * h, c * h - b * i, b * f - c * e], -1),
+        jnp.stack([f * g - d * i, a * i - c * g, c * d - a * f], -1),
+        jnp.stack([d * h - e * g, b * g - a * h, a * e - b * d], -1),
+    ], -2)  # fmt: skip
+    det = a * co[..., 0, 0] + b * co[..., 1, 0] + c * co[..., 2, 0]
+    return co / det[..., None, None]
 
 
 def _block_thomas(A, B, C, d):
@@ -225,7 +225,7 @@ def _block_thomas(A, B, C, d):
     def forward(carry, blocks):
         c_prev, d_prev = carry
         a, b, c, r = blocks
-        m_inv = _inverse3(b - a @ c_prev)
+        m_inv = _inverse3(b - a @ c_prev)  # one block
         c_new = m_inv @ c
         d_new = m_inv @ (r - a @ d_prev)
         return (c_new, d_new), (c_new, d_new)
@@ -243,8 +243,48 @@ def _block_thomas(A, B, C, d):
     return x
 
 
-@functools.partial(jax.jit, static_argnames="bernoulli_name")
-def _newton_step(y, logs, bounds, s, ion, Vt, g_frac, bernoulli_name="exact"):
+def _block_pcr(A, B, C, d):
+    """The same system by parallel cyclic reduction (M3): each level, every row eliminates its
+    neighbours at distance `s` at once and couples to those at `2s`; after ⌈log₂ N⌉ levels the
+    rows are uncoupled and `x = B⁻¹·d`. Nine levels for 400 points instead of 800 sequential
+    steps — more arithmetic (N log N), far less latency, which is what a GPU pays for here.
+
+    `A[0]` and `C[N−1]` must be zero (they are: the boundary values are known). Outside the
+    system a row is the identity with no right-hand side.
+    """
+    n = A.shape[0]
+    eye = jnp.broadcast_to(jnp.eye(3), B.shape)
+    zero_m = jnp.zeros_like(A)
+    zero_d = jnp.zeros_like(d)
+
+    def down(X, s, fill):  # X[i - s], `fill` where i - s < 0
+        return jnp.concatenate([fill[:s], X[: n - s]])
+
+    def up(X, s, fill):  # X[i + s], `fill` where i + s >= n
+        return jnp.concatenate([X[s:], fill[:s]])
+
+    s = 1
+    while s < n:
+        B_inv = _inverse3(B)
+        alpha = -A @ down(B_inv, s, eye)
+        gamma = -C @ up(B_inv, s, eye)
+        A, B, C, d = (
+            alpha @ down(A, s, zero_m),
+            B + alpha @ down(C, s, zero_m) + gamma @ up(A, s, zero_m),
+            gamma @ up(C, s, zero_m),
+            d + alpha @ down(d, s, zero_d) + gamma @ up(d, s, zero_d),
+        )
+        s *= 2
+    return _inverse3(B) @ d
+
+
+#: How the Newton system is solved: the block Thomas sweep (least arithmetic; the CPU's), or
+#: parallel cyclic reduction (least latency; for a GPU).
+LINEAR_SOLVERS = {"thomas": _block_thomas, "pcr": _block_pcr}
+
+
+@functools.partial(jax.jit, static_argnames=("bernoulli_name", "linear"))
+def _newton_step(y, logs, bounds, s, ion, Vt, g_frac, bernoulli_name="exact", linear="thomas"):
     """One damped Newton step on the interior unknowns `y` (NP × 3) and the ions'
     normalisations `logs` = `(ln C_anion, ln C_cation)`.
 
@@ -271,7 +311,7 @@ def _newton_step(y, logs, bounds, s, ion, Vt, g_frac, bernoulli_name="exact"):
     D = D + jnp.diag(jnp.where(jnp.array([ion["a_total"], ion["c_total"]]) > 0, 0.0, 1.0))
     W = jnp.zeros((y.shape[0], 3, 2)).at[:, 0, :].set(dg_dV.T)
 
-    X = _block_thomas(A, B, C, jnp.concatenate([-F[..., None], U], axis=-1))
+    X = LINEAR_SOLVERS[linear](A, B, C, jnp.concatenate([-F[..., None], U], axis=-1))
     XF, XU = X[..., 0], X[..., 1:]
     schur = D - jnp.einsum("irk,irl->kl", W, XU)
     d_logs = jnp.linalg.solve(schur, -g - jnp.einsum("irk,ir->k", W, XF))

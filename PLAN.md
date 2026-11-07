@@ -363,6 +363,11 @@ inverse in closed form (elementwise, fusable) and the sweep unrolled by 8; on on
 of 8192–32768. If latency still dominates, the sweep as one Pallas kernel, or parallel cyclic
 reduction (log₂ 400 ≈ 9 levels instead of 400 steps).
 
+**Second run** (after the closed-form inverse): short of 390 devices/s. **Parallel cyclic
+reduction built** (`solver._block_pcr`, `linear="pcr"`, the default on a GPU): nine levels of
+fully parallel block eliminations instead of the 2 × 400-step sweep; the same results as the
+sweep on every reference case, a test against the dense solve.
+
 ## 8b Proposal: a steric limit on ion accumulation (FauxPV and jaxdd together)
 
 **Why.** The hard case of §10 is not only numerical. Frozen at full accumulation, 1e18 cm⁻³ of

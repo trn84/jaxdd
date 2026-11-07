@@ -5,7 +5,8 @@ devices) runs on the 64-core server for an estimated 33–40 h.
 
 A one-dimensional drift-diffusion solver for semiconductor devices — perovskite solar cells
 first — written in JAX so that it solves **hundreds of thousands of devices at once** on GPUs:
-the group's own 4× AMD Instinct MI50, and A100/H100 at a computing centre. Built on SIMsalabim
+**NVIDIA A100 as the default target** (CUDA, JAX's best-supported platform; D9), H100 alike,
+and later the group's own 4× AMD Instinct MI50 once their software stack is solved (§1b). Built on SIMsalabim
 (LGPL-3.0) — its model, and where it helps its code, carried into a batched solver — released
 under the same licence and validated against SIMsalabim's output.
 
@@ -91,11 +92,14 @@ where the solver's robustness work goes (M1–M2).
 | NVIDIA A100 | 9.7 (19.5 with FP64 tensor cores) | 1.5–2 TB/s | 40/80 GB | CUDA; JAX's best-supported platform |
 | NVIDIA H100 | 34 (67) | 3.4 TB/s | 80 GB | CUDA |
 
-For a bandwidth-bound FP64 solver the four MI50 together are about two A100s, and they are the
-group's: no queue, days of runs for free, the right machine for development and for tables.
-**The open question is software, not silicon.** JAX reaches AMD GPUs through XLA's ROCm
-backend, built for the GPUs AMD supports; gfx906 has fallen out of that list. Ways in, cheapest
-first, to be tried in M0b before anything is built on them:
+**Default: the A100 (decided 2026-11-07, D9).** Everything is developed and measured on CUDA
+first, where JAX works out of the box; the code stays plain JAX, with no CUDA-specific kernel,
+so that a later port has nothing to undo.
+
+**Later: the MI50.** For a bandwidth-bound FP64 solver the four MI50 together are about two
+A100s, and they are the group's: no queue, days of runs for free. The open question is software,
+not silicon. JAX reaches AMD GPUs through XLA's ROCm backend, built for the GPUs AMD supports;
+gfx906 has fallen out of that list. Ways in, cheapest first, for the port (M8):
 
 1. An older matching pair: the last ROCm with full gfx906 support (5.7, by secondary sources)
    and the jaxlib-rocm of that time, in a container.
@@ -297,14 +301,15 @@ Tolerances are a decision (D3); the ones above are FauxPV's off-grid tolerances 
 | | Work | Where | Size | Gate to continue |
 |---|---|---|---|---|
 | **M0** | Profile one FauxPV chunk: container start, file I/O, SimSS's own time. **Done 2026-11-07** (§1a): overhead 5 %; the var-file fix took 14 % off a chunk | FauxPV | 1 day | — |
-| **M0b** | ROCm and JAX on the MI50 (§1b): which of the three ways runs `jax_enable_x64`, a batched `lax.scan` block-Thomas solve of 10⁵ × 400 × 3×3 in FP64, and at what bandwidth; the same on CPU | MI50 server | 1–3 days | one way works at ≥ 50 % of the card's bandwidth, or the HIP kernel (way 3) is the plan |
+| **M0b** | JAX on one A100: `jax_enable_x64`, a batched `lax.scan` block-Thomas solve of 10⁵ × 400 × 3×3 in FP64, its bandwidth and the batch size that fits; the same on CPU | A100 | 1 day | ≥ 50 % of the card's bandwidth, or the scan is replaced (Pallas kernel) before M1 builds on it |
 | **M1** | One device, CPU, x64: Poisson + continuity, SG, coupled Newton, contacts, offsets, thermionic interface, SRH + direct, generation profile; no ions. Both variable sets (D2) | laptop | 1–2 weeks | ion-free gate of §7 |
 | **M2** | Ions: frozen (pre-bias, then fixed) and free (bordered system) | laptop | 1–2 weeks | both ion gates of §7 |
-| **M3** | Batched: `vmap`, masked `while_loop`, continuation with sub-steps; on the MI50 (M0b's way), and on one A100 or H100 at a centre for comparison | MI50, RZ | 1 week | **go/no-go: ≥ 50× the server's 7.8 devices/s on the four MI50 (or one A100), at the §7 accuracy** |
+| **M3** | Batched: `vmap`, masked `while_loop`, continuation with sub-steps; on one A100 | A100 | 1 week | **go/no-go: ≥ 50× the server's 7.8 devices/s on one A100, at the §7 accuracy** |
 | **M4** | Mesh: graded, r-adaptive; the convergence study of §4 | RZ | 1 week | 400 points or fewer meet the gates on the hardest devices, or bucketing is justified |
 | **M5** | FauxPV backend: `dd_tables.py --backend jaxdd`, the table format; a stored table reproduced to tolerance | FauxPV + RZ | 1 week | 48-point `reproduce` within §7 |
 | **M6** | Adaptive axes (§5): error-driven axis refinement; first use on M20-00b's open layer axes (D0 a) | FauxPV + RZ | 1–2 weeks | the refined axes meet the off-grid tolerance with fewer devices than the hand-made ones |
 | M7 | Optional: implicit gradients (`jax.custom_root`) for fitting; transients for F3 | — | open | own plan |
+| M8 | The MI50 port (§1b): the three ways in order; the M3 benchmark on the four cards | MI50 server | 1–2 weeks | the M3 results reproduced within §7, at a throughput worth the cards |
 
 Total to the first useful table (M0–M5): **5–8 weeks** of focused work, most of it M1–M2
 (physics and robustness), not the GPU part. M3 decides early, before M4–M6 are spent.
@@ -342,8 +347,8 @@ name, the institute's legal office has the last word.
 | FP64 cost of `exp`/`log` | slower than the bandwidth estimate | Bernoulli function via series near 0 and cached exponentials; measure in M3 |
 | `lax.scan` over 400 points | launch overhead per step dominates small batches | large batches; if needed a Pallas/Triton kernel for the block Thomas sweep |
 | Scope creep towards a full SIMsalabim | months | §2.1 is the scope; every addition its own decision |
-| ROCm on gfx906 | the MI50 cannot run JAX at all, or only an old stack | M0b first, before M1; three ways (§1b); the A100/H100 path and the CPU path stay working regardless |
-| RZ access and queues | comparison runs wait for GPU time | the MI50 carry development and production; the centre only for the comparison |
+| A100 access | M0b, M3 wait for GPU time | M1–M2 run on CPU; M0b and M3 need hours, not days; a cloud A100 by the hour if the centre's queue is long |
+| ROCm on gfx906 | the MI50 never run it | not on the critical path (M8, after the A100 works); three ways (§1b), the third independent of XLA's ROCm support |
 | Generality | Stage B's breadth delays a usable Stage A | Stage A's scope is fixed (§2.1); B module by module, each released when validated |
 
 ## 11 Decisions
@@ -357,4 +362,5 @@ name, the institute's legal office has the last word.
 | D5 | Where it lives | its own repo on Forgejo; `fauxpv/projects/` | **its own repo**: it is useful without FauxPV, and FauxPV only calls it from `tools/` |
 | D6 | M0 first | yes; no | **done** (§1a): overhead 5 %, the var-file fix 14 % |
 | D7 | General or FauxPV's | a solver for FauxPV's tables; a general SimSS-compatible batched solver | **general, decided 2026-11-07**: general in structure and input, staged in physics (§2) |
+| D9 | First GPU platform | A100 (CUDA); MI50 (ROCm) | **A100, decided 2026-11-07**: JAX works there as is; the MI50 port (M8) once the solver is done |
 | D8 | Input format | SIMsalabim's parameter files; a format of its own; both | **SIMsalabim's files** as the interface (every SimSS user's sweep runs unchanged), a Python API of pytrees beside it for batches built in code |

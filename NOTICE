@@ -1,0 +1,19 @@
+jaxdd — a batched 1D drift-diffusion solver in JAX
+Copyright (C) 2026 Bugra Turan
+
+jaxdd is free software: you can redistribute it and/or modify it under the terms of the GNU
+Lesser General Public License as published by the Free Software Foundation, version 3
+(COPYING.LESSER, which supplements the GNU General Public License version 3 in COPYING).
+
+jaxdd follows the device model of SIMsalabim and may carry over parts of its code:
+
+    SIMsalabim — https://github.com/kostergroup/SIMsalabim
+    Copyright (C) the SIMsalabim authors (L. J. A. Koster, V. M. Le Corre, M. Koopmans and
+    contributors), University of Groningen; licensed under the GNU LGPL version 3.
+    M. Koopmans, V. M. Le Corre, L. J. A. Koster, J. Open Source Softw. 7, 3727 (2022),
+    doi:10.21105/joss.03727
+
+Modules derived from SIMsalabim (GPL-3.0 §5 a: each such file also says so in its header,
+with the SIMsalabim unit and version it follows and the date it was changed):
+
+    (none yet)

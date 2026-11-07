@@ -1,14 +1,20 @@
-# Plan — `jaxdd`: a batched 1D drift-diffusion solver in JAX for A100/H100
+# Plan — `jaxdd`: a batched 1D drift-diffusion solver in JAX, on GPUs
 
 Status: **draft, 2026-11-07.** Nothing built. Written while FauxPV's M20-00b ion grid (918 050
 devices) runs on the 64-core server for an estimated 33–40 h.
 
-A one-dimensional drift-diffusion solver for perovskite solar cells, written in JAX so that it
-solves **hundreds of thousands of devices at once** on a data-centre GPU. Built on
-SIMsalabim (LGPL-3.0) — its model, and where it helps its code, carried into a batched
-solver — released under the same licence and validated against SIMsalabim's output. First target: FauxPV's drift-diffusion tables (`tools/dd_tables.py`),
-which today cost days of CPU time per refinement. Later, maybe: FauxPV's F3 fidelity level
-(drift-diffusion at run time, M20-07), and gradients for fitting.
+A one-dimensional drift-diffusion solver for semiconductor devices — perovskite solar cells
+first — written in JAX so that it solves **hundreds of thousands of devices at once** on GPUs:
+the group's own 4× AMD Instinct MI50, and A100/H100 at a computing centre. Built on SIMsalabim
+(LGPL-3.0) — its model, and where it helps its code, carried into a batched solver — released
+under the same licence and validated against SIMsalabim's output.
+
+**A general tool, not FauxPV's** (decided 2026-11-07, D7): it reads SIMsalabim's own input
+files, so anyone who sweeps SimSS today can batch the sweep on a GPU. FauxPV is its first user
+and its validation corpus — 1.3 M devices SimSS has already solved — not its scope. The physics
+grows in stages (§2), each validated against SimSS before the next; the first stage is the part
+of SimSS that FauxPV's drift-diffusion tables use, because that is where a million reference
+curves already exist.
 
 ---
 
@@ -77,9 +83,34 @@ up to 9.8 s each, all at `ℓ` 0.2–0.5 on 700–1000 nm absorbers; a run at `�
 be sorted by difficulty (`ℓ`, absorber), or the hard tenth sets the pace of all. It also says
 where the solver's robustness work goes (M1–M2).
 
+## 1b The hardware: 4× MI50 in the group, A100/H100 at a centre
+
+| | FP64 (TFLOP/s) | Memory bandwidth | Memory | Software |
+|---|---|---|---|---|
+| AMD Instinct MI50 (gfx906), ×4 owned | 6.7 per card (half its FP32) | 1 TB/s per card | 16 or 32 GB HBM2 | ROCm: **gfx906 is deprecated (ROCm 6.3) and unsupported in current releases**; no official JAX/ROCm build targets it |
+| NVIDIA A100 | 9.7 (19.5 with FP64 tensor cores) | 1.5–2 TB/s | 40/80 GB | CUDA; JAX's best-supported platform |
+| NVIDIA H100 | 34 (67) | 3.4 TB/s | 80 GB | CUDA |
+
+For a bandwidth-bound FP64 solver the four MI50 together are about two A100s, and they are the
+group's: no queue, days of runs for free, the right machine for development and for tables.
+**The open question is software, not silicon.** JAX reaches AMD GPUs through XLA's ROCm
+backend, built for the GPUs AMD supports; gfx906 has fallen out of that list. Ways in, cheapest
+first, to be tried in M0b before anything is built on them:
+
+1. An older matching pair: the last ROCm with full gfx906 support (5.7, by secondary sources)
+   and the jaxlib-rocm of that time, in a container.
+2. jaxlib built from source for gfx906 against a ROCm that still ships gfx906 libraries
+   (6.2/6.3, deprecated but present).
+3. JAX for the model and its CPU and CUDA paths, and the batched block-tridiagonal core as a
+   hand-written HIP kernel for the MI50 (called through a custom call or plain `ctypes`).
+
+`HSA_OVERRIDE_GFX_VERSION` does not help: gfx906 already is 9.0.6, and claiming to be another
+architecture (gfx908, gfx90a) runs kernels compiled for a different instruction set. The
+override is for consumer cards that share an instruction set with a supported one.
+
 ## 2 Scope
 
-### 2.1 The physics FauxPV's tables need (phase 1)
+### 2.1 Stage A: the physics FauxPV's tables need
 
 What `tools/simss_reference.py::simss_parameters` and `tools/dd_tables.py` ask of SimSS today,
 and nothing more:
@@ -94,13 +125,26 @@ and nothing more:
 | Ions | anions and cations of equal density in the absorber only; settled at a pre-bias under light (`preCond`), then frozen for the scan (`fixIons`, with the patch FauxPV applies to SimSS 5.36 so that Poisson's equation also holds them); and the steady state with ions free at every voltage |
 | Output | `J(V)` light and dark on a fixed voltage grid (−0.2 to 1.3 V in 25 mV), its error estimate, the absorber's mean QFLS; per device a convergence flag (SimSS: `failureMode`) |
 
-### 2.2 Later phases, each its own decision
+Stage A is general in structure from the start: any number of layers, each with its own
+parameters; interfaces with their own offsets and transfer velocities; the input read from
+SIMsalabim's `simulation_setup.txt` and layer files (D8). What Stage A leaves out is refused by
+name when an input asks for it, never ignored.
 
-Transients (ZimT: scan-rate hysteresis, TRPL, impedance) for FauxPV's F3; charged and multiple
-trap levels, interface traps; temperature-dependent parameters; tunnelling. None is needed for
-the tables.
+### 2.2 Stage B: SimSS's steady state in full
 
-### 2.3 Not part of this
+One module at a time, each validated against SimSS on its own test devices before the next:
+charged traps at several levels in the bulk and at interfaces; Schottky contacts and finite
+surface recombination; series and shunt resistance; the remaining recombination and mobility
+options of SimSS's parameter files. At the end of Stage B a SimSS input file runs on `jaxdd` or
+is refused with the missing feature named.
+
+### 2.3 Stage C: transients (ZimT)
+
+Time-dependent drift-diffusion with mobile ions: scan-rate hysteresis, transient
+photocurrent and photovoltage, impedance — FauxPV's F3 and most of what groups use ZimT for.
+Its own plan when Stage B is done.
+
+### 2.4 Not part of this
 
 A line-by-line port of SIMsalabim (its one-device Gummel structure does not batch; §3.2,
 §9); 2D/3D; a GUI; replacing SimSS as FauxPV's reference (SimSS
@@ -129,6 +173,18 @@ batch as the leading axis of every array, so each scan step is a batched 3×3 so
 decoupled Gummel iteration (SimSS's scheme) would need three scalar tridiagonal solves per
 iteration (`jax.lax.linalg.tridiagonal_solve`, batched on GPU) but more iterations, and it
 stalls at high injection; it is the fallback if the coupled step is fragile.
+
+**The Jacobian by automatic differentiation, locally.** Writing the residual of one grid point
+as a function of the unknowns at its three neighbours and differentiating it with `jax.jacfwd`
+gives the three 3×3 blocks of its row exactly, with no hand-derived Scharfetter–Gummel
+derivatives — the error-prone part of every drift-diffusion code. Not `jax.jacobian` of the
+whole residual: that is a dense 1200×1200 matrix per device, 11.5 MB and 1200 forward passes,
+where the blocks are 10 kB and three.
+
+**The Bernoulli function** `B(x) = x/(eˣ − 1)` is 0/0 at `x = 0`, and a `jnp.where` that only
+masks the value still differentiates the masked branch and puts NaN into the Jacobian. The
+"double where": replace `x` by a safe value inside the branch before it is evaluated, and
+use the series `1 − x/2 + x²/12` below |x| ≈ 1e-3.
 
 Damping: the classic potential-update limit (Bank–Rose, or a cap on `|Δψ|` of a few `V_T`).
 Convergence: the update and the residual, both scaled, per device.
@@ -203,8 +259,9 @@ requirement on the API (§6), not only on throughput.
 - **Package** `jaxdd`, Python ≥ 3.11, `jax` with `jax_enable_x64`; on the cluster
   `jax[cuda12]` in an Apptainer image, run under Slurm. Pure functions only: a device is a
   pytree of arrays, `solve(device, voltages) -> curves`, `vmap`ped and `jit`ted; no global state.
-- **Batches across GPUs** with `jax.sharding` (`shard_map`) over the batch axis; the devices are
-  independent, so no communication.
+- **Batches across GPUs** with `jax.jit` and a sharding of the batch axis (`NamedSharding`, or
+  `shard_map`) — not `pmap`, which JAX has superseded; the devices are independent, so no
+  communication. On the four MI50 one batch per card.
 - **Memory.** About 30 arrays of 400 points in FP64 per device (~100 kB) and the Jacobian's
   3×3 blocks (~90 kB): about 200 kB, so 10⁵ devices in about 20 GB. An 80 GB card holds
   3–4·10⁵ per batch.
@@ -239,9 +296,10 @@ Tolerances are a decision (D3); the ones above are FauxPV's off-grid tolerances 
 | | Work | Where | Size | Gate to continue |
 |---|---|---|---|---|
 | **M0** | Profile one FauxPV chunk: container start, file I/O, SimSS's own time. **Done 2026-11-07** (§1a): overhead 5 %; the var-file fix took 14 % off a chunk | FauxPV | 1 day | — |
+| **M0b** | ROCm and JAX on the MI50 (§1b): which of the three ways runs `jax_enable_x64`, a batched `lax.scan` block-Thomas solve of 10⁵ × 400 × 3×3 in FP64, and at what bandwidth; the same on CPU | MI50 server | 1–3 days | one way works at ≥ 50 % of the card's bandwidth, or the HIP kernel (way 3) is the plan |
 | **M1** | One device, CPU, x64: Poisson + continuity, SG, coupled Newton, contacts, offsets, thermionic interface, SRH + direct, generation profile; no ions. Both variable sets (D2) | laptop | 1–2 weeks | ion-free gate of §7 |
 | **M2** | Ions: frozen (pre-bias, then fixed) and free (bordered system) | laptop | 1–2 weeks | both ion gates of §7 |
-| **M3** | Batched: `vmap`, masked `while_loop`, continuation with sub-steps; on one A100 or H100 (RZ), and on a consumer GPU for comparison | RZ | 1 week | **go/no-go: ≥ 50× the server's 7.8 devices/s on one GPU, at the §7 accuracy** |
+| **M3** | Batched: `vmap`, masked `while_loop`, continuation with sub-steps; on the MI50 (M0b's way), and on one A100 or H100 at a centre for comparison | MI50, RZ | 1 week | **go/no-go: ≥ 50× the server's 7.8 devices/s on the four MI50 (or one A100), at the §7 accuracy** |
 | **M4** | Mesh: graded, r-adaptive; the convergence study of §4 | RZ | 1 week | 400 points or fewer meet the gates on the hardest devices, or bucketing is justified |
 | **M5** | FauxPV backend: `dd_tables.py --backend jaxdd`, the table format; a stored table reproduced to tolerance | FauxPV + RZ | 1 week | 48-point `reproduce` within §7 |
 | **M6** | Adaptive axes (§5): error-driven axis refinement; first use on M20-00b's open layer axes (D0 a) | FauxPV + RZ | 1–2 weeks | the refined axes meet the off-grid tolerance with fewer devices than the hand-made ones |
@@ -283,7 +341,9 @@ name, the institute's legal office has the last word.
 | FP64 cost of `exp`/`log` | slower than the bandwidth estimate | Bernoulli function via series near 0 and cached exponentials; measure in M3 |
 | `lax.scan` over 400 points | launch overhead per step dominates small batches | large batches; if needed a Pallas/Triton kernel for the block Thomas sweep |
 | Scope creep towards a full SIMsalabim | months | §2.1 is the scope; every addition its own decision |
-| RZ access and queues | M3 waits for GPU time | M1–M2 need no GPU; M3 needs hours, not days |
+| ROCm on gfx906 | the MI50 cannot run JAX at all, or only an old stack | M0b first, before M1; three ways (§1b); the A100/H100 path and the CPU path stay working regardless |
+| RZ access and queues | comparison runs wait for GPU time | the MI50 carry development and production; the centre only for the comparison |
+| Generality | Stage B's breadth delays a usable Stage A | Stage A's scope is fixed (§2.1); B module by module, each released when validated |
 
 ## 11 Decisions
 
@@ -294,4 +354,6 @@ name, the institute's legal office has the last word.
 | D3 | Tolerances | §7's, or FauxPV's own off-grid tolerances | §7's (the solver never the larger error) |
 | D4 | Licence of `jaxdd` | MIT; Apache-2.0; LGPL-3.0 | **LGPL-3.0, decided 2026-11-07** (§9): SIMsalabim's code may be used, open source like it |
 | D5 | Where it lives | its own repo on Forgejo; `fauxpv/projects/` | **its own repo**: it is useful without FauxPV, and FauxPV only calls it from `tools/` |
-| D6 | M0 first | yes; no | **yes**: a day, and it may halve the current runs without any of this |
+| D6 | M0 first | yes; no | **done** (§1a): overhead 5 %, the var-file fix 14 % |
+| D7 | General or FauxPV's | a solver for FauxPV's tables; a general SimSS-compatible batched solver | **general, decided 2026-11-07**: general in structure and input, staged in physics (§2) |
+| D8 | Input format | SIMsalabim's parameter files; a format of its own; both | **SIMsalabim's files** as the interface (every SimSS user's sweep runs unchanged), a Python API of pytrees beside it for batches built in code |

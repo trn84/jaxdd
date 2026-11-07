@@ -6,7 +6,8 @@ model of [SIMsalabim](https://github.com/kostergroup/SIMsalabim) and is validate
 output. First use: the drift-diffusion tables of
 [FauxPV](https://git.bugraturan.de/trn84/fauxpv) (`tools/dd_tables.py`).
 
-**Status: planning.** Nothing is built yet; see [`PLAN.md`](PLAN.md).
+**Status: M1–M2 built** (one device, CPU; SimSS's steady state with ions), see [`PLAN.md`](PLAN.md).
+Where jaxdd differs from SIMsalabim, and why: [`DIFFERENCES.md`](DIFFERENCES.md).
 
 ## Licence
 

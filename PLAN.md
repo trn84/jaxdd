@@ -6,7 +6,11 @@ potentials, its integral current) by a coupled Newton method with autodiff Jacob
 ions free, frozen after a pre-bias, or immobile. Against SimSS 5.36 on 12 devices of FauxPV's
 table, light and dark: with SimSS's own Bernoulli approximation within 1–2e-6 of the current
 scale without ions (7e-9 where SimSS is converged tighter) and within 2e-5 with ions; about six
-Newton steps per voltage. Next: the 1000-device gate (§7), then batching (M3).
+Newton steps per voltage. **The 1000-device gate (§7) is met against a converged SimSS**: every
+device beyond 1e-3 is SimSS stopping early at its default tolerance — the first voltage of a
+scan above all — and SimSS run tighter lands on jaxdd to 1e-8 ([DIFFERENCES.md](DIFFERENCES.md)).
+jaxdd takes the physically correct answer where SimSS approximates; each difference is
+documented and switchable. Next: batching (M3).
 
 A one-dimensional drift-diffusion solver for semiconductor devices — perovskite solar cells
 first — written in JAX so that it solves **hundreds of thousands of devices at once** on GPUs:

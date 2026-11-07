@@ -332,7 +332,7 @@ Total to the first useful table (M0–M5): **5–8 weeks** of focused work, most
 In a running pod with an A100 (any CUDA 12 image with Python ≥ 3.11):
 
 ```bash
-git clone <jaxdd repository> && cd jaxdd
+git clone https://github.com/trn84/jaxdd.git && cd jaxdd
 python -m venv .venv && .venv/bin/pip install -q -e ".[dev]" "jax[cuda12]"
 .venv/bin/python -c "import jax; print(jax.devices())"          # must list a CUDA device
 .venv/bin/python -m pytest -q                                    # the CPU tests, now on the GPU

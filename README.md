@@ -9,6 +9,15 @@ output. First use: the drift-diffusion tables of
 **Status: M1–M2 built** (one device, CPU; SimSS's steady state with ions), see [`PLAN.md`](PLAN.md).
 Where jaxdd differs from SIMsalabim, and why: [`DIFFERENCES.md`](DIFFERENCES.md).
 
+## Try it
+
+```bash
+git clone https://github.com/trn84/jaxdd.git && cd jaxdd
+python -m venv .venv && .venv/bin/pip install -e ".[dev]"     # add "jax[cuda12]" on an NVIDIA GPU
+.venv/bin/python -m pytest -q                                   # against SimSS's own curves
+.venv/bin/python validation/bench.py 64 64                      # devices per second
+```
+
 ## Licence
 
 GNU LGPL version 3 ([`COPYING.LESSER`](COPYING.LESSER), supplementing the GNU GPL version 3 in

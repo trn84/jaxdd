@@ -14,7 +14,10 @@ documented and switchable. **M3 on CPU built**: `jaxdd.batch.solve_batch` (`jit`
 over devices; Newton in `lax.while_loop`, voltages in `lax.scan`, pre-bias and freezing by
 masks), the batch equal to the one-device solver to 1e-10, every voltage of every test device
 converged, also the hard case of §10 (by the settled-current criterion). On a laptop CPU 1.2
-devices/s: the throughput question is the A100's (`validation/bench.py`, §8 M3).
+devices/s with XLA's own threads, which do not help this solver; **on one core 1.7 devices/s,
+3.4× SimSS on one core** (0.59 s against 2.0 s per device). One process per core would make a
+CPU server alone some ten times SimSS's throughput. The GPU question is the A100's
+(`validation/bench.py`, §8 M3).
 
 A one-dimensional drift-diffusion solver for semiconductor devices — perovskite solar cells
 first — written in JAX so that it solves **hundreds of thousands of devices at once** on GPUs:

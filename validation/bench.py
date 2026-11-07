@@ -23,6 +23,8 @@ from jaxdd.simss_input import Layer, Setup, read_setup
 DATA = Path(__file__).resolve().parents[1] / "tests" / "data"
 V = np.round(np.arange(-0.2, 1.3 + 1e-9, 0.025), 6)
 SIMSS_SERVER_DEVICES_PER_S = 7.8
+#: SimSS on one core, one device (61 voltages, light): 2.0 s (PLAN.md §1a, M0).
+SIMSS_SECONDS_PER_DEVICE_ONE_CORE = 2.0
 
 
 def variants(n: int, seed: int = 20261107) -> list:
@@ -61,9 +63,17 @@ def main(n: int = 64, batch_size: int = 64) -> None:
         converged += int(np.asarray(ok).sum())
     seconds = time.perf_counter() - start
     rate = n / seconds
-    print(f"{n} devices x {len(V)} voltages in {seconds:.1f} s: {rate:.1f} devices/s "
-          f"({rate / SIMSS_SERVER_DEVICES_PER_S:.1f}x SimSS on 64 cores); "
+    print(f"{n} devices x {len(V)} voltages in {seconds:.1f} s: {rate:.1f} devices/s, "
           f"converged {converged}/{n * len(V)} points")  # fmt: skip
+    if jax.devices()[0].platform == "cpu":
+        # On a CPU compare per core: SimSS runs one device per core. XLA's own threads do not
+        # help this solver (tiny 3x3 operations in a sequential sweep); for throughput run one
+        # process per core with XLA_FLAGS="--xla_cpu_multi_thread_eigen=false
+        # intra_op_parallelism_threads=1".
+        print(f"  per core, if this ran on one: {SIMSS_SECONDS_PER_DEVICE_ONE_CORE * rate:.1f}x "
+              "SimSS on one core")  # fmt: skip
+    else:
+        print(f"  {rate / SIMSS_SERVER_DEVICES_PER_S:.1f}x SimSS on the 64-core server")
 
 
 if __name__ == "__main__":

@@ -50,37 +50,35 @@ day, commit 66c525f, had them as jaxdd's.)
 ## Next
 
 1. **The M20-00b ion grid on the A100: running** (2026-11-08, FauxPV M20-00c D1;
-   `tools/dd_absorber_ions_gpu.sh`, A100 80 GB PCIe, 128 vCPUs, 64 device-building workers).
-   Its first chunk, in FauxPV's `gpu_run.log`: 16 384 runs in 121 s with compilation; the host
-   keeps up (the solver waited 0.5 s for the second chunk). About 3 h for the grid, not the
-   26 min the benchmark promised — item 2 says why. Then FauxPV compares it point by point with
-   SimSS's run on the CPU server.
-2. **Speed: the lockstep on a real grid is the lever, not the host** (measured 2026-11-08).
-   - *What the grid showed.* Chunk 0 (250 nm absorber, every `ℓ`, ion density and `x_ion`):
-     2.97 Newton steps per voltage needed on average, **25.5 paid** — the per-voltage maximum
-     over 16 384 runs — so **×8.6**; `max 60` at a voltage is `max_iter`, and **385 voltages did
-     not converge** (0.04 %; NaN in the table). `bench.py`'s three easy cases never showed it
-     (×1.4).
-   - *Where it comes from* (128 points of chunk 0 one by one, laptop CPU): nearly every run has
-     a hard voltage — per-run maximum median 11 steps, 90th percentile 20 — evenly over the ion
-     density and `ℓ`, so no small set of hard devices to sort out. `x_ion` orders it: median
-     15.5 at 0, 13.5 at 0.25, 11 at 0.5, 10 at 0.75, 6 at 1. The runs at 60 are rare (~1 in
-     256) but in every batch. At `x_ion` 0 the ions are frozen at `V_pre` ≈ `V_bi` ≈ 1.05 V and
-     the scan starts at −0.2 V, 1.25 V from the solution it continues from.
-   - *Plan, in order.* (a) **Start the scan at the voltage nearest `V_pre` and continue
-     outwards in both directions** (the results reordered back to the voltage grid): every
-     step then starts next to a solution, the first one included. Measure per-run and paid
-     steps on chunk 0's sample before and after. (b) **Stragglers out of the batch:** a first
-     pass with a lower `max_iter` (about 25, above the 90th percentile), the runs that missed it
-     re-solved together with the full `max_iter` (or more, for the 385 that never converged) —
-     results unchanged for every run that converges, the batch no longer paying 60 at a voltage
-     for one run in 256. (c) Sorting a chunk's runs by `x_ion` into sub-batches: ~20 % on the
-     sample, after (a) probably less; only if (a) and (b) leave a spread. (d) The host, only
-     on smaller machines: preparing a FauxPV point costs ~90 ms on one core (FauxPV writing
-     SimSS's files 47 ms, `read_setup` 18 ms, `build_device` 24 ms); planned (FauxPV M20-00c,
-     "The device building without files"): `read_setup` from a mapping of file names to texts,
-     the inputs SimSS's byte for byte. (e) The Jacobian by edges and in one `jacfwd`, estimated
-     1.5–2×; a fused kernel only if far more is needed.
+   `tools/dd_absorber_ions_gpu.sh`, A100 80 GB PCIe, 128 vCPUs, 64 device-building workers; the
+   host keeps up, the solver waits ~0.1 s per chunk). 113 chunks of 16 384 runs: ~75 s each in
+   one pass, ~64 s in two (item 2), about 2.2 h for the grid. Then FauxPV compares it point by
+   point with SimSS's run on the CPU server.
+2. **Speed: the lockstep on a real grid** (measured 2026-11-08). Under `vmap` every voltage
+   costs the batch's slowest run.
+   - *Chunk 0* (250 nm absorber, every `ℓ`, ion density and `x_ion`): 2.97 Newton steps per
+     voltage needed, **25.5 paid** (×8.6), `max_iter` 60 reached, 385 voltages unconverged.
+   - *A sample of it* (128 points, 256 runs, laptop CPU): a run's hardest voltage is its first
+     in 98 % of runs (−0.2 V, up to 1.25 V from the frozen pre-bias it continues from; 11.6
+     steps on average, 15.9 at `x_ion` 0, ~2.7 next to `V_pre`); and one run in 256 (4e18
+     cm⁻³ frozen at full accumulation) needs 14–60 at many voltages.
+   - **Done: stragglers out of the batch** (FauxPV `dd_tables.py` ff8ecd9, a FauxPV-side
+     change): a first pass with `max_iter` 25, the runs that miss it (~0.15 %) re-solved
+     together with 60. On the grid: **paid 25.5 → 12.5, a chunk 75 → 64 s — ×1.15, not the ×3–5
+     the sample promised.** The sample of 256 could not show the 1-in-16 384 tail of the
+     *ordinary* runs: at nearly every voltage some run of a batch needs ~12 steps, under any
+     limit above that. The curves are one pass's to the settled-current criterion (8e-8 of the
+     scale seen; another `max_iter` is another compiled program).
+   - *Next, measured on thousands of runs, not hundreds:* where the ordinary tail's ~12 steps
+     sit (voltage, `x_ion`, stack) — the first voltage is one of 61 and cannot be it alone.
+     Then, by what that shows: (a) the scan from `V_pre` outwards, which also lets the first
+     pass's limit drop to ~10 (without it the first voltage makes a third of the runs
+     stragglers); (b) a better start per voltage than linear extrapolation where the tail
+     sits; (c) smaller batches (the expected maximum over 4096 runs is lower; the A100 runs
+     4096 at 88 % of 16 384's rate). (d) The host only on smaller machines: preparing a FauxPV
+     point costs ~90 ms on one core; planned (FauxPV M20-00c, "The device building without
+     files"): `read_setup` from a mapping of file names to texts. (e) The Jacobian by edges and
+     in one `jacfwd`, estimated 1.5–2×; a fused kernel only if far more is needed.
 3. M4 (mesh study), M6 (adaptive axes).
 4. Proposal PLAN.md §8b, for FauxPV and jaxdd together: a steric (Bikerman) limit on ion
    accumulation. Not started.

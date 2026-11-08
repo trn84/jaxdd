@@ -3,7 +3,7 @@
 Hand-over note, kept current at the end of a working session. The full plan is
 [`PLAN.md`](PLAN.md); where jaxdd departs from SIMsalabim on purpose, [`DIFFERENCES.md`](DIFFERENCES.md).
 
-## State (2026-11-07, commit 5dde971)
+## State (2026-11-08)
 
 | Milestone | State |
 |---|---|
@@ -11,7 +11,8 @@ Hand-over note, kept current at the end of a working session. The full plan is
 | M1 ion-free steady state, one device | done; matches SimSS to 1–2e-6 of the current scale with its Bernoulli approximation |
 | M2 ions (free; frozen after a pre-bias) | done; within 2e-5 |
 | §7 gate, 1000 devices of FauxPV's table | met against a converged SimSS: every miss is SimSS stopping early (DIFFERENCES.md §1) |
-| M3 batched (`jaxdd.batch.solve_batch`) | **done 2026-11-08: A100 1198 devices/s at batch 16384, 154× SimSS on 64 cores** (gate 390/s) |
+| M3 batched (`jaxdd.batch.solve_batch`) | **done 2026-11-08: A100 1198 runs/s at batch 16384, 77× SimSS on 64 cores per run** (gate 50×) |
+| M5 FauxPV backend | **FauxPV side built 2026-11-08** (`dd_tables.py --backend jaxdd`, FauxPV M20-00c); every miss of the gate SimSS's (below); FauxPV's ion grid running on an A100 |
 
 **A100 results** (RunPod, `validation/bench.py`, batch 16384 unless noted): 143 → 265 → 323 →
 341 → **1198 devices/s** (5dde971: the ions' constraint by `jax.jacrev` instead of `jacfwd`,

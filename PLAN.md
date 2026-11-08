@@ -1,6 +1,10 @@
 # Plan — `jaxdd`: a batched 1D drift-diffusion solver in JAX, on GPUs
 
-Status: **M1 and M2 built (2026-11-07), on one device on the CPU.** `src/jaxdd` solves SimSS's
+Status (2026-11-08): **M1–M3 built; M5's FauxPV side built and in use** (FauxPV's
+`tools/dd_tables.py --backend jaxdd`, task M20-00c): on 48 + 500 grid points every gap beyond
+1e-3 is SimSS's own (DIFFERENCES.md §1, §1b), and FauxPV's ion grid runs on one A100. Per J-V
+curve 77× SimSS on 64 cores (§8a). Where it stands day to day: [NEXT.md](NEXT.md). The state
+of 2026-11-07 follows. **M1 and M2 built, on one device on the CPU.** `src/jaxdd` solves SimSS's
 discrete equations (SIMsalabim's input files, its grid, Scharfetter–Gummel in the generalised
 potentials, its integral current) by a coupled Newton method with autodiff Jacobian blocks;
 ions free, frozen after a pre-bias, or immobile. Against SimSS 5.36 on 12 devices of FauxPV's
@@ -320,9 +324,9 @@ Tolerances are a decision (D3); the ones above are FauxPV's off-grid tolerances 
 | **M0b** | JAX on one A100: `jax_enable_x64`, a batched `lax.scan` block-Thomas solve of 10⁵ × 400 × 3×3 in FP64, its bandwidth and the batch size that fits; the same on CPU | A100 | 1 day | ≥ 50 % of the card's bandwidth, or the scan is replaced (Pallas kernel) before M1 builds on it |
 | **M1** ✓ | One device, CPU, x64: Poisson + continuity, SG, coupled Newton, contacts, offsets, thermionic interface, SRH + direct, generation profile; no ions. Both variable sets (D2) | laptop | 1–2 weeks | ion-free gate of §7 |
 | **M2** ✓ | Ions: frozen (pre-bias, then fixed) and free (bordered system) | laptop | 1–2 weeks | both ion gates of §7 |
-| **M3** ✓ | Batched: `vmap`, masked `while_loop`, continuation with sub-steps; on one A100. **Done 2026-11-08: 1198 devices/s, 154×** (§8a) | A100 | 1 week | **go/no-go: ≥ 50× the server's 7.8 devices/s on one A100, at the §7 accuracy** |
+| **M3** ✓ | Batched: `vmap`, masked `while_loop`, continuation with sub-steps; on one A100. **Done 2026-11-08: 1198 runs/s, 77× per run** (§8a) | A100 | 1 week | **go/no-go: ≥ 50× the server's 7.8 devices/s on one A100, at the §7 accuracy** |
 | **M4** | Mesh: graded, r-adaptive; the convergence study of §4 | RZ | 1 week | 400 points or fewer meet the gates on the hardest devices, or bucketing is justified |
-| **M5** | FauxPV backend: `dd_tables.py --backend jaxdd`, the table format; a stored table reproduced to tolerance | FauxPV + RZ | 1 week | 48-point `reproduce` within §7 |
+| **M5** ◐ | FauxPV backend: `dd_tables.py --backend jaxdd`, the table format; a stored table reproduced to tolerance. **FauxPV side built 2026-11-08** (M20-00c); 44 of 48 within §7, the four others SimSS's (DIFFERENCES.md §1, §1b) | FauxPV + RZ | 1 week | 48-point `reproduce` within §7 |
 | **M6** | Adaptive axes (§5): error-driven axis refinement; first use on M20-00b's open layer axes (D0 a) | FauxPV + RZ | 1–2 weeks | the refined axes meet the off-grid tolerance with fewer devices than the hand-made ones |
 | M7 | Optional: implicit gradients (`jax.custom_root`) for fitting; transients for F3 | — | open | own plan |
 | M8 | The MI50 port (§1b): the three ways in order; the M3 benchmark on the four cards | MI50 server | 1–2 weeks | the M3 results reproduced within §7, at a throughput worth the cards |
@@ -391,7 +395,9 @@ now saturated, no longer latency-bound; the hybrid 289. **Then two findings, bot
   devices/s, 38× SimSS on one core.**
 
 **Fifth run (5dde971, 2026-11-08): the M3 gate is met, three times over.** Batch 16384, the
-sweep: **1198 devices/s, 154× SimSS on 64 cores** (4096: 1060; the hybrid 824); all 3 997 696
+sweep: **1198 devices/s, 154× SimSS on 64 cores** — per run 77×: a device here is one J-V
+curve, SimSS's 7.8 devices/s are two (light and dark; `bench.py` corrected 2026-11-08)
+(4096: 1060; the hybrid 824); all 3 997 696
 points converged. A Newton step of 16384 devices takes 67 ms: the Jacobian blocks and the ions'
 columns by `jacfwd` 46 ms (69 %), the sweep 15, residual, current and constraint 6. Next for
 speed, if wanted: assembling by edges (each interval's flux and its derivatives once, not

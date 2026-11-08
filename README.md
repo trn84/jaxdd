@@ -6,7 +6,12 @@ model of [SIMsalabim](https://github.com/kostergroup/SIMsalabim) and is validate
 output. First use: the drift-diffusion tables of
 [FauxPV](https://git.bugraturan.de/trn84/fauxpv) (`tools/dd_tables.py`).
 
-**Status: M1–M2 built** (one device, CPU; SimSS's steady state with ions), see [`PLAN.md`](PLAN.md).
+**Status: M1–M3 built, in use by FauxPV** (2026-11-08). One device and batched
+(`jaxdd.batch.solve_batch`), with ions free or frozen after a pre-bias, on CPU and GPU. Against
+SimSS 5.36 on FauxPV's tables every gap beyond 1e-3 has been SimSS's own (an early stop, or a
+pre-bias it froze unconverged). On one A100 about 1200 J-V curves per second, 77× SimSS on a
+64-core server; FauxPV's `tools/dd_tables.py --backend jaxdd` computes its 918 050-device ion
+grid with it. Plan and milestones: [`PLAN.md`](PLAN.md).
 Where jaxdd differs from SIMsalabim, and why: [`DIFFERENCES.md`](DIFFERENCES.md). Current state and next steps: [`NEXT.md`](NEXT.md).
 
 ## Try it

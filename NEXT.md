@@ -52,11 +52,17 @@ day, commit 66c525f, had them as jaxdd's.)
    reference (FauxPV M20-00c, D1). Before it, a larger FauxPV `reproduce --backend jaxdd`
    sample of the points with ions at `ℓ` ≤ 0.5, to size how many of SimSS's tables hold an
    unconverged pre-bias.
-2. Speed, after that: assemble the Jacobian by edges (each interval's flux once) and in one
-   `jacfwd`, estimated 1.5–2× (about a day); a fused kernel only if far more is needed. On a
-   real grid the host may set the pace first: writing and reading SimSS's files is ~0.1 s per
-   point, and hard devices hold a batch in lockstep (M0: the slowest tenth is 74 % of SimSS's
-   time).
+2. Speed, after that, the host first. Preparing a FauxPV grid point costs ~90 ms on one core
+   (laptop, 2026-11-08: FauxPV writing SimSS's files 47 ms, `read_setup` 18 ms, `build_device`
+   24 ms) against ~1.7 ms of A100 time; on fewer than ~32 cores the GPU waits. Planned (FauxPV
+   M20-00c, "The device building without files"): **`read_setup` from a mapping of file names
+   to texts** as well as from a directory — FauxPV hands over the very texts it would write, so
+   the inputs stay SimSS's byte for byte, and the disk drops out (about two thirds); then
+   `build_device`'s Python loops (`_sub_grid`, `_generation`) vectorised if the pod's profile
+   still shows them. Not a second way to describe a device. Then the solver: assemble the
+   Jacobian by edges (each interval's flux once) and in one `jacfwd`, estimated 1.5–2× (about a
+   day); a fused kernel only if far more is needed. Hard devices hold a batch in lockstep (M0:
+   the slowest tenth is 74 % of SimSS's time): sort batches by `ℓ` and absorber.
 3. M4 (mesh study), M6 (adaptive axes).
 4. Proposal PLAN.md §8b, for FauxPV and jaxdd together: a steric (Bikerman) limit on ion
    accumulation. Not started.

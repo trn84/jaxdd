@@ -13,6 +13,8 @@ dependencies = ["jax>=0.4.30", "numpy>=2.0"]
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0", "ruff>=0.5"]
+#: benchmarks/plot.py
+bench = ["matplotlib>=3.8"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/jaxdd"]

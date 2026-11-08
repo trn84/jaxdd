@@ -18,6 +18,29 @@ python -m venv .venv && .venv/bin/pip install -e ".[dev]"     # add "jax[cuda12]
 .venv/bin/python validation/bench.py 64 64                      # devices per second
 ```
 
+## Speed
+
+<!-- benchmark:begin -->
+No machine measured yet. `benchmarks/plot.py` replaces this block with the figure and its
+table once `benchmarks/results/` holds a result.
+<!-- benchmark:end -->
+
+**Measure a machine** (each part runs where the machine has it, the same devices for every
+solver; `--help` lists the sizes):
+
+```bash
+.venv/bin/pip install -e ".[dev,bench]"                     # "jax[cuda12]" too on an NVIDIA GPU
+.venv/bin/python benchmarks/run.py --label "A100 pod"                       # jaxdd: GPU and CPU
+.venv/bin/python benchmarks/run.py --label "EPYC server" --simss-docker fauxpv/simss:5.36
+.venv/bin/python benchmarks/run.py --label "laptop" --simss simss --simss-fixed simss_fixed_ions
+.venv/bin/python benchmarks/plot.py                                         # figure and table
+```
+
+SimSS needs the release's `simss` and, for the frozen-ion case, FauxPV's patched
+`simss_fixed_ions` (its `tools/simss/Dockerfile` builds an image with both). On a CPU jaxdd runs
+one single-threaded process per core, its fastest use of a CPU (`NEXT.md`). Each run writes
+`benchmarks/results/<label>.json`; commit it to add the machine.
+
 ## Licence
 
 GNU LGPL version 3 ([`COPYING.LESSER`](COPYING.LESSER), supplementing the GNU GPL version 3 in

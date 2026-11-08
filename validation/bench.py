@@ -29,11 +29,21 @@ SIMSS_SERVER_RUNS_PER_S = 2 * 7.8
 SIMSS_SECONDS_PER_DEVICE_ONE_CORE = 2.0
 
 
+CASES = ("thin_l1_light", "frozen_1e17_x1_thin_light", "steady_1e17_thin_light")
+
+
 def variants(n: int, seed: int = 20261107) -> list:
+    """`n` devices: `variant_setups` built."""
+    return [build_device(setup) for setup in variant_setups(n, seed)]
+
+
+def variant_setups(n: int, seed: int = 20261107) -> list[Setup]:
+    """`n` SIMsalabim inputs: the committed cases in turn, the trap density, the ion density
+    and the transport layers' doping drawn at random. Each keeps its case's directory, from
+    which its generation profile is read (and `benchmarks/run.py` copies its files for SimSS)."""
     rng = np.random.default_rng(seed)
-    cases = ("thin_l1_light", "frozen_1e17_x1_thin_light", "steady_1e17_thin_light")
-    bases = [read_setup(DATA / c / "simulation_setup.txt") for c in cases]
-    devices = []
+    bases = [read_setup(DATA / c / "simulation_setup.txt") for c in CASES]
+    setups = []
     for k in range(n):
         base = bases[k % len(bases)]
         layers = [dict(ly.raw) for ly in base.layers]
@@ -43,10 +53,9 @@ def variants(n: int, seed: int = 20261107) -> list:
             layers[1]["N_anion"] = layers[1]["N_cation"] = f"{ions:.6g}"
         layers[0]["N_D"] = f"{10 ** rng.uniform(18, 23):.6g}"
         layers[2]["N_A"] = f"{10 ** rng.uniform(18, 23):.6g}"
-        setup = Setup(raw=dict(base.raw), layers=tuple(Layer(r) for r in layers),
-                      directory=base.directory)  # fmt: skip
-        devices.append(build_device(setup))
-    return devices
+        setups.append(Setup(raw=dict(base.raw), layers=tuple(Layer(r) for r in layers),
+                            directory=base.directory))  # fmt: skip
+    return setups
 
 
 def main(n: int = 64, batch_size: int = 64) -> None:

@@ -19,6 +19,13 @@ Hand-over note, kept current at the end of a working session. The full plan is
 extrapolated starts, the quadratic stop). Breakdown of one Newton step (`breakdown.py`, 67 ms for
 16384 devices): Jacobian blocks + ion columns 46 ms, sweep 15, the rest 6.
 
+**Desktop (Ryzen 9 5950X + RTX 4070 Ti SUPER, `benchmarks/run.py`, 2026-11-08):** SimSS 5.36
+46 curves/s on 32 processes; jaxdd on the CPU **365 (7.9×)**, on the 4070 Ti 297 (6.4×, its
+FP64 is 1/64 of FP32); max ΔJ 1.5e-5 of the scale on 48 devices. On a CPU the batch per
+process must be small: with every core busy, 16 processes at batch 32 gave 43 curves/s, at
+batch 2 349 (cache, not threads: pinned, each process at 100 % of its core, 9× slower than
+alone). `run.py` now defaults to `--cpu-batch 2` and pins every worker.
+
 The Newton system is solved by the block Thomas sweep; parallel cyclic reduction and a
 PCR–Thomas hybrid were built, measured slower everywhere, and taken out (PLAN.md §8a).
 

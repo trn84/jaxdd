@@ -16,8 +16,11 @@ SimSS and built from those same inputs for jaxdd.
   first batch excluded, then `--repeats` batches timed. The batch is `--gpu-unique` distinct
   devices tiled to its size (building a device is host time, ~25 ms, not the solver's).
 * `cpu` — jaxdd on the CPU the way it runs fastest there: one single-threaded process per core
-  (`--cpu-procs`, default every logical core), each solving `--cpu-batch` devices
-  `--repeats` times after its own compilation, all started together; runs over wall time.
+  (`--cpu-procs`, default every logical core), each pinned to its core and solving
+  `--cpu-batch` devices `--cpu-repeats` times after its own compilation, all started
+  together; runs over wall time. The batch is small on purpose: with every core busy a
+  process's working set must fit its share of the cache (Ryzen 9 5950X, 16 processes:
+  batch 32 gives 43 runs/s, batch 2 349, batch 1 375; one process alone 21–27 at any batch).
 * `simss` — SimSS 5.36, one process per run, `--simss-procs` at once (default every logical
   core): native binaries (`--simss`, and `--simss-fixed` for the frozen-ion case, FauxPV's
   patched `simss_fixed_ions`), or a Docker image that has both (`--simss-docker`; its start,
@@ -136,6 +139,11 @@ def measure_gpu(batches: list[int], unique: int, repeats: int) -> list[dict]:
 def _cpu_worker(index: int, batch: int, repeats: int, go, queue) -> None:
     os.environ["JAX_PLATFORMS"] = "cpu"
     os.environ["XLA_FLAGS"] = SINGLE_THREAD_XLA
+    # The flags alone do not hold a process to one core (one used ~3 on a 5950X, 2026-11-08):
+    # pinning each worker to its own logical core, before JAX loads, does.
+    if hasattr(os, "sched_setaffinity"):
+        cpus = sorted(os.sched_getaffinity(0))
+        os.sched_setaffinity(0, {cpus[index % len(cpus)]})
     from bench import variant_setups
 
     from jaxdd.batch import prepare, solve_batch
@@ -335,7 +343,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--gpu-batches", default="4096,16384")
     parser.add_argument("--gpu-unique", type=int, default=2048)
     parser.add_argument("--cpu-procs", type=int, default=os.cpu_count())
-    parser.add_argument("--cpu-batch", type=int, default=32)
+    parser.add_argument("--cpu-batch", type=int, default=2, help="devices per process")
+    parser.add_argument("--cpu-repeats", type=int, default=16)
     parser.add_argument("--simss", default=None, help="SimSS's binary (on PATH or a path)")
     parser.add_argument("--simss-fixed", default=None, help="the patched binary for frozen ions")
     parser.add_argument("--simss-docker", default=None, help="image with both SimSS binaries")
@@ -363,7 +372,7 @@ def main(argv: list[str] | None = None) -> int:
         batches = [int(b) for b in args.gpu_batches.split(",")]
         report["results"] += measure_gpu(batches, args.gpu_unique, args.repeats)
     if "cpu" not in skip:
-        row = measure_cpu(args.cpu_procs, args.cpu_batch, args.repeats)
+        row = measure_cpu(args.cpu_procs, args.cpu_batch, args.cpu_repeats)
         if row:
             report["results"].append(row)
     if "simss" not in skip and (args.simss or args.simss_docker):

@@ -31,11 +31,14 @@ python -m venv .venv && .venv/bin/pip install -e ".[dev]"     # add "jax[cuda12]
   <img src="benchmarks/speedup-light.svg" alt="J-V curves per second: SimSS and jaxdd on CPU and GPU, per machine">
 </picture>
 
-The same devices for every solver (`benchmarks/run.py`: the three committed SimSS cases, traps, ions and doping drawn at random). Run it on a machine of yours and send the JSON in `benchmarks/results/`; `benchmarks/plot.py` redraws this. No machine with SimSS measured yet, so no factor over it.
+The same devices for every solver (`benchmarks/run.py`: the three committed SimSS cases, traps, ions and doping drawn at random). Run it on a machine of yours and send the JSON in `benchmarks/results/`; `benchmarks/plot.py` redraws this. Factors over SimSS on Ryzen 9 5950X desktop (32 processes, 46.3 curves/s).
 
 | Machine | Solver | Processes / batch | Curves per second | × reference SimSS | jaxdd against SimSS (max ΔJ / scale) |
 |---|---|---|---|---|---|
-| A100 80GB PCIe (RunPod) (NVIDIA A100 80GB PCIe · 128 logical cores) | jaxdd, GPU | batch 16384 | 1,160 | — |  |
+| A100 80GB PCIe (RunPod) (NVIDIA A100 80GB PCIe · 128 logical cores) | jaxdd, GPU | batch 16384 | 1,160 | 25.1 |  |
+| Ryzen 9 5950X desktop (NVIDIA GeForce RTX 4070 Ti SUPER · 32 logical cores) | SimSS 5.36, all cores | 32 processes | 46.3 | 1.0 | 1.5e-05 on 48 devices |
+| Ryzen 9 5950X desktop (NVIDIA GeForce RTX 4070 Ti SUPER · 32 logical cores) | jaxdd, all CPU cores | 32 processes | 365 | 7.9 |  |
+| Ryzen 9 5950X desktop (NVIDIA GeForce RTX 4070 Ti SUPER · 32 logical cores) | jaxdd, GPU | batch 16384 | 297 | 6.4 |  |
 <!-- benchmark:end -->
 
 **Measure a machine** (each part runs where the machine has it, the same devices for every

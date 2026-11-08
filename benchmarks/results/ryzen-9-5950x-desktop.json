@@ -1,0 +1,87 @@
+{
+ "label": "Ryzen 9 5950X desktop",
+ "date": "2026-11-08",
+ "machine": {
+  "cpu": "AMD Ryzen 9 5950X 16-Core Processor",
+  "logical_cores": 32,
+  "memory_gb": 67.3,
+  "os": "Linux-6.17.0-22-generic-x86_64-with-glibc2.39",
+  "gpu": "NVIDIA GeForce RTX 4070 Ti SUPER"
+ },
+ "versions": {
+  "jaxdd": "50b75ed7be80 with local changes",
+  "jax": "0.12.0.1",
+  "python": "3.13.11",
+  "simss": "5.36"
+ },
+ "workload": {
+  "cases": "validation/bench.py CASES, random traps, ions and doping",
+  "seed": 20261107,
+  "voltages": 61,
+  "run": "one J-V curve"
+ },
+ "results": [
+  {
+   "solver": "jaxdd",
+   "device": "gpu",
+   "gpu": "NVIDIA GeForce RTX 4070 Ti SUPER",
+   "batch": 4096,
+   "runs": 8192,
+   "seconds": 28.836038083999938,
+   "runs_per_s": 284.0889575792813,
+   "first_batch_s": 18.58558074199982,
+   "converged": 1.0,
+   "steps_needed": 2.7732694031762297,
+   "steps_paid": 3.9508196721311477,
+   "lockstep": 1.424607240683602
+  },
+  {
+   "solver": "jaxdd",
+   "device": "gpu",
+   "gpu": "NVIDIA GeForce RTX 4070 Ti SUPER",
+   "batch": 16384,
+   "runs": 32768,
+   "seconds": 110.30592969500003,
+   "runs_per_s": 297.0647189195062,
+   "first_batch_s": 60.34874424999998,
+   "converged": 1.0,
+   "steps_needed": 2.7732694031762297,
+   "steps_paid": 3.9508196721311477,
+   "lockstep": 1.424607240683602
+  },
+  {
+   "solver": "jaxdd",
+   "device": "cpu",
+   "procs": 32,
+   "batch": 2,
+   "runs": 4096,
+   "seconds": 11.21218018699983,
+   "runs_per_s": 365.3169973801512,
+   "per_process_runs_per_s": 12.275430691218668,
+   "converged": 1.0,
+   "steps_needed": 2.763575819672131,
+   "steps_paid": 3.442622950819672,
+   "lockstep": 1.2457132264343314
+  },
+  {
+   "solver": "simss",
+   "device": "cpu",
+   "procs": 32,
+   "runs": 1024,
+   "seconds": 22.11696123899992,
+   "runs_per_s": 46.299307980624874,
+   "version": "5.36",
+   "how": "docker fauxpv/simss:5.36",
+   "failed_runs": 0,
+   "skipped_voltages": 1.600922131147541e-05
+  }
+ ],
+ "accuracy": {
+  "devices": 48,
+  "bernoulli": "simss",
+  "tolerance": 0.001,
+  "median": 1.8985361527938147e-06,
+  "max": 1.533754234501884e-05,
+  "beyond_tolerance": 0
+ }
+}

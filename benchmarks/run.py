@@ -133,7 +133,7 @@ def measure_gpu(batches: list[int], unique: int, repeats: int) -> list[dict]:
     return out
 
 
-def _cpu_worker(index: int, batch: int, repeats: int, barrier, queue) -> None:
+def _cpu_worker(index: int, batch: int, repeats: int, go, queue) -> None:
     os.environ["JAX_PLATFORMS"] = "cpu"
     os.environ["XLA_FLAGS"] = SINGLE_THREAD_XLA
     from bench import variant_setups
@@ -145,32 +145,69 @@ def _cpu_worker(index: int, batch: int, repeats: int, barrier, queue) -> None:
     devices = prepare([build_device(s) for s in setups])
     J, ok, its = solve_batch(devices, V)  # compiles
     J.block_until_ready()
-    barrier.wait()
+    queue.put(("ready", index))
+    go.wait()
     start = time.perf_counter()
     for _ in range(repeats):
         J, ok, its = solve_batch(devices, V)
         J.block_until_ready()
-    queue.put((time.perf_counter() - start, float(np.asarray(ok).mean()), np.asarray(its)))
+    queue.put(("done", (time.perf_counter() - start, float(np.asarray(ok).mean()),
+                        np.asarray(its))))  # fmt: skip
 
 
-def measure_cpu(procs: int, batch: int, repeats: int) -> dict:
+#: How long the CPU part may take before it is given up (every process's compilation included).
+CPU_TIMEOUT_S = 900
+#: How often the parent looks whether a worker died, while it waits for them.
+_POLL_S = 5
+
+
+def _collect(queue, kind: str, count: int, workers: list, deadline: float) -> list | None:
+    """`count` messages of `kind` from the workers, or `None` once one of them died (a crash,
+    a thread or memory limit) or the deadline passed: then nothing waits for ever."""
+    import queue as queue_module
+
+    got = []
+    while len(got) < count:
+        try:
+            tag, value = queue.get(timeout=_POLL_S)
+        except queue_module.Empty:
+            dead = [w.exitcode for w in workers if w.exitcode not in (None, 0)]
+            if dead or time.perf_counter() > deadline:
+                why = f"{len(dead)} died (exit {dead[0]})" if dead else "time out"
+                print(f"cpu: {why} while waiting for {kind}; the CPU part is left out",
+                      file=sys.stderr)  # fmt: skip
+                return None
+            continue
+        if tag == kind:
+            got.append(value)
+    return got
+
+
+def measure_cpu(procs: int, batch: int, repeats: int) -> dict | None:
     # numpy's BLAS starts a thread per core in every process: a process per core on a 128-core
     # pod passes the container's thread limit (FauxPV's grid broke on it, 2026-11-08). The
     # workers inherit these before their numpy loads; the solver's own threads are XLA's.
     for name in ("OPENBLAS_NUM_THREADS", "OMP_NUM_THREADS", "MKL_NUM_THREADS"):
         os.environ.setdefault(name, "1")
     context = multiprocessing.get_context("spawn")
-    barrier, queue = context.Barrier(procs + 1), context.Queue()
-    workers = [context.Process(target=_cpu_worker, args=(i, batch, repeats, barrier, queue))
+    go, queue = context.Event(), context.Queue()
+    workers = [context.Process(target=_cpu_worker, args=(i, batch, repeats, go, queue))
                for i in range(procs)]  # fmt: skip
     for w in workers:
         w.start()
-    barrier.wait()  # every worker compiled
-    start = time.perf_counter()
-    results = [queue.get() for _ in workers]
-    wall = time.perf_counter() - start
+    deadline = time.perf_counter() + CPU_TIMEOUT_S
+    results = None
+    if _collect(queue, "ready", procs, workers, deadline) is not None:  # every worker compiled
+        go.set()
+        start = time.perf_counter()
+        results = _collect(queue, "done", procs, workers, deadline)
+        wall = time.perf_counter() - start
     for w in workers:
+        if results is None:
+            w.terminate()
         w.join()
+    if results is None:
+        return None
     runs = procs * batch * repeats
     its = np.concatenate([r[2] for r in results])
     row = {"solver": "jaxdd", "device": "cpu", "procs": procs, "batch": batch, "runs": runs,
@@ -326,7 +363,9 @@ def main(argv: list[str] | None = None) -> int:
         batches = [int(b) for b in args.gpu_batches.split(",")]
         report["results"] += measure_gpu(batches, args.gpu_unique, args.repeats)
     if "cpu" not in skip:
-        report["results"].append(measure_cpu(args.cpu_procs, args.cpu_batch, args.repeats))
+        row = measure_cpu(args.cpu_procs, args.cpu_batch, args.repeats)
+        if row:
+            report["results"].append(row)
     if "simss" not in skip and (args.simss or args.simss_docker):
         plain = args.simss or "simss"
         fixed = args.simss_fixed or ("simss_fixed_ions" if args.simss_docker else plain)

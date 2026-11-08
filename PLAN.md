@@ -397,7 +397,7 @@ columns by `jacfwd` 46 ms (69 %), the sweep 15, residual, current and constraint
 speed, if wanted: assembling by edges (each interval's flux and its derivatives once, not
 twice from both neighbouring rows) and one `jacfwd` for blocks and ion columns together,
 estimated 1.5–2×; a fused kernel stays the large lever (some 15–30× from the A100's
-bandwidth), no longer needed for the gate. FauxPV's ion grid (918 050 devices, ~40 h on the
+bandwidth), no longer needed for the gate; what it would be for is §8c. FauxPV's ion grid (918 050 devices, ~40 h on the
 64-core server) would take about 13 min on one A100 — that is M5.
 
 **PCR and the hybrid taken out (2026-11-08):** slower than the sweep on every measurement, on
@@ -419,6 +419,85 @@ regime at its source. It departs from SimSS (DIFFERENCES.md, switchable, SimSS's
 reproduction), and it changes what FauxPV's `x_ion` means at high ion density, so FauxPV's tables
 and jaxdd would adopt it together, with `N_max` from a source (a literature value for the halide
 vacancy site density, `TODO(physics)` until found).
+
+## 8c Applications: what the speed is for
+
+Possible uses beyond FauxPV's tables, collected 2026-11-08 after M3. None is planned yet. They
+are the case for or against a fused kernel (§8a) and for M7's gradients: each says how much
+speed it needs and whether today's is enough.
+
+**The scale.** One device is one J-V curve of 61 voltages, lit, as `validation/bench.py` counts it:
+
+| | Curves/s | Per hour | 1024 curves |
+|---|---|---|---|
+| A100 today (5dde971, the sweep, batch 16384) | 1198 | 4.3 M | 0.85 s |
+| A100 with a fused kernel (estimate, uncertain by a factor of 3) | 10⁴–3·10⁴ | 36–110 M | 35–100 ms |
+| one CPU core today (§8a) | 19 | 69 k | 53 s |
+| a neural surrogate, evaluated | ~10⁶ | — | ~1 ms |
+
+**1. A surrogate trained on data simulated during training.** The simulator and the network
+are both JAX, so they can run in one process on one GPU, even in one compiled training step,
+with no dataset written, copied or stored. The cost: a batch of 1024 curves takes 0.85 s to
+simulate, and a training step of a typical network a few milliseconds, so simulation dominates
+by about 100×. The usual remedy is a replay buffer: simulation fills it continuously, and each
+curve serves several training steps. That works today; with a fused kernel the data come almost
+free. It pays most with **active learning**: simulate where the surrogate is still wrong
+(ensemble disagreement, error on fresh simulations), instead of covering the whole space in
+advance. That matters in high-dimensional spaces where a grid is impossible: FauxPV's 16-D
+recipe space, layer stacks with many parameters. Two cautions. Training must mask points by
+their `converged` flag. Active learning steers towards the hard devices, and in lockstep the
+slowest lane sets the batch's pace (§10). **For a fixed dataset today's speed is enough**:
+10 M curves in about 2.3 h on one A100.
+
+**2. Parameters from measurements, with uncertainty.** Bayesian inference by MCMC needs 10⁵–10⁶
+simulations per cell, 1.4–14 min on one A100 today. Ensemble samplers and sequential Monte
+Carlo map directly onto the batch. Gradient-based methods (HMC, NUTS, plain optimisers) need
+gradients of the converged solution. `lax.while_loop` has no reverse mode, so they come by
+implicit differentiation at the solution (M7: one transposed linear solve per voltage).
+A hand-written kernel would need its adjoint (the transposed block sweep) written as well.
+
+**3. Sensitivity analysis and uncertainty propagation.** Sobol indices by Saltelli sampling
+take N·(d+2) simulations (N = 10⁴, d = 16: 1.8·10⁵, under 3 min today), and Monte Carlo over
+process spread takes N. Both are independent devices, exactly the batch.
+
+**4. Inverse design.** Optimise a stack for efficiency or stability, by gradient (M7) and
+from many starting points in parallel.
+
+**5. Drift-diffusion at FauxPV's run time (F3).** One solve for every measurement of every
+campaign: devices × ageing steps × measurements. Only realistic at this speed, and mostly
+transient (item 6).
+
+**6. Transients (Stage C, §2.3).** Hysteresis, TRPL, transient photocurrent and photovoltage,
+impedance cost 10–100× a steady-state curve. This is where a fused kernel is most likely to
+be needed.
+
+**7. Interactive tools and a lab twin.** Fitting curves while a high-throughput campaign runs
+(closed-loop Bayesian optimisation over recipes), or a web page where one slides a parameter
+and watches the curve. For a single curve latency counts, not throughput: about 50 ms on one
+CPU core today is already enough for a slider. The GPU earns its place when each update needs
+many curves (a fit, an uncertainty band).
+
+**The counter-argument.** The faster the simulator, the less a surrogate is needed. Fits and
+sensitivity analyses can call jaxdd directly, with the exact physics instead of an
+approximation of it. A surrogate pays where microseconds per evaluation are needed: FauxPV's
+`drift_diffusion = surrogate` (between the table, F0, and the solver, F3), real-time pages,
+or the inner loop of another model.
+
+**What follows for the kernel.**
+
+| Use | Today (A100) enough? | Fused kernel |
+|---|---|---|
+| tables, a fixed training set (1, M5) | yes | not needed |
+| on-the-fly training, active learning (1) | yes, with a replay buffer | makes it nearly free |
+| MCMC per cell (2) | yes for a few cells | helps for many cells |
+| gradients: HMC, fits, inverse design (2, 4) | after M7 | needs its own adjoint |
+| Sobol, Monte Carlo (3) | yes | not needed |
+| F3 at run time, transients (5, 6) | doubtful | most likely needed |
+| interactive (7) | yes, even on a CPU | not needed |
+
+The steady state does not justify a fused kernel. Transients and F3 might, so decide it
+together with Stage C's plan, and do M7's gradients before any kernel: written afterwards, the
+gradients would have to be written twice.
 
 ## 9 Licence and attribution
 

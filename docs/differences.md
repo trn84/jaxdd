@@ -15,7 +15,7 @@ successive under-relaxation, and stops when the relative change of the densities
 test before it has converged. The sign is SimSS's own `errJ`: the spread of the current across
 the device, which a converged steady state has at zero.
 
-**How large.** On 1000 devices without ions drawn from FauxPV's drift-diffusion table
+**How large.** On 1000 devices without ions drawn from a parameter table of perovskite cells
 (`validation/table_gate.py`, 2026-11-07), 76 differ from SimSS by more than 1e-3 in the
 collection `η = (J_dark − J_light)/J_gen` up to 1.0 V:
 
@@ -45,8 +45,8 @@ from the potential and rescales it to `N·L` (`Calc_Ion_Distribution_Steady_Stat
 does not rescale; only at a fixed point is that factor 1. Nothing in `JV.dat` shows it: `errJ`
 is the scan's, and the scan solves the frozen ions cleanly. A tighter `tolDens` does not help.
 
-**How large.** On FauxPV's grid points (`data/drift_diffusion/checks/m20_00c_prebias_ions.py`,
-2026-11-08): three of 48 random points, SimSS's frozen anions and cations off `N·L` by
+**How large.** On 48 random points of a parameter grid of perovskite cells with ions
+(2026-11-08): at three of them SimSS's frozen anions and cations were off `N·L` by
 0.8–6.5e-4, opposite for the two species — at 1e18 cm⁻³ up to 1e-4 C/m² of net ionic charge,
 about 0.25 V across a 500 nm absorber — and `η` off by 4e-3 to 3.7e-2 (`J_SC` 6 % at
 `L_diff/d` 0.2). Given SimSS's frozen ion numbers (the device's `anion_total`, `cation_total`),
@@ -63,7 +63,7 @@ totals to SimSS's frozen ones.
 2 below 0.45 and 4 below 1.5 (`Units/DDRoutines.pas`, `B`). The error reaches 2e-4 relative
 at the first switch and 8e-4 at the last, and it enters every Scharfetter–Gummel flux.
 
-**How large.** Up to 3e-4 of the current scale at high forward bias on FauxPV's devices
+**How large.** Up to 3e-4 of the current scale at high forward bias on perovskite cells
 (`validation/compare_simss.py` with and without `--bernoulli=simss`).
 
 **jaxdd.** The exact function by default (`bernoulli`: the full expression, its series only

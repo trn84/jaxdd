@@ -1,604 +1,238 @@
-# Plan — `jaxdd`: a batched 1D drift-diffusion solver in JAX, on GPUs
+# Plan
 
-Status (2026-11-08): **M1–M3 built; M5's FauxPV side built and in use** (FauxPV's
-`tools/dd_tables.py --backend jaxdd`, task M20-00c): on 48 + 500 grid points every gap beyond
-1e-3 is SimSS's own (DIFFERENCES.md §1, §1b), and FauxPV's ion grid runs on one A100. Per J-V
-curve 77× SimSS on 64 cores (§8a). Where it stands day to day: [NEXT.md](NEXT.md). The state
-of 2026-11-07 follows. **M1 and M2 built, on one device on the CPU.** `src/jaxdd` solves SimSS's
-discrete equations (SIMsalabim's input files, its grid, Scharfetter–Gummel in the generalised
-potentials, its integral current) by a coupled Newton method with autodiff Jacobian blocks;
-ions free, frozen after a pre-bias, or immobile. Against SimSS 5.36 on 12 devices of FauxPV's
-table, light and dark: with SimSS's own Bernoulli approximation within 1–2e-6 of the current
-scale without ions (7e-9 where SimSS is converged tighter) and within 2e-5 with ions; about six
-Newton steps per voltage. **The 1000-device gate (§7) is met against a converged SimSS**: every
-device beyond 1e-3 is SimSS stopping early at its default tolerance — the first voltage of a
-scan above all — and SimSS run tighter lands on jaxdd to 1e-8 ([DIFFERENCES.md](DIFFERENCES.md)).
-jaxdd takes the physically correct answer where SimSS approximates; each difference is
-documented and switchable. **M3 on CPU built**: `jaxdd.batch.solve_batch` (`jit` of a `vmap`
-over devices; Newton in `lax.while_loop`, voltages in `lax.scan`, pre-bias and freezing by
-masks), the batch equal to the one-device solver to 1e-10, every voltage of every test device
-converged, also the hard case of §10 (by the settled-current criterion). On a laptop CPU 1.2
-devices/s with XLA's own threads, which do not help this solver; **on one core 1.7 devices/s,
-3.4× SimSS on one core** (0.59 s against 2.0 s per device). One process per core would make a
-CPU server alone some ten times SimSS's throughput. The GPU question is the A100's
-(`validation/bench.py`, §8 M3).
+What is planned for jaxdd, and what may come after. What exists and how it works is in the
+handbook, [docs/](docs/README.md). Finished work leaves this file; what it taught goes into
+the handbook.
 
-A one-dimensional drift-diffusion solver for semiconductor devices — perovskite solar cells
-first — written in JAX so that it solves **hundreds of thousands of devices at once** on GPUs:
-**NVIDIA A100 as the default target** (CUDA, JAX's best-supported platform; D9), H100 alike,
-and later the group's own 4× AMD Instinct MI50 once their software stack is solved (§1b). Built on SIMsalabim
-(LGPL-3.0) — its model, and where it helps its code, carried into a batched solver — released
-under the same licence and validated against SIMsalabim's output.
+## 1 Open now
 
-**A general tool, not FauxPV's** (decided 2026-11-07, D7): it reads SIMsalabim's own input
-files, so anyone who sweeps SimSS today can batch the sweep on a GPU. FauxPV is its first user
-and its validation corpus — 1.3 M devices SimSS has already solved — not its scope. The physics
-grows in stages (§2), each validated against SimSS before the next; the first stage is the part
-of SimSS that FauxPV's drift-diffusion tables use, because that is where a million reference
-curves already exist.
+### 1.1 Validation at scale: a large grid with ions
 
----
+A grid of 918 050 perovskite cells with mobile ions (four absorber thicknesses, diffusion
+lengths, ion densities and distributions, light and dark: 1.84 M J-V curves) is solved on an
+A100 in about two hours, and compared point by point with SimSS's run of the same grid.
 
-## 1 Why, and when a GPU helps
+**Done when** every point is within the criteria of [docs/validation.md](docs/validation.md), or
+each miss is explained as SimSS's or jaxdd's, and SimSS's are in
+[docs/differences.md](docs/differences.md).
 
-**Today.** FauxPV's tables run SimSS 5.36 (Pascal, native code) in Docker containers, one
-process per device, two runs per device (light and dark), 61 voltages each. On the server
-(2× EPYC 7502, 64 cores) M19-14's run reached **7.8 devices/s** with 64 workers, 40 devices per
-container: about 8 core-seconds per device. The tables so far cost:
+### 1.2 Speed: the lockstep tail on real grids
 
-| Run | Devices | Wall time (64 cores) |
+Under `vmap` every voltage costs the batch's slowest device ([docs/batching.md](docs/batching.md)).
+On a chunk of that grid (250 nm absorber, every diffusion length, ion density and ion
+distribution, batch 16 384) the devices needed 2.97 Newton steps per voltage and the batch paid
+25.5. Two passes (`max_iter` 25, then the ~0.15 % that miss it again with 60) brought it to 12.5:
+a chunk 75 → 64 s. The rest is the tail of the *ordinary*
+devices: at nearly every voltage some device of 16 384 needs about 12 steps.
+
+Next: measure on thousands of devices, not hundreds, where those ~12 steps sit (voltage,
+ion distribution, stack). By what that shows:
+
+- (a) The scan from `V_pre` outwards instead of from −0.2 V: a device's hardest voltage is
+  usually its first, up to 1.25 V from the frozen pre-bias it starts from. It would also let
+  the first pass's limit drop to about 10.
+- (b) A better start per voltage than linear extrapolation where the tail sits.
+- (c) Smaller batches: the expected maximum over 4096 devices is lower, and an A100 runs 4096 at
+  88 % of the rate of 16 384.
+- (d) The host on smaller machines: writing and reading a device's input files costs ~90 ms
+  on one core. `read_setup` from a mapping of file names to texts, so that sweeps build devices
+  without files.
+- (f) The two passes as part of jaxdd (`solve_batch` re-solving its stragglers), instead of
+  each caller writing them.
+- (e) The Jacobian by edges (each interval's flux and its derivatives once, not twice from both
+  neighbouring rows) and in one `jacfwd` with the ion columns: estimated 1.5–2×. A Newton step
+  of 16 384 devices on an A100 is 67 ms, 46 of it the Jacobian blocks and ion columns, 15 the
+  sweep.
+
+A fused kernel for the whole step stays the large lever (an estimated 15–30× from the A100's
+bandwidth). It is not needed for the steady state; decide it with Stage C (section 4) and after
+M7 (section 2).
+
+### 1.3 M8: the MI50 cards
+
+Prepared: JAX 0.4.31 in `rocm/jax-community:rocm6.0.3-jax0.4.31-py3.11.10` runs `jax.jit` on
+gfx906, and jaxdd passes its tests on JAX 0.4.31 ([docs/hardware.md](docs/hardware.md)). Waiting
+for a run on the cards:
+
+1. On the MI50 host: `rocm/mi50.sh`, then send `rocm/mi50_probe.log`.
+2. The batch a 16 GB card holds; the four cards as four processes (`HIP_VISIBLE_DEVICES`).
+3. A large sweep split across the four cards.
+
+If the image fails: the ROCm 6.1.3 and 6.2.3 images with the same JAX; then jaxlib built from
+source for gfx906 against a ROCm that still ships its libraries (6.2/6.3); last, the block sweep
+as a hand-written HIP kernel beside JAX.
+
+**Done when** the benchmark's results are reproduced on the cards within the validation
+criteria, at a throughput worth the cards (four MI50 are, for this bandwidth-bound FP64 solver,
+about two A100s).
+
+## 2 Milestones after that
+
+| | Work | Done when |
 |---|---|---|
-| M19-13 grid | 37 800 | 65 min |
-| M19-14 doping axis | 113 400 | 199 min |
-| M19-14 ion axis | 216 000 | 461 min |
-| M20-00b ion grid on four absorbers (running) | 918 050 | 33–40 h (pilot bound: 65 h) |
-| M20-00b layer axes to 1 µm (D0 a, open) | 822 528 | about 30 h |
+| **M4** | The grid in space (2.1) | 400 points or fewer meet the validation criteria on the hardest devices, or bucketing by grid size is justified |
+| **M6** | Adaptive parameter axes (2.2) | the refined axes meet a table's interpolation tolerance with fewer devices than hand-made ones |
+| **M7** | Gradients of the converged solution by implicit differentiation (`jax.custom_root` or a custom VJP: one transposed linear solve per voltage); `lax.while_loop` has no reverse mode | gradients against finite differences on the test devices; a fit of a measured curve |
+| — | Several GPUs in one process: the batch axis sharded (`NamedSharding` or `shard_map`, not `pmap`); the devices are independent, so no communication | the rate scales with the number of GPUs |
 
-Every further axis multiplies this. An absorber axis for the whole grid, a temperature axis
-with ions, a mobility axis for the transport layers (FauxPV #61), a permittivity axis (M20-00b
-D1 b): each is a few million devices, weeks on the server.
+M7 comes before any fused kernel: written afterwards, the gradients would have to be written
+twice (the kernel needs its own adjoint, the transposed block sweep).
 
-**Why a straight rewrite does not help.** SimSS is compiled code; a Rust port would run at the
-same speed, plain Python slower. One device is too small for a GPU: about 400 grid points,
-three unknowns per point, a block-tridiagonal Newton step of a few hundred kFLOP. A GPU loses
-on one device to its kernel-launch latency.
+### 2.1 M4: the grid in space
 
-**Why a batched one does.** The devices are independent. A GPU that solves 10⁵ of them in
-lockstep has a block-tridiagonal system of 10⁵ × 400 × 3 unknowns per Newton step, sequential
-along the 400 grid points and parallel across the batch. Back of the envelope, bandwidth-bound:
-per grid point and Newton step the batch reads and writes about 100 bytes per device, 10 MB
-for 10⁵ devices; at 1.5–3 TB/s (A100/H100 HBM) that is 3–7 µs per grid point, 3–6 ms per
-Newton step with forward and backward sweeps. With about 20 Newton steps per voltage and 122
-voltages per device (light and dark), 10⁵ devices take 10–15 s: **of the order of 10⁴
-devices/s, a thousand times the server.** The estimate leaves out the launch overhead of a
-scan over 400 points, the slowest device holding up its batch (§4.4) and the transcendental
-functions in FP64. It may be off by a factor of 10–100 and still be worth it. M3 measures it.
-
-**FP64 is not optional.** Carrier densities span 20 orders of magnitude, and the
-Scharfetter–Gummel fluxes subtract nearly equal exponentials. A100 (9.7 TFLOP/s FP64, 19.5
-with its FP64 tensor cores) and H100 (34 / 67) do FP64 at full rate; consumer GPUs at 1/64 —
-for a bandwidth-bound solver less of a loss than the ratio suggests, but the exponentials are
-not bandwidth-bound. Consumer GPUs are measured in M3 as well, not assumed.
-
-## 1a M0 — measured (2026-11-07)
-
-One chunk of 40 devices (80 SimSS runs) of FauxPV's M20-00b ion grid, one container, one core
-of the laptop:
-
-| Part | Before | After the fix below |
-|---|---|---|
-| container start and stop | 0.33 s per chunk | the same |
-| writing the inputs (Python) | 4.5 s (0.11 s per device) | the same |
-| SimSS | 94.6 s | 81.0 s |
-| reading the outputs | 0.1 s | the same |
-| disk written | 1.2 GB | 8 MB |
-
-**Overhead is 5–6 %**: Docker and files are not the bottleneck, SimSS is. **The fix:** SimSS 5.36
-wrote its internal variables to a file literally named `none` (14.7 MB per run) although
-`varFile = none`; `outputRatio = 0` stops it, with bit-identical curves (FauxPV 7e483de). On
-the server, where 128 workers wrote it at once, the saving is likely larger than the 14 % here.
-
-**The time is in a few devices.** The 8 slowest of 80 runs took 74 % of the chunk's SimSS time,
-up to 9.8 s each, all at `ℓ` 0.2–0.5 on 700–1000 nm absorbers; a run at `ℓ` ≥ 1 takes about
-0.2 s (median 0.24 s). For `jaxdd` this is §3.4's lockstep problem in numbers: batches must
-be sorted by difficulty (`ℓ`, absorber), or the hard tenth sets the pace of all. It also says
-where the solver's robustness work goes (M1–M2).
-
-## 1b The hardware: 4× MI50 in the group, A100/H100 at a centre
-
-| | FP64 (TFLOP/s) | Memory bandwidth | Memory | Software |
-|---|---|---|---|---|
-| AMD Instinct MI50 (gfx906), ×4 owned | 6.7 per card (half its FP32) | 1 TB/s per card | **16 GB** HBM2 per card | ROCm: **gfx906 is deprecated (ROCm 6.3) and unsupported in current releases**; no official JAX/ROCm build targets it |
-| NVIDIA A100 | 9.7 (19.5 with FP64 tensor cores) | 1.5–2 TB/s | 40/80 GB | CUDA; JAX's best-supported platform |
-| NVIDIA H100 | 34 (67) | 3.4 TB/s | 80 GB | CUDA |
-
-**Default: the A100 (decided 2026-11-07, D9).** Everything is developed and measured on CUDA
-first, where JAX works out of the box; the code stays plain JAX, with no CUDA-specific kernel,
-so that a later port has nothing to undo.
-
-**Later: the MI50.** For a bandwidth-bound FP64 solver the four MI50 together are about two
-A100s, and they are the group's: no queue, days of runs for free. The open question is software,
-not silicon. JAX reaches AMD GPUs through XLA's ROCm backend, built for the GPUs AMD supports;
-gfx906 has fallen out of that list. Ways in, cheapest first, for the port (M8):
-
-1. An older matching pair: the last ROCm with full gfx906 support (5.7, by secondary sources)
-   and the jaxlib-rocm of that time, in a container.
-2. jaxlib built from source for gfx906 against a ROCm that still ships gfx906 libraries
-   (6.2/6.3, deprecated but present).
-3. JAX for the model and its CPU and CUDA paths, and the batched block-tridiagonal core as a
-   hand-written HIP kernel for the MI50 (called through a custom call or plain `ctypes`).
-
-**Found 2026-11-08: way 1 exists, one version later than thought.** On an MI50, jax-ml/jax#27600
-(2025) has `jax.jit` running in `rocm/jax-community:rocm6.0.3-jax0.4.31-py3.11.10` (ROCm 6.0.3,
-JAX 0.4.31), with `ROCM_PATH=/opt/rocm` set (without it the PJRT client segfaulted). From JAX
-0.5 on, XLA compiles fusions through Triton, which refuses gfx906 ("unsupported target");
-the maintainers call 0.4.31 "the last JAX version to work with gfx906 in most cases". jaxdd
-runs on it unchanged: its 22 tests pass on JAX 0.4.31 with numpy 1.26 (CPU), and its curves
-differ from the current JAX's by at most 9e-7 of the current scale. `rocm/mi50.sh` starts that
-container on the MI50 host and `rocm/probe.sh` checks it step by step (versions, the cards, a
-jitted float64 batch, the tests on the GPU, every card alone, the batch sizes 16 GB hold, the
-benchmark). Fallbacks with the same JAX: ROCm 6.1.3 and 6.2.3 images. Way 2 and 3 only if the
-probe fails.
-
-`HSA_OVERRIDE_GFX_VERSION` does not help: gfx906 already is 9.0.6, and claiming to be another
-architecture (gfx908, gfx90a) runs kernels compiled for a different instruction set. The
-override is for consumer cards that share an instruction set with a supported one.
-
-## 2 Scope
-
-### 2.1 Stage A: the physics FauxPV's tables need
-
-What `tools/simss_reference.py::simss_parameters` and `tools/dd_tables.py` ask of SimSS today,
-and nothing more:
-
-| Part | What |
-|---|---|
-| Layers | ETL, absorber, HTL; per layer thickness, permittivity, band edges, effective densities of states, mobilities, doping (donors in the ETL, acceptors in the HTL) |
-| Interfaces | band offsets; thermionic transfer at a finite velocity (`nu_int`, 1e5 m/s) for the majority carrier; the minority carrier blocked by a 1 eV offset |
-| Contacts | ohmic electrodes at given work functions (`W_R − W_L = V_bi`) |
-| Recombination | bulk SRH through one neutral trap level (`C_n = C_p`, `E_t`), direct (net radiative) recombination; none in the transport layers |
-| Generation | a profile from a file (Beer–Lambert of AM1.5G, light from either side) |
-| Ions | anions and cations of equal density in the absorber only; settled at a pre-bias under light (`preCond`), then frozen for the scan (`fixIons`, with the patch FauxPV applies to SimSS 5.36 so that Poisson's equation also holds them); and the steady state with ions free at every voltage |
-| Output | `J(V)` light and dark on a fixed voltage grid (−0.2 to 1.3 V in 25 mV), its error estimate, the absorber's mean QFLS; per device a convergence flag (SimSS: `failureMode`) |
-
-Stage A is general in structure from the start: any number of layers, each with its own
-parameters; interfaces with their own offsets and transfer velocities; the input read from
-SIMsalabim's `simulation_setup.txt` and layer files (D8). What Stage A leaves out is refused by
-name when an input asks for it, never ignored.
-
-### 2.2 Stage B: SimSS's steady state in full
-
-One module at a time, each validated against SimSS on its own test devices before the next:
-charged traps at several levels in the bulk and at interfaces; Schottky contacts and finite
-surface recombination; series and shunt resistance; the remaining recombination and mobility
-options of SimSS's parameter files. At the end of Stage B a SimSS input file runs on `jaxdd` or
-is refused with the missing feature named.
-
-### 2.3 Stage C: transients (ZimT)
-
-Time-dependent drift-diffusion with mobile ions: scan-rate hysteresis, transient
-photocurrent and photovoltage, impedance — FauxPV's F3 and most of what groups use ZimT for.
-Its own plan when Stage B is done.
-
-### 2.4 Not part of this
-
-A line-by-line port of SIMsalabim (its one-device Gummel structure does not batch; §3.2,
-§9); 2D/3D (an outlook for 2D in §8c, item 8); a GUI; replacing SimSS as FauxPV's reference (SimSS
-stays the yardstick the new solver is validated against).
-
-## 3 Numerics
-
-### 3.1 Equations and variables
-
-Poisson's equation for the potential `ψ` with free carriers, dopants and ions; the continuity
-equations of electrons and holes in steady state; the ions either fixed (frozen) or in
-zero-flux equilibrium. Scaled throughout: lengths by the device thickness, potentials by
-`V_T`, densities by a reference density, so the unknowns stay O(1) where possible.
-
-The unknowns are a decision (D2): `(ψ, n, p)` with Scharfetter–Gummel fluxes, as SimSS and most
-device codes do, or `(ψ, φ_n, φ_p)` with the quasi-Fermi potentials, where `n = N_c·exp(...)`
-never goes negative and the dynamic range lives in the exponent. The first is the safer match
-to SimSS; the second converges more robustly at high injection. M1 tries both on the same
-devices.
-
-### 3.2 The solver: coupled Newton on a block-tridiagonal system
-
-A coupled Newton step (all three unknowns at once) gives a block-tridiagonal Jacobian with 3×3
-blocks. It is solved by a block Thomas algorithm: a `lax.scan` over the grid points, with the
-batch as the leading axis of every array, so each scan step is a batched 3×3 solve. A
-decoupled Gummel iteration (SimSS's scheme) would need three scalar tridiagonal solves per
-iteration (`jax.lax.linalg.tridiagonal_solve`, batched on GPU) but more iterations, and it
-stalls at high injection; it is the fallback if the coupled step is fragile.
-
-**The Jacobian by automatic differentiation, locally.** Writing the residual of one grid point
-as a function of the unknowns at its three neighbours and differentiating it with `jax.jacfwd`
-gives the three 3×3 blocks of its row exactly, with no hand-derived Scharfetter–Gummel
-derivatives — the error-prone part of every drift-diffusion code. Not `jax.jacobian` of the
-whole residual: that is a dense 1200×1200 matrix per device, 11.5 MB and 1200 forward passes,
-where the blocks are 10 kB and three.
-
-**The Bernoulli function** `B(x) = x/(eˣ − 1)` is 0/0 at `x = 0`, and a `jnp.where` that only
-masks the value still differentiates the masked branch and puts NaN into the Jacobian. The
-"double where": replace `x` by a safe value inside the branch before it is evaluated, and
-use the series `1 − x/2 + x²/12` below |x| ≈ 1e-3.
-
-Damping: the classic potential-update limit (Bank–Rose, or a cap on `|Δψ|` of a few `V_T`).
-Convergence: the update and the residual, both scaled, per device.
-
-### 3.3 Frozen and free ions
-
-**Free ions in steady state** carry no current, so their density is Boltzmann's in the
-potential with a normalisation fixed by their total number: `n_a(x) = N·L·exp(ψ/V_T) /
-∫exp(ψ/V_T)` (and the opposite sign for cations). The integral couples every grid point to a
-scalar: a block-tridiagonal matrix bordered by one row and column per species. Solved with the
-Sherman–Morrison–Woodbury identity on top of the block Thomas sweep — two extra sweeps, no
-dense algebra.
-
-**Frozen ions** are that profile at the pre-bias `V_pre`, computed once, then held as a fixed
-charge for the scan.
-
-### 3.4 Voltage continuation and the lockstep problem
-
-Each device starts from its equilibrium (or `V_pre`) and steps through the voltage grid,
-using the previous solution as the initial guess. The batch steps through the voltages
-together; a device whose Newton iteration fails at a step halves its step locally (masked
-sub-stepping) while the others wait.
-
-Under `vmap`, a `lax.while_loop` runs until every lane has converged: **the batch costs what
-its slowest device costs.** Mitigations, in order: a hard iteration cap per voltage with the
-device flagged (SimSS skips such voltages too, about 1 % of them in FauxPV's tables); sorting
-devices into batches of similar difficulty (by `ℓ`, ion density, doping — known in advance);
-and a second pass over the failed ones with smaller steps.
-
-## 4 The grid in space ("adaptive meshing", meaning 1)
-
-JAX compiles for static shapes: every device in a batch has the same number of grid points.
-The node **positions** can differ per device. Three steps of adaptivity, cheapest first:
+JAX compiles for static shapes: every device in a batch has the same number of grid points, but
+the node **positions** may differ per device. Three steps, cheapest first:
 
 1. **A priori graded mesh per device.** Geometric refinement towards every interface and
-   contact, scaled by the local Debye length `L_D = √(ε·V_T/(q·N))` of the dopants and ions.
-   That matters here: at 1e18 cm⁻³ of ions `L_D` is about 6 nm (ε 24.1), and FauxPV's tables show that
-   the strongly screening ions are where the 0D lookup is worst (M20-00, M20-00b). SimSS
-   grades its grid too; matching its resolution is part of the validation.
-2. **r-adaptivity (moving nodes, fixed count).** After a first solve, redistribute the nodes
-   to equidistribute a monitor function — the arc length of `ψ` and of `log n`, `log p` — and
-   solve again. The count stays fixed, so it fits static shapes and batching.
+   contact, scaled by the local Debye length `L_D = √(ε·V_T/(q·N))` of dopants and ions. At
+   1e18 cm⁻³ of ions `L_D` is about 6 nm (ε 24.1), and strongly screening ions are where
+   interpolated tables are worst.
+2. **r-adaptivity (moving nodes, fixed count).** After a first solve, move the nodes to
+   equidistribute a monitor function (the arc length of `V`, `ln n`, `ln p`) and solve again.
+   The count stays fixed, so it fits static shapes and batching.
 3. **h-adaptivity (changing count)** only by bucketing: batches compiled at 200, 400, 800
-   points, each device in the smallest bucket that meets its error estimate. More compile
-   time and bookkeeping; only if M4 shows 1 and 2 are not enough.
+   points, each device in the smallest bucket that meets its error estimate. Only if 1 and 2
+   are not enough.
 
-M4's study: `J(V)` and `η` at 200, 400, 800, 1600 points, uniform against graded against
-r-adaptive, on the hardest devices of FauxPV's tables (`ℓ` 0.1–0.2, ions 1e18, thick undoped
+The study: `J(V)` and `η` at 200, 400, 800, 1600 points, uniform against graded against
+r-adaptive, on the hardest devices known (`L_diff/d` 0.1–0.2, ions at 1e18 cm⁻³, thick undoped
 layers).
 
-## 5 Fewer devices instead of faster ones ("adaptive", meaning 2)
+### 2.2 M6: fewer devices instead of faster ones
 
-What I called adaptive earlier was mostly this: **sampling the parameter space where the
-result changes, instead of on a full tensor grid.** A fast solver makes the loop below
-interactive; on the CPU server each iteration would take a day.
+Sample the parameter space where the result changes, instead of on a full tensor grid. A fast
+solver makes this loop interactive.
 
-- **Axis refinement (keeps FauxPV's lookup).** FauxPV interpolates on a regular grid, so the
-  grid must stay a tensor product, but each axis's points can be chosen by error: solve at
-  the midpoints between neighbouring axis points across a sample of the other axes, and insert
-  a point where the interpolation misses by more than the tolerance. This is how FauxPV found
-  its doping and ion-density axes by hand (M19-14 E15, E22); automated, it replaces guessing.
-- **Sparse grids** (Smolyak) or **scattered samples with a surrogate** (a GP or a small network,
-  the surrogate already in FauxPV's `TODOS.md`). Far fewer devices in 7–9 dimensions, but
-  FauxPV's lookup would change from interpolation to a model evaluation — a FauxPV decision,
-  not this project's.
+- **Axis refinement (keeps an interpolated table).** A table interpolated on a regular grid
+  stays a tensor product, but each axis's points are chosen by error: solve at the midpoints
+  between neighbouring axis points across a sample of the other axes, and insert a point where
+  the interpolation misses by more than the tolerance. This automates what is otherwise done
+  by hand, axis by axis.
+- **Sparse grids** (Smolyak) or **scattered samples with a surrogate** (a GP or a small network).
+  Far fewer devices in 7–9 dimensions, at the price of a model evaluation instead of an
+  interpolation.
 
-Either needs the solver to be callable from Python in a loop at low latency. That is a
-requirement on the API (§6), not only on throughput.
+Either needs the solver callable from Python in a loop at low latency: a requirement on the API,
+not only on throughput.
 
-## 6 Software
+## 3 Proposal: a steric limit on ion accumulation
 
-- **Package** `jaxdd`, Python ≥ 3.11, `jax` with `jax_enable_x64`; on the cluster
-  `jax[cuda12]` in an Apptainer image, run under Slurm. Pure functions only: a device is a
-  pytree of arrays, `solve(device, voltages) -> curves`, `vmap`ped and `jit`ted; no global state.
-- **Batches across GPUs** with `jax.jit` and a sharding of the batch axis (`NamedSharding`, or
-  `shard_map`) — not `pmap`, which JAX has superseded; the devices are independent, so no
-  communication. On the four MI50 one batch per card.
-- **Memory.** About 30 arrays of 400 points in FP64 per device (~100 kB) and the Jacobian's
-  3×3 blocks (~90 kB): about 200 kB, so 10⁵ devices in about 20 GB. A 16 GB MI50 holds about
-  6·10⁴ per batch with room for XLA's buffers, the four together 2.4·10⁵ per wave; an 80 GB
-  A100/H100 3–4·10⁵. Batch size is a parameter, measured in M0b, not a constant.
-- **I/O.** FauxPV's table format (`simss_tables.npz`: `J_light`, `J_dark`, `errJ`, QFLS on the
-  same axes), so `tools/dd_tables.py` gains a `--backend jaxdd` and nothing downstream changes.
-- **FauxPV never imports it at run time** for F0 (its tables are data). If F3 adopts it later,
-  as an optional extra beside the SIMsalabim subprocess of M20 D4.
-- **Determinism.** Bit-identical on one GPU type and JAX version; across them within a stated
-  tolerance (XLA's reductions differ). As FauxPV's M20 D3 for F3.
+**Why.** Frozen at full accumulation, 1e18 cm⁻³ of ions pile up in nanometre layers at the
+interfaces at 1.5e21 cm⁻³, 1500 times their mean and close to the perovskite's lattice-site
+density (~1e22 cm⁻³). Boltzmann statistics let ions stack without limit; real vacancies cannot.
+The carrier-free bulk between such layers is what leaves the solver at its round-off floor, in
+SimSS as in jaxdd (the hard case in [docs/tutorial.md](docs/tutorial.md), "Known limits").
 
-## 7 Validation
+**What.** The modified Poisson–Boltzmann (Bikerman) occupancy for the ions: saturation at a site
+density `N_max`, in the free steady state and so in the frozen profile. Physically the better
+model; it caps the peaks and removes the near-singular regime at its source. It departs from
+SimSS (to be documented in docs/differences.md, switchable, SimSS's Boltzmann the reproduction),
+and it changes what an ion density means at the high end, so results computed with and without
+it must not be mixed. `N_max` needs a source (a literature value for the halide vacancy site
+density; open). Not started.
 
-The reference is SimSS's own output, which FauxPV already holds: **367 200 devices in
-`simss_tables.npz`**, 512 in `absorber_tables.npz`, soon 918 050 in `absorber_ion_tables.npz`,
-the off-grid checks in `data/drift_diffusion/checks/`, and the benchmark under
-`data/benchmarks/simss/`. Same device descriptions, so a comparison is a script, not a
-project.
+## 4 The physics in stages
 
-| Gate | Criterion |
-|---|---|
-| Ion-free devices | `η` within 1e-3 of SimSS at every voltage up to 1.0 V, `J_SC` within 0.1 %, on a random 1 000 of the table |
-| Frozen ions | the same on 1 000 devices with ions, including the step of M19-14 E22 and `ℓ` 0.1 at 1e18 |
-| Free ions | SimSS's unpatched steady state at 0 V, as M19-13 E15 checked it |
-| Failures | where SimSS skips a voltage, `jaxdd` either converges (and is checked against SimSS at 800 points) or flags it; no silent wrong curve |
-| Physics invariants | current continuity to 1e-9 relative; equilibrium at 0 V in the dark gives zero current and flat quasi-Fermi levels; `η` never above 1 + the generation's quadrature error |
+What jaxdd solves today ("Stage A") is in [docs/overview.md](docs/overview.md). After it:
 
-Tolerances are a decision (D3); the ones above are FauxPV's off-grid tolerances divided by
-30, so the solver is never the larger error.
+- **Stage B: SimSS's steady state in full.** One module at a time, each validated against SimSS
+  on its own test devices before the next: charged traps at several levels in the bulk and at
+  interfaces; Schottky contacts and finite surface recombination; series and shunt resistance;
+  the remaining recombination and mobility options. At the end, a SimSS input runs on jaxdd or is
+  refused with the missing feature named.
+- **Stage C: transients (ZimT).** Time-dependent drift-diffusion with mobile ions: scan-rate
+  hysteresis, transient photocurrent and photovoltage, impedance. Its own plan when Stage B is
+  done. This is where a fused kernel is most likely needed (section 1.2).
 
-## 8 Milestones and gates
+Not planned: a line-by-line port of SIMsalabim (its one-device Gummel structure does not batch),
+a GUI. SimSS stays the reference jaxdd is validated against.
 
-| | Work | Where | Size | Gate to continue |
-|---|---|---|---|---|
-| **M0** | Profile one FauxPV chunk: container start, file I/O, SimSS's own time. **Done 2026-11-07** (§1a): overhead 5 %; the var-file fix took 14 % off a chunk | FauxPV | 1 day | — |
-| **M0b** | JAX on one A100: `jax_enable_x64`, a batched `lax.scan` block-Thomas solve of 10⁵ × 400 × 3×3 in FP64, its bandwidth and the batch size that fits; the same on CPU | A100 | 1 day | ≥ 50 % of the card's bandwidth, or the scan is replaced (Pallas kernel) before M1 builds on it |
-| **M1** ✓ | One device, CPU, x64: Poisson + continuity, SG, coupled Newton, contacts, offsets, thermionic interface, SRH + direct, generation profile; no ions. Both variable sets (D2) | laptop | 1–2 weeks | ion-free gate of §7 |
-| **M2** ✓ | Ions: frozen (pre-bias, then fixed) and free (bordered system) | laptop | 1–2 weeks | both ion gates of §7 |
-| **M3** ✓ | Batched: `vmap`, masked `while_loop`, continuation with sub-steps; on one A100. **Done 2026-11-08: 1198 runs/s, 77× per run** (§8a) | A100 | 1 week | **go/no-go: ≥ 50× the server's 7.8 devices/s on one A100, at the §7 accuracy** |
-| **M4** | Mesh: graded, r-adaptive; the convergence study of §4 | RZ | 1 week | 400 points or fewer meet the gates on the hardest devices, or bucketing is justified |
-| **M5** ◐ | FauxPV backend: `dd_tables.py --backend jaxdd`, the table format; a stored table reproduced to tolerance. **FauxPV side built 2026-11-08** (M20-00c); 44 of 48 within §7, the four others SimSS's (DIFFERENCES.md §1, §1b) | FauxPV + RZ | 1 week | 48-point `reproduce` within §7 |
-| **M6** | Adaptive axes (§5): error-driven axis refinement; first use on M20-00b's open layer axes (D0 a) | FauxPV + RZ | 1–2 weeks | the refined axes meet the off-grid tolerance with fewer devices than the hand-made ones |
-| M7 | Optional: implicit gradients (`jax.custom_root`) for fitting; transients for F3 | — | open | own plan |
-| M8 ◐ | The MI50 port (§1b): the three ways in order — way 1 found and prepared 2026-11-08 (`rocm/mi50.sh`, §1b), waiting for a run on the cards; the M3 benchmark on the four cards | MI50 server | 1–2 weeks | the M3 results reproduced within §7, at a throughput worth the cards |
+## 5 Applications: what the speed could be for
 
-Total to the first useful table (M0–M5): **5–8 weeks** of focused work, most of it M1–M2
-(physics and robustness), not the GPU part. M3 decides early, before M4–M6 are spent.
-
-## 8a The A100 run (RunPod)
-
-In a running pod with an A100 (any CUDA 12 image with Python ≥ 3.11):
-
-```bash
-git clone https://github.com/trn84/jaxdd.git && cd jaxdd
-python -m venv .venv && .venv/bin/pip install -q -e ".[dev]" "jax[cuda12]"
-.venv/bin/python -c "import jax; print(jax.devices())"          # must list a CUDA device
-.venv/bin/python -m pytest -q                                    # the CPU tests, now on the GPU
-.venv/bin/python validation/bench.py 1024 1024                   # warm-up size
-.venv/bin/python validation/bench.py 16384 4096                  # the M3 number
-```
-
-`bench.py` needs nothing but the repository (variants of the committed SimSS inputs, fixed
-seed) and prints devices per second against SimSS's 7.8 on the 64-core server. The M3 gate:
-≥ 390 devices/s (50×). Try batch sizes 1024–8192; note the GPU's memory (`nvidia-smi`).
-
-### First A100 run (2026-11-07, RunPod, commit aab0162)
-
-| Devices, batch | Seconds per batch | Devices/s | × SimSS (64 cores) |
-|---|---|---|---|
-| 1024, 1024 | 21.0 | 48.7 | 6.2 |
-| 16384, 4096 | 28.5 | 143.5 | 18.4 |
-
-All 999 424 points converged. A batch four times larger took only 36 % longer: the A100 waited
-on latency, not bandwidth — about 45 ms per Newton step whatever the batch, the 2 × 400
-sequential steps of the block Thomas sweep each launching their own kernels, two batched LUs
-(`jnp.linalg.solve` on 3×3) among them. Changed after it (commit after aab0162): the 3×3
-inverse in closed form (elementwise, fusable) and the sweep unrolled by 8; on one CPU core
-1.7 → 2.0 devices/s, the results unchanged. Next on the A100: the same benchmark, and batches
-of 8192–32768. If latency still dominates, the sweep as one Pallas kernel, or parallel cyclic
-reduction (log₂ 400 ≈ 9 levels instead of 400 steps).
-
-**Second run** (after the closed-form inverse): short of 390 devices/s. **Parallel cyclic
-reduction built** (`solver._block_pcr`, `linear="pcr"`, the default on a GPU): nine levels of
-fully parallel block eliminations instead of the 2 × 400-step sweep; the same results as the
-sweep on every reference case, a test against the dense solve.
-
-**Third run** (13a1f61, 16384 devices, batch 4096): the sweep **265 devices/s (34×)** — the
-closed-form inverse nearly doubled it — and PCR **81 devices/s**: its nine levels each pass over
-every block of every device, some 40 GB per Newton step at this batch, so it is bandwidth-bound
-where the sweep was latency-bound. Since then: the 3×3 products written elementwise (`_mm`, no
-GEMM call per product, fusable), and the **PCR–Thomas hybrid** (`"hybrid"`: three levels of
-reduction, then eight systems of 50 rows swept side by side — 100 sequential steps instead of
-800, three levels of extra arithmetic instead of nine). `"auto"` is the sweep until the A100
-says otherwise.
-
-**Fourth run** (9fda49c): the sweep 323 devices/s at batch 4096 (`_mm` +22 %), 341 at 16384 —
-now saturated, no longer latency-bound; the hybrid 289. **Then two findings, both general:**
-
-- *Fewer Newton steps.* The start of each voltage extrapolated from the last two solutions
-  (SIMsalabim's `Extrapolate_Solution`) and the step that only confirms quadratic convergence
-  dropped: 4.58 → 2.78 steps per device and voltage, 5.41 → 3.64 for the batch (the maximum
-  per voltage), the results unchanged.
-- *A forward-mode Jacobian with two outputs.* `validation/breakdown.py` timed each part of a
-  step: the ions' constraint, differentiated by `jax.jacfwd` — NP forward passes for two
-  outputs — took **644 of 716 ms** (CPU, batch 256). `jax.jacrev`: 1.2 ms. The step is now
-  77 ms, the sweep (41) and the Jacobian blocks (26) the rest. One CPU core: 1.8 → **19.2
-  devices/s, 38× SimSS on one core.**
-
-**Fifth run (5dde971, 2026-11-08): the M3 gate is met, three times over.** Batch 16384, the
-sweep: **1198 devices/s, 154× SimSS on 64 cores** — per run 77×: a device here is one J-V
-curve, SimSS's 7.8 devices/s are two (light and dark; `bench.py` corrected 2026-11-08)
-(4096: 1060; the hybrid 824); all 3 997 696
-points converged. A Newton step of 16384 devices takes 67 ms: the Jacobian blocks and the ions'
-columns by `jacfwd` 46 ms (69 %), the sweep 15, residual, current and constraint 6. Next for
-speed, if wanted: assembling by edges (each interval's flux and its derivatives once, not
-twice from both neighbouring rows) and one `jacfwd` for blocks and ion columns together,
-estimated 1.5–2×; a fused kernel stays the large lever (some 15–30× from the A100's
-bandwidth), no longer needed for the gate; what it would be for is §8c. FauxPV's ion grid (918 050 devices, ~40 h on the
-64-core server) would take about 13 min on one A100 — that is M5.
-
-**PCR and the hybrid taken out (2026-11-08):** slower than the sweep on every measurement, on
-the A100 and on a CPU, at every batch size; the code is in the history (13a1f61, 9fda49c), the
-sweep is the only linear solver, and `solve_batch` has no `linear` argument any more.
-
-## 8b Proposal: a steric limit on ion accumulation (FauxPV and jaxdd together)
-
-**Why.** The hard case of §10 is not only numerical. Frozen at full accumulation, 1e18 cm⁻³ of
-ions pile up in nanometre layers at the interfaces at 1.5e21 cm⁻³, 1500 times their mean and
-close to the perovskite's lattice-site density (~1e22 cm⁻³). Boltzmann statistics let ions stack
-without limit; real vacancies cannot. The carrier-free bulk between such layers is what leaves the
-solver at its round-off floor, in SimSS as in jaxdd.
-
-**What.** The modified Poisson–Boltzmann (Bikerman) occupancy for the ions: `n_ion = N_max /
-(1 + exp(...))`-like saturation at a site density `N_max`, in the free steady state and so in the
-frozen profile. Physically the better model; it caps the peaks and removes the near-singular
-regime at its source. It departs from SimSS (DIFFERENCES.md, switchable, SimSS's Boltzmann the
-reproduction), and it changes what FauxPV's `x_ion` means at high ion density, so FauxPV's tables
-and jaxdd would adopt it together, with `N_max` from a source (a literature value for the halide
-vacancy site density, `TODO(physics)` until found).
-
-## 8c Applications: what the speed is for
-
-Possible uses beyond FauxPV's tables, collected 2026-11-08 after M3. None is planned yet. They
-are the case for or against a fused kernel (§8a) and for M7's gradients: each says how much
-speed it needs and whether today's is enough.
-
-**The scale.** One device is one J-V curve of 61 voltages, lit, as `validation/bench.py` counts it:
+None of these is planned yet. They are the case for or against a fused kernel and for M7's
+gradients; each says how much speed it needs.
 
 | | Curves/s | Per hour | 1024 curves |
 |---|---|---|---|
-| A100 today (5dde971, the sweep, batch 16384) | 1198 | 4.3 M | 0.85 s |
-| A100 with a fused kernel (estimate, uncertain by a factor of 3) | 10⁴–3·10⁴ | 36–110 M | 35–100 ms |
-| one CPU core today (§8a) | 19 | 69 k | 53 s |
+| A100 today (batch 16 384) | ~1200 | 4.3 M | 0.85 s |
+| A100 with a fused kernel (estimate, uncertain by 3×) | 10⁴–3·10⁴ | 36–110 M | 35–100 ms |
+| a 16-core desktop CPU today | ~360 | 1.3 M | 2.9 s |
+| one CPU core today | ~20 | 72 k | 50 s |
 | a neural surrogate, evaluated | ~10⁶ | — | ~1 ms |
 
-**1. A surrogate trained on data simulated during training.** The simulator and the network
-are both JAX, so they can run in one process on one GPU, even in one compiled training step,
-with no dataset written, copied or stored. The cost: a batch of 1024 curves takes 0.85 s to
-simulate, and a training step of a typical network a few milliseconds, so simulation dominates
-by about 100×. The usual remedy is a replay buffer: simulation fills it continuously, and each
-curve serves several training steps. That works today; with a fused kernel the data come almost
-free. It pays most with **active learning**: simulate where the surrogate is still wrong
-(ensemble disagreement, error on fresh simulations), instead of covering the whole space in
-advance. That matters in high-dimensional spaces where a grid is impossible: FauxPV's 16-D
-recipe space, layer stacks with many parameters. Two cautions. Training must mask points by
-their `converged` flag. Active learning steers towards the hard devices, and in lockstep the
-slowest lane sets the batch's pace (§10). **For a fixed dataset today's speed is enough**:
-10 M curves in about 2.3 h on one A100.
+1. **A surrogate trained on data simulated during training.** Simulator and network are both
+   JAX, so they can run in one process on one GPU, with no dataset written or stored.
+   Simulation dominates a training step by about 100×; a replay buffer (each curve serves
+   several steps) makes it work today. It pays most with active learning: simulate where the
+   surrogate is still wrong, in spaces too large for a grid (a 16-dimensional space of process
+   recipes, layer stacks with many parameters).
+   Training must mask by the `converged` flag, and active learning steers towards the hard
+   devices, which the lockstep makes slow. For a fixed dataset today's speed is enough: 10 M
+   curves in about 2.3 h on one A100.
+2. **Parameters from measurements, with uncertainty.** MCMC needs 10⁵–10⁶ simulations per cell,
+   1.4–14 min on one A100. Ensemble samplers and sequential Monte Carlo map onto the batch;
+   gradient-based samplers and optimisers need M7.
+3. **Sensitivity analysis and uncertainty propagation.** Sobol indices by Saltelli sampling
+   (N·(d+2) simulations: 1.8·10⁵ for N = 10⁴, d = 16, under 3 min) and Monte Carlo over process
+   spread: independent devices, exactly the batch.
+4. **Inverse design.** Optimise a stack for efficiency or stability, by gradient (M7), from many
+   starting points in parallel.
+5. **Drift-diffusion inside a larger simulation.** One solve per simulated measurement, for
+   example in a digital twin of a laboratory that ages and measures many cells; mostly
+   transient (Stage C).
+6. **Transients** cost 10–100× a steady-state curve.
+7. **Interactive tools.** A page where one slides a parameter and watches the curve: about 50 ms
+   per curve on one CPU core is already enough. The GPU earns its place when each update needs
+   many curves (a fit, an uncertainty band).
+8. **Two dimensions (an outlook, a project of its own).** Grain boundaries, pinholes, patterned
+   or interdigitated contacts, edges; Monte Carlo over random grain structures condensed into
+   effective 1D parameters. What changes: about 10⁵ unknowns per device instead of 1200, so the
+   parallelism moves into the device and batches shrink to tens; the Newton system is sparse
+   and banded, solved either by a sweep over grid columns with dense (3·n_y)² blocks (batched
+   LU on FP64 tensor cores, up to n_y ≈ 100–200) or matrix-free Newton–Krylov (JVPs from
+   `jax.jvp`, GMRES; the preconditioner is the hard part, and JAX has no algebraic multigrid or
+   sparse direct solver on the GPU); structured grids suit JAX, unstructured meshes are much
+   more work. The physics and the Jacobian-by-autodiff carry over; the linear solver, the
+   batching, the mesh and the reference do not (SIMsalabim is 1D only; references would be
+   Sentaurus, ATLAS, COMSOL or ChargeTransport.jl).
 
-**2. Parameters from measurements, with uncertainty.** Bayesian inference by MCMC needs 10⁵–10⁶
-simulations per cell, 1.4–14 min on one A100 today. Ensemble samplers and sequential Monte
-Carlo map directly onto the batch. Gradient-based methods (HMC, NUTS, plain optimisers) need
-gradients of the converged solution. `lax.while_loop` has no reverse mode, so they come by
-implicit differentiation at the solution (M7: one transposed linear solve per voltage).
-A hand-written kernel would need its adjoint (the transposed block sweep) written as well.
+**The counter-argument.** The faster the simulator, the less a surrogate is needed: fits and
+sensitivity analyses can call jaxdd directly, with the exact physics. A surrogate pays where
+microseconds per evaluation are needed.
 
-**3. Sensitivity analysis and uncertainty propagation.** Sobol indices by Saltelli sampling
-take N·(d+2) simulations (N = 10⁴, d = 16: 1.8·10⁵, under 3 min today), and Monte Carlo over
-process spread takes N. Both are independent devices, exactly the batch.
-
-**4. Inverse design.** Optimise a stack for efficiency or stability, by gradient (M7) and
-from many starting points in parallel.
-
-**5. Drift-diffusion at FauxPV's run time (F3).** One solve for every measurement of every
-campaign: devices × ageing steps × measurements. Only realistic at this speed, and mostly
-transient (item 6).
-
-**6. Transients (Stage C, §2.3).** Hysteresis, TRPL, transient photocurrent and photovoltage,
-impedance cost 10–100× a steady-state curve. This is where a fused kernel is most likely to
-be needed.
-
-**7. Interactive tools and a lab twin.** Fitting curves while a high-throughput campaign runs
-(closed-loop Bayesian optimisation over recipes), or a web page where one slides a parameter
-and watches the curve. For a single curve latency counts, not throughput: about 50 ms on one
-CPU core today is already enough for a slider. The GPU earns its place when each update needs
-many curves (a fit, an uncertainty band).
-
-**8. Two dimensions (an outlook, outside the scope of §2.4).** This covers everything that is
-not uniform laterally: grain boundaries and ion migration along them, pinholes and local
-shunts, interdigitated back contacts, patterned contacts, edges. One use fits FauxPV
-especially well: Monte Carlo over random grain structures, condensed into effective 1D
-parameters (homogenisation). What changes:
-
-- *The regime.* A 100 × 400 grid has about 10⁵ unknowns per device, not 1200. One device
-  already fills much of a GPU, so the parallelism is within the device; batching shrinks to
-  tens of devices (random structures, voltages), not 10⁵.
-- *The linear solver, the real work.* The Newton system is sparse and banded, not block
-  tridiagonal. There are two ways to solve it:
-  - Generalise today's sweep: each grid column becomes one block, so the blocks are dense
-    (3·n_y)² matrices, about 300 × 300 for n_y = 100. The elimination becomes dense batched
-    LU and GEMM, which the A100's FP64 tensor cores do well: ~4 GFLOP per Newton step,
-    milliseconds. The cost grows with n_y³, so this works up to about n_y = 100–200.
-  - Matrix-free Newton–Krylov: Jacobian-vector products come free from `jax.jvp`, and
-    `jax.scipy.sparse.linalg` has GMRES. The hard part is the preconditioner. Densities that
-    span 20 orders of magnitude make the systems badly conditioned, and JAX has no algebraic
-    multigrid and no sparse direct solver on the GPU (cuDSS through a custom call would be
-    one).
-- *The mesh.* Structured rectangular grids suit JAX. Unstructured triangle meshes for
-  complex geometry work through gather and scatter, but they are slower and much more work
-  (Scharfetter–Gummel on the Voronoi box method).
-
-What carries over from 1D: the physics (Scharfetter–Gummel fluxes, recombination, interfaces,
-ions) and Newton with Jacobian blocks by autodiff from local stencils. Gradients (M7) are worth
-even more in 2D: inverse design of contact patterns and geometries by gradient instead of
-search. A surrogate in the same program could carry 2D results into effective 1D models (item 1).
-What does not carry over: the linear solver, the batching paradigm, the mesh, and the
-reference. SIMsalabim is 1D only, so 2D would have neither its code nor its validation. The
-references would be commercial tools (Sentaurus, ATLAS, COMSOL) or open ones such as
-ChargeTransport.jl (WIAS); whether that one does ions in 2D is to be checked. A project of
-its own, not a stage of jaxdd.
-
-**The counter-argument.** The faster the simulator, the less a surrogate is needed. Fits and
-sensitivity analyses can call jaxdd directly, with the exact physics instead of an
-approximation of it. A surrogate pays where microseconds per evaluation are needed: FauxPV's
-`drift_diffusion = surrogate` (between the table, F0, and the solver, F3), real-time pages,
-or the inner loop of another model.
-
-**What follows for the kernel.**
-
-| Use | Today (A100) enough? | Fused kernel |
+| Use | Today enough? | Fused kernel |
 |---|---|---|
-| tables, a fixed training set (1, M5) | yes | not needed |
+| tables, a fixed training set (1) | yes | not needed |
 | on-the-fly training, active learning (1) | yes, with a replay buffer | makes it nearly free |
 | MCMC per cell (2) | yes for a few cells | helps for many cells |
 | gradients: HMC, fits, inverse design (2, 4) | after M7 | needs its own adjoint |
 | Sobol, Monte Carlo (3) | yes | not needed |
-| F3 at run time, transients (5, 6) | doubtful | most likely needed |
+| inside other simulations, transients (5, 6) | doubtful | most likely needed |
 | interactive (7) | yes, even on a CPU | not needed |
-| 2D (8) | a different solver | dense batched LU (tensor cores) or a preconditioned Krylov method |
+| 2D (8) | a different solver | dense batched LU or a preconditioned Krylov method |
 
-The steady state does not justify a fused kernel. Transients and F3 might, so decide it
-together with Stage C's plan, and do M7's gradients before any kernel: written afterwards, the
-gradients would have to be written twice.
+## 6 Before a release
 
-## 9 Licence and attribution
+- `NOTICE` lists the modules derived from SIMsalabim code (none so far): keep it current, and
+  where code follows SIMsalabim's, keep its copyright notice with a note that it was translated
+  and changed, with the date (GPL-3.0 §5 a).
+- A word with SIMsalabim's maintainers (who also maintain pySIMsalabim): a GPU backend may be
+  of use to them, at best a joint effort.
+- Citation of SIMsalabim in the README and with every published result.
+- A package release on PyPI, versioned, with a changelog from then on.
 
-SIMsalabim is LGPL-3.0, which allows modified and translated versions on one condition: they
-are LGPL-3.0 (or GPL-3.0) themselves. **`jaxdd` is released under LGPL-3.0** (decided
-2026-11-07, open source like SIMsalabim), so it may read and carry over SIMsalabim's code
-wherever that helps — boundary conditions, interfaces, ions, the convergence safeguards —
-which takes most of the risk out of M1–M2. What that requires:
-
-- `COPYING.LESSER` (LGPL-3.0) and `COPYING` (the GPL-3.0 it supplements) in the repository.
-- Where code follows SIMsalabim's, the original copyright notice kept and a prominent note that
-  it was translated and changed, with the date (GPL-3.0 §5 a). A file `NOTICE` lists which
-  modules derive from which SIMsalabim units.
-- Citation in the README and in every result: Koopmans, Le Corre, Koster, J. Open Source Softw.
-  7, 3727 (2022), doi:10.21105/joss.03727, and the SIMsalabim repository with the version
-  followed (5.36, FauxPV's).
-- FauxPV is unaffected: it calls `jaxdd` from `tools/`, as it calls SimSS today, and LGPL is
-  made for use by programs under other licences.
-
-The structure is new regardless (§3.2: a coupled, batched Newton step instead of one device's
-Gummel iteration), so the code is "after SIMsalabim", not a transliteration. Before the first
-release, a word with the Koster group: they maintain pySIMsalabim, and a GPU backend may be of
-use to them — at best a joint effort. Not legal advice; for a release with an institute's
-name, the institute's legal office has the last word.
-
-## 10 Risks
+## 7 Risks
 
 | Risk | Effect | Mitigation |
 |---|---|---|
-| Convergence robustness | SimSS embodies years of tuning; the hard devices (`ℓ` 0.1, 1e18 ions, thick undoped layers) fail first | SIMsalabim's safeguards carried over (§9); M1–M2 on exactly those devices; Gummel fallback; flag, never guess |
-| The slowest lane | one stubborn device holds a batch of 10⁵ | iteration caps, difficulty-sorted batches, a second pass |
-| FP64 cost of `exp`/`log` | slower than the bandwidth estimate | Bernoulli function via series near 0 and cached exponentials; measure in M3 |
-| `lax.scan` over 400 points | launch overhead per step dominates small batches | large batches; if needed a Pallas/Triton kernel for the block Thomas sweep |
-| Scope creep towards a full SIMsalabim | months | §2.1 is the scope; every addition its own decision |
-| A100 access | M0b, M3 wait for GPU time | M1–M2 run on CPU; M0b and M3 need hours, not days; a cloud A100 by the hour if the centre's queue is long |
-| ROCm on gfx906 | the MI50 never run it | not on the critical path (M8, after the A100 works); three ways (§1b), the third independent of XLA's ROCm support |
-| Generality | Stage B's breadth delays a usable Stage A | Stage A's scope is fixed (§2.1); B module by module, each released when validated |
+| The slowest lane | one stubborn device sets a batch's pace | section 1.2; difficulty-sorted batches; two passes |
+| Convergence on new physics (Stage B, steric ions) | the hard devices fail first | each module validated on exactly those devices; flag, never guess |
+| ROCm on gfx906 | the MI50 may never run it | not on the critical path; three ways in (1.3), the last independent of XLA's ROCm support |
+| Scope creep towards a full SIMsalabim | months | every addition its own decision, module by module, each released when validated |
 
-## 11 Decisions
+## 8 Decisions ahead
 
-| | Question | Options | Recommendation |
-|---|---|---|---|
-| D1 | Language | JAX (Python); Rust + CUDA; C++/CUDA | **JAX**: batching by `vmap`, gradients free, one language with FauxPV; a hand kernel only where M3 shows the scan is the bottleneck |
-| D2 | Unknowns | `(ψ, n, p)`; `(ψ, φ_n, φ_p)` | try both in M1 on the same devices |
-| D3 | Tolerances | §7's, or FauxPV's own off-grid tolerances | §7's (the solver never the larger error) |
-| D4 | Licence of `jaxdd` | MIT; Apache-2.0; LGPL-3.0 | **LGPL-3.0, decided 2026-11-07** (§9): SIMsalabim's code may be used, open source like it |
-| D5 | Where it lives | its own repo on Forgejo; `fauxpv/projects/` | **its own repo**: it is useful without FauxPV, and FauxPV only calls it from `tools/` |
-| D6 | M0 first | yes; no | **done** (§1a): overhead 5 %, the var-file fix 14 % |
-| D7 | General or FauxPV's | a solver for FauxPV's tables; a general SimSS-compatible batched solver | **general, decided 2026-11-07**: general in structure and input, staged in physics (§2) |
-| D8 | Input format | SIMsalabim's parameter files; a format of its own; both | **SIMsalabim's files** as the interface (every SimSS user's sweep runs unchanged), a Python API of pytrees beside it for batches built in code |
-| D9 | First GPU platform | A100 (CUDA); MI50 (ROCm) | **A100, decided 2026-11-07**: JAX works there as is; the MI50 port (M8) once the solver is done |
+| Decision | When | With |
+|---|---|---|
+| A fused kernel for the Newton step | with Stage C's plan, after M7 | the applications' needs (section 5) |
+| The steric ion model and its `N_max` | when a source for `N_max` is found | its users: results with and without it differ at high ion density |

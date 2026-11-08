@@ -1,7 +1,7 @@
 """The README's speed figure and table, from every `benchmarks/results/*.json` (`run.py`).
 
     python benchmarks/plot.py                       # reference: the SimSS run on the most cores
-    python benchmarks/plot.py --reference "EPYC 7502 server"
+    python benchmarks/plot.py --reference "my server"
 
 One row per machine, J-V curves per second on a log axis: SimSS on all its cores, jaxdd on all
 of them (one process per core), jaxdd on the GPU (its best batch). Each jaxdd point carries its

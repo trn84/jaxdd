@@ -17,3 +17,10 @@ Modules derived from SIMsalabim (GPL-3.0 §5 a: each such file also says so in i
 with the SIMsalabim unit and version it follows and the date it was changed):
 
     (none yet)
+
+Changes to SIMsalabim distributed here (LGPL-3.0, as SIMsalabim):
+
+    simss/fixed_ions.patch — a change to SIMsalabim 5.36, Units/DDRoutines.pas
+    (Solve_Poisson and Main_Solver), 2026: with fixIons, Poisson's equation leaves the fixed
+    ions unchanged. Applied to a copy of the release by simss/Dockerfile; the release itself
+    is built unchanged beside it.

@@ -1,0 +1,40 @@
+diff --git a/Units/DDRoutines.pas b/Units/DDRoutines.pas
+index 7d82788..8891ba2 100644
+--- a/Units/DDRoutines.pas
++++ b/Units/DDRoutines.pas
+@@ -138,6 +138,7 @@ FUNCTION Copy_State(CONSTREF a : TState; CONSTREF par : TInputParameters) : TSta
+ 
+ IMPLEMENTATION
+ 
++VAR FixedIons : BOOLEAN = FALSE; {the ions of this solve are fixed: Solve_Poisson must leave them alone}
+ VAR RecDum : TRec; {global dummy variable that will be used in Calc_All_Currents, Calc_Recombination_n, and Calc_Recombination_p}
+ {using a local variable in those functions will cause problems (unpredictable behaviour) as this var is pretty large.}
+ 
+@@ -1749,7 +1750,7 @@ BEGIN
+ 				lower[i]:= fac_l - q*lin.f_ti_lo[i]; {linearization of f_ti with respect to delV at gridpoint i}
+ 				upper[i]:= fac_u - q*lin.f_ti_up[i]; {linearization of f_ti with respect to delV at gridpoint i}
+ 				{While unintuitive, the main diagonal adds all charges regardless of sign. This is because we don't add the charges but their derivatives to delV, which is also the source of the factor Vti.}
+-				main[i]:= fac_m - q*Vti*(n[i] + p[i] + nion[i] + pion[i] + lin.f_tb_m[i] + lin.f_ti_m[i]);
++				IF FixedIons THEN main[i]:= fac_m - q*Vti*(n[i] + p[i] + lin.f_tb_m[i] + lin.f_ti_m[i]) ELSE main[i]:= fac_m - q*Vti*(n[i] + p[i] + nion[i] + pion[i] + lin.f_tb_m[i] + lin.f_ti_m[i]);
+ 
+ 			END;
+ 
+@@ -1765,8 +1766,8 @@ BEGIN
+ 			n[i]:=n[i]*fac2; {now update the densities: we have to do this}
+ 			p[i]:=p[i]*fac3; {in order to conserve Gummel iteration}
+ 			{and also apply this to the ions, but only if they are mobile:}
+-			IF par.lyr[stv.lid[i]].negMobileIons THEN nion[i]:=nion[i]*fac2; 
+-			IF par.lyr[stv.lid[i]].posMobileIons THEN pion[i]:=pion[i]*fac3
++			IF par.lyr[stv.lid[i]].negMobileIons AND NOT FixedIons THEN nion[i]:=nion[i]*fac2; 
++			IF par.lyr[stv.lid[i]].posMobileIons AND NOT FixedIons THEN pion[i]:=pion[i]*fac3
+ 		END; {for loop}
+ 
+         it:=it+1;
+@@ -2697,6 +2698,7 @@ BEGIN
+ 	{apply new bias to electrodes:}
+ 	new.V[0]:=stv.V0 + par.leftElec * 0.5 *new.Vint;
+ 	new.V[par.NP+1]:=stv.VL - par.leftElec * 0.5 *new.Vint;
++	FixedIons:=NOT new.UpdateIons;
+ 	Update_Gen_Pot(new.V, new.Vgn, new.Vgp, stv, par); {init. generalised potentials}
+ 	it:=0;
+ 

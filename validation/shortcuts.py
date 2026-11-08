@@ -4,7 +4,7 @@
 
 The shortcuts (`jaxdd.batch`): the quadratic stop (a small step a hundredth of the one before)
 and the settled current; the extrapolated start changes only where Newton begins. `strict=True`
-runs Newton to its 1e-10 step instead. Per device, the largest difference in J over FauxPV's 61
+runs Newton to its 1e-10 step instead. Per device, the largest difference in J over the 61
 voltages, relative to the device's generation current (the scale `η` is measured in); and the
 Newton steps both took.
 """

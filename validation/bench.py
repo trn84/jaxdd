@@ -5,9 +5,8 @@
 Needs only this repository: the variants are the committed SimSS inputs under `tests/data`
 with the trap density, the ion density and the transport layers' doping drawn at random (a
 fixed seed), so the same command gives the same devices anywhere. Prints devices per second
-after compilation, and SimSS's rate on the 64-core server for comparison. A device here is one
-run, one J-V curve; SimSS's 7.8 devices/s on the server (PLAN.md §1) are FauxPV devices of two
-runs each (light and dark), so the comparison is against 15.6 runs/s.
+after compilation; a device here is one run, one J-V curve. To compare with SimSS on the same
+machine and the same devices, use `benchmarks/run.py`.
 """
 
 import sys
@@ -23,9 +22,7 @@ from jaxdd.simss_input import Layer, Setup, read_setup
 
 DATA = Path(__file__).resolve().parents[1] / "tests" / "data"
 V = np.round(np.arange(-0.2, 1.3 + 1e-9, 0.025), 6)
-#: SimSS on the 64-core server, runs (curves) per second: 7.8 FauxPV devices of two runs each.
-SIMSS_SERVER_RUNS_PER_S = 2 * 7.8
-#: SimSS on one core, one device (61 voltages, light): 2.0 s (PLAN.md §1a, M0).
+#: SimSS on one core, one device (61 voltages, light): 2.0 s (docs/validation.md).
 SIMSS_SECONDS_PER_DEVICE_ONE_CORE = 2.0
 
 
@@ -83,8 +80,6 @@ def main(n: int = 64, batch_size: int = 64) -> None:
         # intra_op_parallelism_threads=1".
         print(f"  per core, if this ran on one: {SIMSS_SECONDS_PER_DEVICE_ONE_CORE * rate:.1f}x "
               "SimSS on one core")  # fmt: skip
-    else:
-        print(f"  {rate / SIMSS_SERVER_RUNS_PER_S:.1f}x SimSS on the 64-core server, per run")
 
 
 if __name__ == "__main__":

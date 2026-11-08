@@ -1,4 +1,5 @@
-"""The §7 gate on FauxPV's table: jaxdd's η against SimSS's on sampled devices without ions.
+"""The 1000-device check (docs/validation.md): jaxdd's η against SimSS's on devices without
+ions sampled from a parameter table of perovskite cells.
 
     .venv/bin/python validation/table_gate.py ../jaxdd-ref/table_sample [simss|exact]
 

@@ -6,7 +6,7 @@ Each part of one Newton step of `jaxdd.batch` is jitted on its own over a batch 
 devices and timed after compilation: the residual, the Jacobian blocks and the ions' columns
 (autodiff of each row), the ions' constraint, the linear solve (sweep, three right-hand sides),
 the current, and the whole step. The part that dominates is the candidate for a kernel of its
-own (PLAN.md §8a).
+own (PLAN.md, section 1.2).
 """
 
 import sys

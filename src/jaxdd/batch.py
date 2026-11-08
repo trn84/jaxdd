@@ -5,14 +5,14 @@ voltages; everything else — layers, doping, ions, pre-bias — may differ. A d
 arrays (`prepare`); `solve_batch` runs Newton per voltage in a `lax.while_loop`, the voltages
 in a `lax.scan`, the pre-bias and the freezing of the ions by masks rather than branches, and the
 current in JAX. Under `vmap` a while loop runs until its last lane has converged, so a batch
-costs what its slowest device costs (PLAN.md §3.4): converged lanes are held, and the
+costs what its slowest device costs (docs/batching.md): converged lanes are held, and the
 iteration cap bounds the rest.
 
 Convergence, per device and voltage: the Newton step below `tol`; or the round-off floor (a step
 below `ROUND_OFF_FLOOR` that has stopped falling); or the current settled — unchanged to
 `CURRENT_TOL` of its scale over `STALL_STEPS` steps while the step is below `CURRENT_STEP_CAP`.
 The last is what a J-V curve needs: where strong frozen charge leaves the potential a few 1e-5
-`V_T` of noise in a carrier-free bulk, the current is settled long before (PLAN.md §10).
+`V_T` of noise in a carrier-free bulk, the current is settled long before (docs/solver.md).
 """
 
 from __future__ import annotations

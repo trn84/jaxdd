@@ -2,8 +2,8 @@
 
     .venv/bin/python validation/batch_vs_single.py CASE_DIR [CASE_DIR ...]
 
-Every case directory holds SimSS's input and its JV.dat; all run in one batch at FauxPV's 61
-voltages.
+Every case directory holds SimSS's input and its JV.dat; all run in one batch at 61
+voltages (−0.2 to 1.3 V).
 """
 
 import sys

@@ -17,7 +17,7 @@ What differs is only how they are solved: SIMsalabim iterates Poisson and the tw
 equations in turn (Gummel); here all three are solved at once, Newton's method on the
 unknowns `(V, ln n, ln p)` at every interior point. The Jacobian is block-tridiagonal with
 3×3 blocks; each row's three blocks come from `jax.jacfwd` of that row's residual in its
-three neighbours (PLAN.md §3.2), and the system is solved by a block Thomas sweep.
+three neighbours (docs/solver.md), and the system is solved by a block Thomas sweep.
 """
 
 from __future__ import annotations
@@ -233,7 +233,7 @@ def _block_thomas(A, B, C, d):
     Parallel cyclic reduction and a hybrid of it with this sweep were built and measured (M3,
     commits 13a1f61, 9fda49c) and taken out again: slower everywhere — on an A100 at batch 16384
     the sweep 1198 devices/s, the hybrid 824, PCR about a third of the sweep, its log₂ N passes
-    over every block bandwidth-bound. PLAN.md §8a."""
+    over every block bandwidth-bound. docs/solver.md."""
 
     def forward(carry, blocks):
         c_prev, d_prev = carry
@@ -264,7 +264,7 @@ def _newton_step(y, logs, bounds, s, ion, Vt, g_frac, bernoulli_name="exact"):
     Free ions make the system block-tridiagonal bordered by two rows and columns (each
     normalisation enters every Poisson row of its region, its constraint every potential):
     solved by the block Thomas sweep on three right-hand sides and a 2×2 Schur complement
-    (Sherman–Morrison–Woodbury, PLAN.md §3.3).
+    (Sherman–Morrison–Woodbury, docs/solver.md).
     """
     row_val, row_jac, row_ions = _kernels(BERNOULLI[bernoulli_name])
     la, lc = logs[0], logs[1]
@@ -417,8 +417,9 @@ def _ion_setup(dev: Device) -> dict:
 
 
 def _freeze(s: dict, ion: dict, y, logs, bounds, Vt) -> tuple[dict, dict]:
-    """The mobile ions of the solution `y` as fixed densities, no longer solved for (FauxPV's
-    `fixIons` with its patch: frozen after the pre-bias, in Poisson's equation too)."""
+    """The mobile ions of the solution `y` as fixed densities, no longer solved for (SimSS's
+    `fixIons` with `simss/fixed_ions.patch`: frozen after the pre-bias, in Poisson's equation
+    too)."""
     V = y[:, 0]
     s = dict(s)
     s["a_fix"] = s["a_fix"] + s["a_mask"] * jnp.exp(logs[0] + V / Vt)
@@ -435,7 +436,7 @@ def solve_jv(dev: Device, voltages: np.ndarray, g_frac: float | None = None,
     """The J-V curve at `voltages` (internal = external here), each solved from the last.
 
     With `preCond`, the device is first solved at `Vpre` with its ions free; with `fixIons`
-    they are then held for the scan (SIMsalabim's sequence, FauxPV's patched `fixIons`).
+    they are then held for the scan (SIMsalabim's sequence, `fixIons` as patched in `simss/`).
     """
     g_frac = dev.G_frac if g_frac is None else g_frac
     s = {k: jnp.asarray(v) for k, v in _stencils(dev).items()}

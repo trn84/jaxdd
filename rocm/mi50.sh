@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# M8: jaxdd on the group's AMD Instinct MI50 (gfx906), in a container whose JAX still runs on it.
+# jaxdd on AMD Instinct MI50 (gfx906), in a container whose JAX still runs on it.
 #
 #   git clone https://github.com/trn84/jaxdd.git && cd jaxdd
 #   rocm/mi50.sh                     # IMAGE=... rocm/mi50.sh to try another ROCm (below)

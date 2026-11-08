@@ -1,7 +1,7 @@
 """jaxdd against SimSS on this machine: J-V curves per second, for `benchmarks/plot.py`.
 
     python benchmarks/run.py --label "A100 pod"                                  # jaxdd: GPU, CPU
-    python benchmarks/run.py --label "EPYC 7502 server" --simss-docker fauxpv/simss:5.36
+    python benchmarks/run.py --label "my server" --simss-docker jaxdd/simss:5.36
     python benchmarks/run.py --label "laptop" --simss simss --simss-fixed simss_fixed_ions
 
 **The workload** is `validation/bench.py`'s: the three committed SimSS cases (no ions; 1e17 cm⁻³
@@ -22,12 +22,12 @@ SimSS and built from those same inputs for jaxdd.
   process's working set must fit its share of the cache (Ryzen 9 5950X, 16 processes:
   batch 32 gives 43 runs/s, batch 2 349, batch 1 375; one process alone 21–27 at any batch).
 * `simss` — SimSS 5.36, one process per run, `--simss-procs` at once (default every logical
-  core): native binaries (`--simss`, and `--simss-fixed` for the frozen-ion case, FauxPV's
-  patched `simss_fixed_ions`), or a Docker image that has both (`--simss-docker`; its start,
-  about a second, is in the time). Runs over wall time.
-* `accuracy` — where SimSS ran: jaxdd (with SimSS's Bernoulli series, DIFFERENCES.md §2) on
+  core): native binaries (`--simss`, and `--simss-fixed` for the frozen-ion case, the
+  patched `simss_fixed_ions` built by `simss/`), or a Docker image that has both
+  (`--simss-docker`; its start, about a second, is in the time). Runs over wall time.
+* `accuracy` — where SimSS ran: jaxdd (with SimSS's Bernoulli series, docs/differences.md §2) on
   the same devices against SimSS's curves, `max |ΔJ|` over the current scale per device.
-  SimSS's early stops (DIFFERENCES.md §1) show up here as SimSS's error, not jaxdd's.
+  SimSS's early stops (docs/differences.md §1) show up here as SimSS's error, not jaxdd's.
 
 Writes `benchmarks/results/<label>.json`; `benchmarks/plot.py` turns all of them into the
 README's figure and table.
@@ -58,7 +58,7 @@ RESULTS = ROOT / "benchmarks" / "results"
 V = np.round(np.arange(-0.2, 1.3 + 1e-9, 0.025), 6)
 SEED = 20261107
 #: XLA's own threads do not help this solver on a CPU (tiny 3×3 blocks in a sequential sweep):
-#: one single-threaded process per core is its fastest use of a CPU (NEXT.md).
+#: one single-threaded process per core is its fastest use of a CPU (docs/hardware.md).
 SINGLE_THREAD_XLA = "--xla_cpu_multi_thread_eigen=false intra_op_parallelism_threads=1"
 #: Devices compared in `accuracy`, at most.
 ACCURACY_DEVICES = 48
@@ -100,7 +100,7 @@ def _jaxdd_commit() -> str | None:
 # ------------------------------------------------------------------------------- jaxdd
 def _lockstep(its: np.ndarray) -> dict:
     """Newton steps per voltage: the mean the runs need against the per-voltage maximum the
-    batch pays under `vmap` (PLAN.md §3.4)."""
+    batch pays under `vmap` (docs/batching.md)."""
     needed, paid = its.mean(axis=0).sum(), its.max(axis=0).sum()
     return {"steps_needed": float(needed / its.shape[1]), "steps_paid": float(paid / its.shape[1]),
             "lockstep": float(paid / needed)}  # fmt: skip
@@ -193,7 +193,7 @@ def _collect(queue, kind: str, count: int, workers: list, deadline: float) -> li
 
 def measure_cpu(procs: int, batch: int, repeats: int) -> dict | None:
     # numpy's BLAS starts a thread per core in every process: a process per core on a 128-core
-    # pod passes the container's thread limit (FauxPV's grid broke on it, 2026-11-08). The
+    # pod passes the container's thread limit (a run on 128 cores broke on it). The
     # workers inherit these before their numpy loads; the solver's own threads are XLA's.
     for name in ("OPENBLAS_NUM_THREADS", "OMP_NUM_THREADS", "MKL_NUM_THREADS"):
         os.environ.setdefault(name, "1")
@@ -250,7 +250,7 @@ def write_simss_inputs(setup, target: Path) -> None:
 
 
 def _binary(setup, plain: str, fixed: str) -> str:
-    """The frozen-ion case needs FauxPV's patched SimSS (`fixIons` held in Poisson too)."""
+    """The frozen-ion case needs the patched SimSS (`simss/`: `fixIons` held in Poisson too)."""
     return fixed if setup.i("preCond") and setup.i("fixIons") else plain
 
 

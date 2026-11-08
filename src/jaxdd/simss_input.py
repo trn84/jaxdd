@@ -69,10 +69,10 @@ def read_setup(path: Path) -> Setup:
     return Setup(raw=raw, layers=tuple(layers), directory=path.parent)
 
 
-#: Stage A (PLAN.md §2.1): the values a supported input must have. Ions are supported in one
-#: layer per region, steady (free at every voltage) or held after a pre-bias (`preCond`,
-#: `fixIons`, with FauxPV's patch that keeps Poisson from moving them). Anything else is refused by
-#: name, never approximated.
+#: Stage A (docs/overview.md, "Scope"): the values a supported input must have. Ions are
+#: supported in one layer per region, steady (free at every voltage) or held after a pre-bias
+#: (`preCond`, `fixIons`, as SimSS with `simss/fixed_ions.patch`: Poisson leaves them). Anything
+#: else is refused by name, never approximated.
 _SETUP_REQUIRED = {
     "S_n_L": -1.0,
     "S_p_L": -1.0,

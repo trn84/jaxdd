@@ -10,3 +10,4 @@ dist/
 data/*.npz
 # Validation results written by scripts
 validation/*.json
+rocm/*.log

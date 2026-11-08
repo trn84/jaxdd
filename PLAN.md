@@ -128,6 +128,18 @@ gfx906 has fallen out of that list. Ways in, cheapest first, for the port (M8):
 3. JAX for the model and its CPU and CUDA paths, and the batched block-tridiagonal core as a
    hand-written HIP kernel for the MI50 (called through a custom call or plain `ctypes`).
 
+**Found 2026-11-08: way 1 exists, one version later than thought.** On an MI50, jax-ml/jax#27600
+(2025) has `jax.jit` running in `rocm/jax-community:rocm6.0.3-jax0.4.31-py3.11.10` (ROCm 6.0.3,
+JAX 0.4.31), with `ROCM_PATH=/opt/rocm` set (without it the PJRT client segfaulted). From JAX
+0.5 on, XLA compiles fusions through Triton, which refuses gfx906 ("unsupported target");
+the maintainers call 0.4.31 "the last JAX version to work with gfx906 in most cases". jaxdd
+runs on it unchanged: its 22 tests pass on JAX 0.4.31 with numpy 1.26 (CPU), and its curves
+differ from the current JAX's by at most 9e-7 of the current scale. `rocm/mi50.sh` starts that
+container on the MI50 host and `rocm/probe.sh` checks it step by step (versions, the cards, a
+jitted float64 batch, the tests on the GPU, every card alone, the batch sizes 16 GB hold, the
+benchmark). Fallbacks with the same JAX: ROCm 6.1.3 and 6.2.3 images. Way 2 and 3 only if the
+probe fails.
+
 `HSA_OVERRIDE_GFX_VERSION` does not help: gfx906 already is 9.0.6, and claiming to be another
 architecture (gfx908, gfx90a) runs kernels compiled for a different instruction set. The
 override is for consumer cards that share an instruction set with a supported one.
@@ -329,7 +341,7 @@ Tolerances are a decision (D3); the ones above are FauxPV's off-grid tolerances 
 | **M5** ◐ | FauxPV backend: `dd_tables.py --backend jaxdd`, the table format; a stored table reproduced to tolerance. **FauxPV side built 2026-11-08** (M20-00c); 44 of 48 within §7, the four others SimSS's (DIFFERENCES.md §1, §1b) | FauxPV + RZ | 1 week | 48-point `reproduce` within §7 |
 | **M6** | Adaptive axes (§5): error-driven axis refinement; first use on M20-00b's open layer axes (D0 a) | FauxPV + RZ | 1–2 weeks | the refined axes meet the off-grid tolerance with fewer devices than the hand-made ones |
 | M7 | Optional: implicit gradients (`jax.custom_root`) for fitting; transients for F3 | — | open | own plan |
-| M8 | The MI50 port (§1b): the three ways in order; the M3 benchmark on the four cards | MI50 server | 1–2 weeks | the M3 results reproduced within §7, at a throughput worth the cards |
+| M8 ◐ | The MI50 port (§1b): the three ways in order — way 1 found and prepared 2026-11-08 (`rocm/mi50.sh`, §1b), waiting for a run on the cards; the M3 benchmark on the four cards | MI50 server | 1–2 weeks | the M3 results reproduced within §7, at a throughput worth the cards |
 
 Total to the first useful table (M0–M5): **5–8 weeks** of focused work, most of it M1–M2
 (physics and robustness), not the GPU part. M3 decides early, before M4–M6 are spent.

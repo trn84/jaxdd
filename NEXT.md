@@ -79,8 +79,14 @@ day, commit 66c525f, had them as jaxdd's.)
      point costs ~90 ms on one core; planned (FauxPV M20-00c, "The device building without
      files"): `read_setup` from a mapping of file names to texts. (e) The Jacobian by edges and
      in one `jacfwd`, estimated 1.5–2×; a fused kernel only if far more is needed.
-3. M4 (mesh study), M6 (adaptive axes).
-4. Proposal PLAN.md §8b, for FauxPV and jaxdd together: a steric (Bikerman) limit on ion
+3. **M8, the MI50: prepared, waiting for a run on the cards** (2026-11-08). JAX 0.4.31 in
+   `rocm/jax-community:rocm6.0.3-jax0.4.31-py3.11.10` runs `jax.jit` on gfx906 (jax-ml/jax#27600;
+   newer JAX compiles through Triton, which refuses gfx906); jaxdd passes its tests on JAX
+   0.4.31 (CPU, within 9e-7 of the current JAX). On the MI50 host: `rocm/mi50.sh` → send
+   `rocm/mi50_probe.log`. Then: the batch a 16 GB card holds, the four cards as four processes
+   (`HIP_VISIBLE_DEVICES`), and FauxPV's `dd_tables.py --backend jaxdd` split across them.
+4. M4 (mesh study), M6 (adaptive axes).
+5. Proposal PLAN.md §8b, for FauxPV and jaxdd together: a steric (Bikerman) limit on ion
    accumulation. Not started.
 
 ## Known limits

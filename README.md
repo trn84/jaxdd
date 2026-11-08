@@ -1,4 +1,4 @@
-# jaxdd
+<h1 align="center"><img src="assets/logo/jaxdd-logo-1-bands.svg" alt="JAXDD" width="440"></h1>
 
 A one-dimensional drift-diffusion solver for perovskite solar cells, written in JAX to solve
 hundreds of thousands of devices at once on a data-centre GPU (A100/H100). It follows the device

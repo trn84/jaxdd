@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 440 140" width="440" height="140" role="img" aria-label="JAXDD"><style>.ink{fill:#14213D}.sub{fill:#5B6478}.acc{fill:#F08A24}.sink{stroke:#14213D}text{font-family:Inter,"Segoe UI","Helvetica Neue",Arial,sans-serif}@media (prefers-color-scheme:dark){.ink{fill:#EEF1F7}.sub{fill:#9AA4B8}.sink{stroke:#EEF1F7}}</style>
+<defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#FFC94A"/><stop offset="1" stop-color="#F08A24"/></linearGradient></defs>
+<path d="M12 38H42C62 38 78 72 98 72H128V112H98C78 112 62 78 42 78H12Z" fill="url(#g)" opacity="0.35"/>
+<path d="M12 38H42C62 38 78 72 98 72H128" fill="none" class="sink" stroke-width="6" stroke-linecap="round"/>
+<path d="M12 78H42C62 78 78 112 98 112H128" fill="none" class="sink" stroke-width="6" stroke-linecap="round"/>
+<circle cx="76" cy="51" r="7" fill="#1D9BF0"/>
+<path d="M88 52l10 8m0 0l-1-7m1 7l-7 0" fill="none" stroke="#1D9BF0" stroke-width="3" stroke-linecap="round"/>
+<circle cx="64" cy="99" r="6.5" fill="none" stroke="#F08A24" stroke-width="3.5"/>
+<path d="M52 98l-10-8m0 0l1 7m-1-7l7 0" fill="none" stroke="#F08A24" stroke-width="3" stroke-linecap="round"/>
+<g stroke="#FFB703" stroke-width="3" stroke-linecap="round"><path d="M114 10V5M114 38V43M100 24H95M128 24H133M104 14L101 11M124 14L127 11M104 34L101 37M124 34L127 37"/></g><circle cx="114" cy="24" r="7.5" fill="#FFB703"/>
+<text x="156" y="86" class="ink" font-size="60" font-weight="800" letter-spacing="-0.5">JAX<tspan class="acc">DD</tspan></text><text x="159" y="114" class="sub" font-size="15" letter-spacing="0.4">perovskite drift–diffusion in JAX</text></svg>

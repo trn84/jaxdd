@@ -21,15 +21,46 @@ extrapolated starts, the quadratic stop). Breakdown of one Newton step (`breakdo
 The Newton system is solved by the block Thomas sweep; parallel cyclic reduction and a
 PCR–Thomas hybrid were built, measured slower everywhere, and taken out (PLAN.md §8a).
 
+**A device in `bench.py` was one run (one curve); SimSS's 7.8 devices/s are FauxPV devices of
+two runs each (light and dark).** Per run the A100 is 1198 / 15.6 = **77×** SimSS on 64 cores,
+not 154× (`bench.py` corrected 2026-11-08; the gate of 50× still holds). The M20-00b ion grid is
+1.84 M runs: about 26 min of solving, not 13.
+
+## M5 (2026-11-08): the FauxPV side built, the gate with frozen ions not met
+
+FauxPV's `tools/dd_tables.py --backend jaxdd` (FauxPV task M20-00c): the SimSS input files of
+every grid point, read by `read_setup`/`build_device` in worker processes, solved by
+`solve_batch` per grid size and voltage axis, into tables of their own. `reproduce --backend
+jaxdd` on 48 grid points of `simss_tables.npz` (CPU, 30 s): median `η` gap 1.5e-5, 44 within
+1e-3. Of the four that fail, SimSS rerun at `tolDens = tolPois = 1e-9` (FauxPV
+`data/drift_diffusion/checks/m20_00c_simss_tight.{py,json}`):
+
+| FauxPV grid point | `ℓ` | `N_ion` cm⁻³ | `x_ion` | ETL, HTL (nm, cm⁻³) | jaxdd − SimSS 1e-9, `η` | where |
+|---|---|---|---|---|---|---|
+| p1_4_2_0_5_0_3 | 0.2 | 3e16 | 0.5 | 1/1e18, 1/1e17 | 5.4e-6 | SimSS's early stop (DIFFERENCES §1) |
+| p0_10_1_3_4_2_3 | 0.1 | 1e18 | 0.25 | 100/3e17, 30/1e17 | **8.1e-3** | towards 1 V, light and dark (6.9e-3, 7.0e-3) |
+| p1_10_4_1_2_4_2 | 0.2 | 1e18 | 1 | 10/1e16, 300/1e16 | **3.7e-2** | light only, from reverse bias: J_SC −8.41 vs −8.94 A/m²; dark within 3.5e-5 |
+| p2_8_2_3_0_4_2 | 0.5 | 3e17 | 0.5 | 100/0, 300/1e16 | **4.0e-3** | towards 1 V, light 3.6e-3, dark 4.1e-4 |
+
+`ℓ` is `L_diff/d` at short circuit; layers on FauxPV's axes (the absorber's permittivity, 500 nm
+absorber). jaxdd converged at every voltage and gives the same with `strict=True`, with
+`bernoulli_name="simss"` and with `max_iter=300`; SimSS at 1e-9 has `errJ` ≤ 8e-6 of `J_gen` and
+skips nothing. So jaxdd and the converged SimSS solve something different there — every case
+with ions frozen after a pre-bias, the worst the hard case of PLAN.md §10. The inputs: FauxPV
+`m20_00c_simss_tight.py write` writes them (to the temp dir).
+
 ## Next
 
-1. **Choose:** speed further or put it to use.
-   - Speed: assemble the Jacobian by edges (each interval's flux once) and in one `jacfwd`,
-     estimated 1.5–2× (about a day); a fused kernel only if far more is needed.
-   - Use (M5): `jaxdd` as a backend of FauxPV's `tools/dd_tables.py` — the ion grid of M20-00b
-     (918 050 devices, ~40 h on the CPU server) in ~13 min on one A100, and the table points
-     SimSS's `errJ` flags recomputed.
-2. M4 (mesh study), M6 (adaptive axes).
+1. **The three frozen-ion cases above** — the gate of §7 for frozen ions, which until now was
+   checked on the reference cases only, not on 1000 devices. Then FauxPV's `reproduce --backend
+   jaxdd` again, and a sample with ions at `ℓ` ≤ 0.5. Only then the M20-00b ion grid on the A100
+   (its SimSS run, still going, is the reference for it).
+2. Speed, after that: assemble the Jacobian by edges (each interval's flux once) and in one
+   `jacfwd`, estimated 1.5–2× (about a day); a fused kernel only if far more is needed. On a
+   real grid the host may set the pace first: writing and reading SimSS's files is ~0.1 s per
+   point, and hard devices hold a batch in lockstep (M0: the slowest tenth is 74 % of SimSS's
+   time).
+3. M4 (mesh study), M6 (adaptive axes).
 3. Proposal PLAN.md §8b, for FauxPV and jaxdd together: a steric (Bikerman) limit on ion
    accumulation. Not started.
 

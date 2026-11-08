@@ -34,6 +34,29 @@ densities relatively) or to the round-off floor (a step below 1e-6 that has stop
 There is no switch to stop early; to compare with SimSS, run SimSS tighter
 (`tolDens = tolPois = 1e-9`), or discard the voltages where SimSS's `errJ` is large.
 
+## 1b Frozen ions: SimSS freezes an unconverged pre-bias, off its ion number
+
+**What.** With `preCond` and `fixIons`, SimSS solves the pre-bias with the ions free, then holds
+them for the scan. If the pre-bias does not converge within `maxItSS` (its log: "No
+convergence for Vint=" at `Vpre`, the first solve), SimSS goes on and freezes the ions of its
+last iteration. Those are off their number: each iteration of `Main_Solver` sets the profile
+from the potential and rescales it to `N·L` (`Calc_Ion_Distribution_Steady_State`,
+`Rescale_Ion_Density`), then `Solve_Poisson` multiplies the mobile ions by `exp(±ΔV/V_T)` and
+does not rescale; only at a fixed point is that factor 1. Nothing in `JV.dat` shows it: `errJ`
+is the scan's, and the scan solves the frozen ions cleanly. A tighter `tolDens` does not help.
+
+**How large.** On FauxPV's grid points (`data/drift_diffusion/checks/m20_00c_prebias_ions.py`,
+2026-11-08): three of 48 random points, SimSS's frozen anions and cations off `N·L` by
+0.8–6.5e-4, opposite for the two species — at 1e18 cm⁻³ up to 1e-4 C/m² of net ionic charge,
+about 0.25 V across a 500 nm absorber — and `η` off by 4e-3 to 3.7e-2 (`J_SC` 6 % at
+`L_diff/d` 0.2). Given SimSS's frozen ion numbers (the device's `anion_total`, `cation_total`),
+jaxdd reproduces SimSS's curves to 9e-5 of `η`: the whole gap is the ions' number.
+
+**jaxdd.** The pre-bias by Newton with the ions' number as a constraint, held to round-off
+(1e-15 of `N·L`); a pre-bias that does not converge is flagged (`converged` false at every
+voltage of the scan), never frozen silently. To reproduce SimSS's number, set the device's ion
+totals to SimSS's frozen ones.
+
 ## 2 The Bernoulli function
 
 **What.** SimSS evaluates `B(x) = x/(eˣ − 1)` by Taylor series of order 1 below |x| = 0.05,

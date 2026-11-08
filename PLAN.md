@@ -167,7 +167,7 @@ Its own plan when Stage B is done.
 ### 2.4 Not part of this
 
 A line-by-line port of SIMsalabim (its one-device Gummel structure does not batch; §3.2,
-§9); 2D/3D; a GUI; replacing SimSS as FauxPV's reference (SimSS
+§9); 2D/3D (an outlook for 2D in §8c, item 8); a GUI; replacing SimSS as FauxPV's reference (SimSS
 stays the yardstick the new solver is validated against).
 
 ## 3 Numerics
@@ -477,6 +477,40 @@ and watches the curve. For a single curve latency counts, not throughput: about 
 CPU core today is already enough for a slider. The GPU earns its place when each update needs
 many curves (a fit, an uncertainty band).
 
+**8. Two dimensions (an outlook, outside the scope of §2.4).** This covers everything that is
+not uniform laterally: grain boundaries and ion migration along them, pinholes and local
+shunts, interdigitated back contacts, patterned contacts, edges. One use fits FauxPV
+especially well: Monte Carlo over random grain structures, condensed into effective 1D
+parameters (homogenisation). What changes:
+
+- *The regime.* A 100 × 400 grid has about 10⁵ unknowns per device, not 1200. One device
+  already fills much of a GPU, so the parallelism is within the device; batching shrinks to
+  tens of devices (random structures, voltages), not 10⁵.
+- *The linear solver, the real work.* The Newton system is sparse and banded, not block
+  tridiagonal. There are two ways to solve it:
+  - Generalise today's sweep: each grid column becomes one block, so the blocks are dense
+    (3·n_y)² matrices, about 300 × 300 for n_y = 100. The elimination becomes dense batched
+    LU and GEMM, which the A100's FP64 tensor cores do well: ~4 GFLOP per Newton step,
+    milliseconds. The cost grows with n_y³, so this works up to about n_y = 100–200.
+  - Matrix-free Newton–Krylov: Jacobian-vector products come free from `jax.jvp`, and
+    `jax.scipy.sparse.linalg` has GMRES. The hard part is the preconditioner. Densities that
+    span 20 orders of magnitude make the systems badly conditioned, and JAX has no algebraic
+    multigrid and no sparse direct solver on the GPU (cuDSS through a custom call would be
+    one).
+- *The mesh.* Structured rectangular grids suit JAX. Unstructured triangle meshes for
+  complex geometry work through gather and scatter, but they are slower and much more work
+  (Scharfetter–Gummel on the Voronoi box method).
+
+What carries over from 1D: the physics (Scharfetter–Gummel fluxes, recombination, interfaces,
+ions) and Newton with Jacobian blocks by autodiff from local stencils. Gradients (M7) are worth
+even more in 2D: inverse design of contact patterns and geometries by gradient instead of
+search. A surrogate in the same program could carry 2D results into effective 1D models (item 1).
+What does not carry over: the linear solver, the batching paradigm, the mesh, and the
+reference. SIMsalabim is 1D only, so 2D would have neither its code nor its validation. The
+references would be commercial tools (Sentaurus, ATLAS, COMSOL) or open ones such as
+ChargeTransport.jl (WIAS); whether that one does ions in 2D is to be checked. A project of
+its own, not a stage of jaxdd.
+
 **The counter-argument.** The faster the simulator, the less a surrogate is needed. Fits and
 sensitivity analyses can call jaxdd directly, with the exact physics instead of an
 approximation of it. A surrogate pays where microseconds per evaluation are needed: FauxPV's
@@ -494,6 +528,7 @@ or the inner loop of another model.
 | Sobol, Monte Carlo (3) | yes | not needed |
 | F3 at run time, transients (5, 6) | doubtful | most likely needed |
 | interactive (7) | yes, even on a CPU | not needed |
+| 2D (8) | a different solver | dense batched LU (tensor cores) or a preconditioned Krylov method |
 
 The steady state does not justify a fused kernel. Transients and F3 might, so decide it
 together with Stage C's plan, and do M7's gradients before any kernel: written afterwards, the

@@ -18,10 +18,12 @@ import re
 from pathlib import Path
 
 import matplotlib
+import numpy as np
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
+from matplotlib.ticker import FuncFormatter, LogLocator, NullFormatter
 
 ROOT = Path(__file__).resolve().parents[1]
 RESULTS = ROOT / "benchmarks" / "results"
@@ -118,7 +120,13 @@ def figure(reports: list[dict], ref: tuple[dict, dict] | None, theme: str, path:
             va="center",
         )
     ax.set_xscale("log")
-    ax.set_xlim(min(lows) / 3, max(highs) * 4)
+    # Whole decades, at least three, labelled as plain numbers: rates span 0.1 to 10⁴ per second.
+    low = 10 ** np.floor(np.log10(min(lows) / 2))
+    high = max(10 ** np.ceil(np.log10(max(highs) * 2)), low * 1e3)
+    ax.set_xlim(low, high)
+    ax.xaxis.set_major_locator(LogLocator(base=10))
+    ax.xaxis.set_major_formatter(FuncFormatter(lambda v, _: f"{v:,.0f}" if v >= 1 else f"{v:g}"))
+    ax.xaxis.set_minor_formatter(NullFormatter())
     ax.set_ylim(-0.7, len(rows) - 0.2)
     ax.set_yticks(range(len(rows)))
     ax.set_yticklabels([f"{r['label']}\n{hardware(r)}" for r in rows], color=t["ink"])
@@ -132,8 +140,9 @@ def figure(reports: list[dict], ref: tuple[dict, dict] | None, theme: str, path:
         ax.spines[side].set_visible(False)
     ax.spines["bottom"].set_color(t["axis"])
     ax.set_xlabel("J-V curves per second (61 voltages each), log scale", color=t["ink2"])
+    present = {key for report in rows for key in points(report)}
     handles = [Line2D([], [], marker=MARKERS[k], linestyle="", color=t["series"][k],
-                      markersize=8, label=NAMES[k]) for k in MARKERS]  # fmt: skip
+                      markersize=8, label=NAMES[k]) for k in MARKERS if k in present]  # fmt: skip
     fig.tight_layout(rect=(0, 0, 1, 1 - 0.35 / fig.get_figheight()))
     legend = fig.legend(handles=handles, loc="upper center", ncol=3, frameon=False, fontsize=9,
                         handletextpad=0.3, columnspacing=1.6)  # fmt: skip
@@ -169,6 +178,8 @@ def readme_block(reports: list[dict], ref: tuple[dict, dict] | None) -> str:
         "cases, traps, ions and doping drawn at random). Run it on a machine of yours and "
         "send the JSON in `benchmarks/results/`; `benchmarks/plot.py` redraws this."
     )
+    if not ref:
+        note += " No machine with SimSS measured yet, so no factor over it."
     if ref:
         note += (f" Factors over SimSS on {ref[0]['label']} ({ref[1]['procs']} processes, "
                  f"{_rate(ref[1]['runs_per_s'])} curves/s).")  # fmt: skip

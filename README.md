@@ -26,8 +26,16 @@ python -m venv .venv && .venv/bin/pip install -e ".[dev]"     # add "jax[cuda12]
 ## Speed
 
 <!-- benchmark:begin -->
-No machine measured yet. `benchmarks/plot.py` replaces this block with the figure and its
-table once `benchmarks/results/` holds a result.
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="benchmarks/speedup-dark.svg">
+  <img src="benchmarks/speedup-light.svg" alt="J-V curves per second: SimSS and jaxdd on CPU and GPU, per machine">
+</picture>
+
+The same devices for every solver (`benchmarks/run.py`: the three committed SimSS cases, traps, ions and doping drawn at random). Run it on a machine of yours and send the JSON in `benchmarks/results/`; `benchmarks/plot.py` redraws this. No machine with SimSS measured yet, so no factor over it.
+
+| Machine | Solver | Processes / batch | Curves per second | × reference SimSS | jaxdd against SimSS (max ΔJ / scale) |
+|---|---|---|---|---|---|
+| A100 80GB PCIe (RunPod) (NVIDIA A100 80GB PCIe · 128 logical cores) | jaxdd, GPU | batch 16384 | 1,160 | — |  |
 <!-- benchmark:end -->
 
 **Measure a machine** (each part runs where the machine has it, the same devices for every

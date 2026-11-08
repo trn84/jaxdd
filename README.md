@@ -20,7 +20,7 @@ Where jaxdd differs from SIMsalabim, and why: [`DIFFERENCES.md`](DIFFERENCES.md)
 git clone https://github.com/trn84/jaxdd.git && cd jaxdd
 python -m venv .venv && .venv/bin/pip install -e ".[dev]"     # add "jax[cuda12]" on an NVIDIA GPU
 .venv/bin/python -m pytest -q                                   # against SimSS's own curves
-.venv/bin/python validation/bench.py 64 64                      # devices per second
+.venv/bin/python validation/bench.py 64 64                      # J-V curves per second
 ```
 
 ## Speed

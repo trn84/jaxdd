@@ -154,6 +154,11 @@ def _cpu_worker(index: int, batch: int, repeats: int, barrier, queue) -> None:
 
 
 def measure_cpu(procs: int, batch: int, repeats: int) -> dict:
+    # numpy's BLAS starts a thread per core in every process: a process per core on a 128-core
+    # pod passes the container's thread limit (FauxPV's grid broke on it, 2026-11-08). The
+    # workers inherit these before their numpy loads; the solver's own threads are XLA's.
+    for name in ("OPENBLAS_NUM_THREADS", "OMP_NUM_THREADS", "MKL_NUM_THREADS"):
+        os.environ.setdefault(name, "1")
     context = multiprocessing.get_context("spawn")
     barrier, queue = context.Barrier(procs + 1), context.Queue()
     workers = [context.Process(target=_cpu_worker, args=(i, batch, repeats, barrier, queue))

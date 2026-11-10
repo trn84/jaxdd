@@ -24,6 +24,18 @@ own caps (10 `V_T`, 5, 5; the ion logs 5), 0 unconverged and ~190 steps; with th
 as the start, 0 and ~230; currents equal to 1e-9 of the generated current, and to 1e-10 where
 the scan as it is still converged.
 
+**Where the first difference comes from** (same device, the dark run, 2026-11-10). The first
+scan voltage (−0.2 V) is declared converged while hole densities below `n_floor` still move:
+40 more Newton steps there move `ln p` at hundreds of nodes. With the ions frozen at flat band
+the pre-bias is `V_bi`, the longest way to the first voltage (1.25 V), and the leftover is
+largest: at `ℓ` 0.5 a node had overshot to 4.5e-5 m⁻³ and comes back by 29 in the logarithm
+(true value 1.4e8); at `ℓ` 0.2 and 1.0 on the same stack the leftover is 2.6 and 12.5, at a
+pre-bias of 0.79 V 4.6, and none of those scans fails. So the ion distribution is systematic
+(all 834 are at flat band); which diffusion length fails is the timing of when the densities
+above the floor converge, not a threshold (0.2 and 0.5 fail on the grid, never 1 or more).
+The clip below bounds what the extrapolation makes of a leftover; scanning from `V_pre`
+outwards (1.2 a) would shorten the way that leaves it.
+
 **Fix** (small; `batch.py` and the same place in `solver.py` if the single-device scan
 extrapolates too):
 

@@ -6,20 +6,10 @@ the handbook.
 
 ## 1 Open now
 
-### 1.1 Validation at scale: a large grid with ions
-
-A grid of 918 050 perovskite cells with mobile ions (four absorber thicknesses, diffusion
-lengths, ion densities and distributions, light and dark: 1.84 M J-V curves) is solved on an
-A100 in about two hours, and compared point by point with SimSS's run of the same grid.
-
-**Done when** every point is within the criteria of [docs/validation.md](docs/validation.md), or
-each miss is explained as SimSS's or jaxdd's, and SimSS's are in
-[docs/differences.md](docs/differences.md).
-
 ### 1.2 Speed: the lockstep tail on real grids
 
 Under `vmap` every voltage costs the batch's slowest device ([docs/batching.md](docs/batching.md)).
-On a chunk of that grid (250 nm absorber, every diffusion length, ion density and ion
+On a chunk of the large grid with ions ([docs/validation.md](docs/validation.md); 250 nm absorber, every diffusion length, ion density and ion
 distribution, batch 16 384) the devices needed 2.97 Newton steps per voltage and the batch paid
 25.5. Two passes (`max_iter` 25, then the ~0.15 % that miss it again with 60) brought it to 12.5:
 a chunk 75 → 64 s. The rest is the tail of the *ordinary*

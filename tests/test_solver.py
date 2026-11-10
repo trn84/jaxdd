@@ -40,6 +40,32 @@ def test_grid_spacing_sums_to_the_device_but_for_the_interfaces() -> None:
     assert i0 == [0, 6, 397] and i1 == [5, 396, 401]
 
 
+#: Stacks (m) whose share of the grid is a whole number in exact arithmetic, with the absorber's
+#: points as SimSS 5.36 gave them (its `Var.dat`, column `lid`; 2026-11-11), and exactly.
+SPLIT_EDGES = [
+    (("7e-10", "3.5e-07", "7e-10"), 389, 390),
+    (("1.4e-09", "7e-07", "1.4e-09"), 389, 390),
+    (("1e-07", "5e-07", "2e-07"), 250, 250),
+    (("1e-06", "7e-07", "5e-07"), 127, 127),
+]
+
+
+@pytest.mark.parametrize(("stack", "simss", "exact"), SPLIT_EDGES)
+def test_grid_split_on_a_whole_share(stack: tuple[str, ...], simss: int, exact: int) -> None:
+    """Where FLOOR meets a whole number, "simss" lands where SimSS's 10-byte reals did and
+    "exact" on the whole number; both give every point."""
+    for split, absorber in (("simss", simss), ("exact", exact)):
+        _, _, i0, i1, lid = make_grid(stack, 400, 4.0, split)
+        assert i1[1] - i0[1] == absorber
+        assert i1[-1] == 401 and np.all(np.diff(lid) >= 0)
+
+
+def test_grid_split_first_layer_on_a_whole_share() -> None:
+    """SimSS gave the 100 nm layer of 100/500/200 nm 49 points beyond its first, not 50."""
+    assert make_grid(("1e-07", "5e-07", "2e-07"), 400, 4.0, "simss")[3][0] == 49
+    assert make_grid(("1e-07", "5e-07", "2e-07"), 400, 4.0, "exact")[3][0] == 50
+
+
 def test_jv_reproduces_simss() -> None:
     """The discrete equations are SimSS's: with its Bernoulli approximation, its curve to its
     own convergence tolerance at every voltage."""

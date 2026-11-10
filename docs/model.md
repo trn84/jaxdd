@@ -17,6 +17,11 @@ to the total length: `h[i] = (x[i+1] − x[i]) / L`.
 slightly off 1 (0.006 % on a 1/500/1 nm stack); SIMsalabim scales everything by `L` regardless,
 and so does jaxdd. `device.make_grid` builds it; `build_device` then fills every array on it.
 
+A layer's share of the points, `FLOOR((NP − n_thin·5)·L/(Ltot − L_thin))`, is taken in exact
+arithmetic from the input's decimal values (`device.layer_points`). Where it is a whole number,
+SimSS's own rounding can give one point less; `build_device(setup, grid_split="simss")`
+reproduces it ([differences.md](differences.md) §5).
+
 ## Bands and generalised potentials
 
 Per point: the conduction and valence band edges `E_c`, `E_v`, the effective density of states

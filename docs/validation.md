@@ -31,6 +31,24 @@ so that the solver is never the larger error in what is computed from it.
 - **On grid points with frozen ions**, the remaining gaps were SimSS freezing a pre-bias
   that had not converged, off its number of ions; given SimSS's ion numbers, jaxdd reproduces
   its curves ([differences.md](differences.md) §1b).
+- **On a large parameter grid of perovskite cells with ions** (2026-11-11): 367 200 devices on
+  a 500 nm absorber and 915 000 on four more (250–1000 nm; `L_diff/d` 0.1–30, ion densities
+  1e15–1e18 cm⁻³ frozen at five accumulations, transport layers 1–300 nm doped 0–1e18 cm⁻³),
+  light and dark, solved by the batched solver on an A100 and compared curve by curve with
+  SimSS's run of the same inputs. The median gap in `η` is 2–3e-6; 10.1 % and 8.0 % of the
+  curves miss by more than 1e-3 somewhere up to 1.0 V, nine in ten at `L_diff/d` ≤ 2 and two
+  thirds or more from 2e17 cm⁻³ of ions. A stratified sample of 284 of those misses (by grid, `L_diff/d`, ion
+  density and size of the gap) was rerun with SimSS at its default tolerances, which gave the
+  stored curves back to 1.5e-7, and at `tolDens = tolPois = 1e-9`: 145 were SimSS stopping
+  early (the tight run within 1e-3 of jaxdd), 135 SimSS freezing a pre-bias that did not
+  converge, at the tight tolerances too (§1b), and 4 SimSS's share of the grid points (§5).
+  None was jaxdd's.
+- **jaxdd's own failures on that grid**, with its transport layers extended to 1 µm (4.7 M
+  devices): every curve with an unconverged voltage (2260) solved again with the clipped scan
+  start ([solver.md](solver.md)) kept 5019 of its 45 051, under 2e-5 of all voltages, each
+  flagged; where both runs converged the curves agree to 4e-5 in `η`. The rest are all in the dark, from 0.775 V up, with ions frozen at full
+  accumulation and at least 5e17 cm⁻³ on the device: single voltages scattered through the
+  scan, the strong frozen charge of [tutorial.md](tutorial.md), "Known limits".
 - **The batched solver** matches the one-device solver to 1e-10, and its shortcuts change `J` by
   at most 1.8e-6 of the generation current ([solver.md](solver.md)).
 
@@ -53,6 +71,7 @@ convergence", and a rerun at tight tolerances. The cases where SimSS was wrong s
 | `test_short_circuit_current_never_exceeds_the_generation` | an invariant |
 | `test_bernoulli_*` | finite value and derivative at 0, `B(−x) = B(x) + x`, SimSS's series within its own error |
 | `test_grid_spacing_*` | SIMsalabim's grid, including its interface quirk |
+| `test_grid_split_*` | each layer's share of the points where it is a whole number: exact, and as SimSS's 10-byte reals give it ([differences.md](differences.md) §5) |
 | `test_unsupported_input_is_refused_by_name` | `check_supported` |
 | `test_benchmark.py` | `benchmarks/run.py` hands SimSS exactly the devices jaxdd solves |
 

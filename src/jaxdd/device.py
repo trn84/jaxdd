@@ -7,17 +7,73 @@ solve the same discrete equations. Plain NumPy: built once per device, then hand
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
+from fractions import Fraction
 
 import numpy as np
 
 from jaxdd.constants import EPS_0, K_B, Q
 from jaxdd.simss_input import Setup
 
-__all__ = ["Device", "build_device", "make_grid"]
+__all__ = ["GRID_SPLITS", "Device", "build_device", "layer_points", "make_grid"]
 
 #: SIMsalabim's `MinGridPointsPerLayer`.
 MIN_GRID_POINTS_PER_LAYER = 5
+
+#: How `layer_points` evaluates `Make_Grid`'s share of the points (docs/differences.md §5):
+#: "exact" in rational arithmetic from the input's decimal values, "simss" as SimSS 5.36's
+#: 10-byte reals round it.
+GRID_SPLITS = ("exact", "simss")
+
+#: The significand of SimSS's `myReal`, the x87 80-bit extended type.
+_EXTENDED_BITS = 64
+
+
+def _extended(q: Fraction) -> Fraction:
+    """`q` rounded to the nearest 80-bit extended value, ties to even (x87's default)."""
+    if q == 0:
+        return q
+    sign, q = (-1, -q) if q < 0 else (1, q)
+    e = q.numerator.bit_length() - q.denominator.bit_length()
+    if q < Fraction(2) ** e:
+        e -= 1
+    scaled = q / Fraction(2) ** (e - _EXTENDED_BITS + 1)  # in [2^63, 2^64)
+    whole = scaled.numerator // scaled.denominator
+    rest = scaled - whole
+    if rest > Fraction(1, 2) or (rest == Fraction(1, 2) and whole % 2):
+        whole += 1
+    return sign * whole * Fraction(2) ** (e - _EXTENDED_BITS + 1)
+
+
+def layer_points(thicknesses: Sequence[str | float], NP: int, split: str = "exact") -> list[int]:
+    """The points `Make_Grid` gives each layer beyond its first:
+    `max(MinGridPointsPerLayer, FLOOR((NP − n_thin·MinGridPointsPerLayer)·L/(Ltot − L_thin)))`,
+    a layer being thin where `NP·L/Ltot` is below `MinGridPointsPerLayer`.
+
+    Where the share is a whole number in exact arithmetic (every layer but one thin, or
+    thicknesses in simple ratios), `FLOOR` decides by the last bit: SimSS's 10-byte reals land
+    below it on some stacks, float64 on others. `split` "exact" takes the share in rational
+    arithmetic from the decimal values (a float is read as its shortest decimal, `repr`);
+    "simss" repeats SimSS's operations in its order, each rounded to an 80-bit extended
+    value, the input read as its nearest one.
+    """
+    if split not in GRID_SPLITS:
+        raise ValueError(f"split {split!r}: one of {GRID_SPLITS}")
+    exact = [Fraction(L if isinstance(L, str) else repr(float(L))) for L in thicknesses]
+    r = (lambda q: q) if split == "exact" else _extended
+    values = [r(L) for L in exact]
+    total = Fraction(0)
+    for L in values:
+        total = r(total + L)
+    thin = [L for L in values if r(r(NP * L) / total) < MIN_GRID_POINTS_PER_LAYER]
+    thin_total = Fraction(0)
+    for L in thin:
+        thin_total = r(thin_total + L)
+    free = NP - len(thin) * MIN_GRID_POINTS_PER_LAYER
+    rest = r(total - thin_total)
+    shares = [r(free * r(L / rest)) for L in values]
+    return [max(MIN_GRID_POINTS_PER_LAYER, s.numerator // s.denominator) for s in shares]
 
 
 def _sub_grid(h: np.ndarray, istart: int, ifinish: int, grad: float, span: float, total: float):
@@ -31,28 +87,25 @@ def _sub_grid(h: np.ndarray, istart: int, ifinish: int, grad: float, span: float
     h[istart : ifinish + 1] *= span / (total * norm)
 
 
-def make_grid(thicknesses: list[float], NP: int, grad: float):
+def make_grid(thicknesses: Sequence[str | float], NP: int, grad: float, split: str = "exact"):
     """`(x, h, i0, i1, lid)` as SIMsalabim's `Make_Grid`: `x` has `NP + 2` points, `h` is the
     spacing over the total length `L` (`h[i] = (x[i+1] − x[i])/L`), `i0`/`i1` each layer's first
-    and last point, `lid` the layer of each point (0-based).
+    and last point, `lid` the layer of each point (0-based). The thicknesses in metres, as
+    numbers or as the input's decimal strings; `split` as in `layer_points`.
 
     `L` is the sum of the layers, and `x[NP+1]` is not quite it: equalising the spacing
     across each interface leaves `Σh` slightly off 1 (0.006 % on a 1/500/1 nm stack).
     SIMsalabim uses `L` wherever it scales, so does this."""
+    counts = layer_points(thicknesses, NP, split)
+    thicknesses = [float(L) for L in thicknesses]
     total = sum(thicknesses)
     n_layers = len(thicknesses)
     h = np.zeros(NP + 2)
     lid = np.zeros(NP + 2, dtype=int)
-    thin = [L for L in thicknesses if NP * L / total < MIN_GRID_POINTS_PER_LAYER]
-    n_thin, l_thin = len(thin), sum(thin)
     i0, i1 = [], []
     istart, xstart = 0, 0.0
     for k, L in enumerate(thicknesses):
-        proportional = int(
-            np.floor((NP - n_thin * MIN_GRID_POINTS_PER_LAYER) * L / (total - l_thin))
-        )
-        points = max(MIN_GRID_POINTS_PER_LAYER, proportional)
-        ifinish = istart + points
+        ifinish = istart + counts[k]
         i0.append(istart)
         i1.append(ifinish)
         if k == n_layers - 1:
@@ -144,13 +197,15 @@ def _generation(setup: Setup, x: np.ndarray, lid: np.ndarray, layer_gen: np.ndar
     return g
 
 
-def build_device(setup: Setup) -> Device:
-    """The device of a SIMsalabim input (Stage A, `check_supported` first)."""
+def build_device(setup: Setup, grid_split: str = "exact") -> Device:
+    """The device of a SIMsalabim input (Stage A, `check_supported` first). `grid_split`
+    "simss" shares the grid points among the layers as SimSS's 10-byte reals do
+    (`layer_points`; docs/differences.md §5), for a comparison point by point."""
     layers = setup.layers
     NP, grad = setup.i("NP"), setup.f("grad")
     thicknesses = [ly.f("L") for ly in layers]
     total = sum(thicknesses)
-    x, h, i0, i1, lid = make_grid(thicknesses, NP, grad)
+    x, h, i0, i1, lid = make_grid([ly.raw["L"] for ly in layers], NP, grad, grid_split)
     T = setup.f("T")
     Vt = K_B * T / Q
 

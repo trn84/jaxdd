@@ -1,6 +1,6 @@
 # Where jaxdd differs from SIMsalabim, and why
 
-jaxdd solves SIMsalabim 5.36's discrete equations (the same grid, the same Scharfetter–Gummel
+jaxdd solves SIMsalabim 5.36's discrete equations (the same grid but for §5, the same Scharfetter–Gummel
 discretisation in the generalised potentials, the same integral current). Where SIMsalabim's
 result is not the solution of those equations, or where SIMsalabim approximates something jaxdd
 can compute exactly, jaxdd takes the physically correct answer by default and says so here.
@@ -96,6 +96,31 @@ the caps, which is everywhere on the benchmark devices and on 1000 devices of a 
 parameter table, the start is SIMsalabim's and the curves are bit for bit the same. The
 one-device `solve_jv` starts from the last converged solution. This is a difference in the
 path, not in the result: a converged voltage is the solution of the same equations either way.
+
+## 5 The grid's share of points: SimSS's rounding on a whole number
+
+**What.** `Make_Grid` gives each layer `FLOOR((NP − n_thin·5)·L/(Ltot − L_thin))` points
+beyond its first, at least five. Where that share is a whole number in exact arithmetic — every
+layer but one thin, so that `L/(Ltot − L_thin)` is 1, or thicknesses in simple ratios
+(100/500/200 nm, 30/240/30 nm) — `FLOOR` is decided by the last bit of the arithmetic. SimSS's
+10-byte reals land just below the whole number on some of those stacks and give the layer one
+point less: 0.7/350/0.7 nm with `NP` 400 gets 389 absorber points instead of 390, the last
+layer one more. float64 lands below it on other stacks. The grid is then one node off at an
+interface: the absorber's last node is the next layer's first.
+
+**How large.** Where ions pile up at that interface (frozen at accumulation), the node moves
+the peak: on a parameter grid of perovskite cells with ions (2026-11-11), four of 284 sampled
+curves that missed SimSS by more than 1e-3 in `η` were this, 1.3–1.9e-3 up to 1.0 V, all on
+stacks with both transport layers thin (0.7 and 1.4 nm). With SimSS's split jaxdd met SimSS
+there to 4–6e-5. It is a discretisation error of the grid, not of either solver.
+
+**jaxdd.** The share in exact rational arithmetic from the input's decimal strings
+(`device.layer_points`, `split="exact"`, the default): the number of points SIMsalabim's
+formula means, on every platform. `build_device(setup, grid_split="simss")` repeats SimSS's
+operations in its order, each rounded to an 80-bit extended value (independent of the
+platform's `long double`); it gave SimSS's points on all eight stacks checked against SimSS's
+`Var.dat` (its `lid` column), among them SIMsalabim's own `Tests/test_13`, and agrees with x87
+arithmetic on 24 000 random stacks.
 
 ## Not differences
 

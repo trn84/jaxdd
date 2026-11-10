@@ -30,7 +30,8 @@ ion distribution, stack). By what that shows:
 
 - (a) The scan from `V_pre` outwards instead of from −0.2 V: a device's hardest voltage is
   usually its first, up to 1.25 V from the frozen pre-bias it starts from. It would also let
-  the first pass's limit drop to about 10.
+  the first pass's limit drop to about 10, and shorten the way that leaves undetermined
+  logarithms below the floor at the first voltage (docs/solver.md, the start of a voltage).
 - (b) A better start per voltage than linear extrapolation where the tail sits.
 - (c) Smaller batches: the expected maximum over 4096 devices is lower, and an A100 runs 4096 at
   88 % of the rate of 16 384.

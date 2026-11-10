@@ -109,7 +109,12 @@ and the holes across much of the absorber lie at such densities (1e-30 m⁻³ an
 between two neighbouring converged voltages their logarithms differ by 30–100 at single points.
 Extrapolated linearly, that difference became the start of the next voltage, e^100 off; Newton's
 capped steps did not bring it back, the state became NaN, and the scan carried the NaN through
-every later voltage. So the extrapolated change of every unknown at every point is held to the
+every later voltage. The first such difference is left at the first voltage of the scan: it is
+declared converged while densities below the floor still move (40 more Newton steps there move
+`ln p` at hundreds of points, at one by 29). The leftover is largest where the way from the
+pre-bias is longest: ions frozen at flat band, a pre-bias at `V_bi`, 1.25 V from −0.2 V.
+Whether a scan then failed was a matter of timing (of when the densities above the floor
+converge), not of a threshold in any one parameter. So the extrapolated change of every unknown at every point is held to the
 caps of one Newton step (`solver.STEP_CAPS`: 10 `V_T`, 5 in `ln n` and `ln p`; 5 in the ion
 logarithms, the [damping](#damping) below). Where the solution moves smoothly the change is far
 inside the caps and the start is the plain extrapolation: on the benchmark devices and on 1000

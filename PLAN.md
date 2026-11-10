@@ -6,65 +6,6 @@ the handbook.
 
 ## 1 Open now
 
-### 1.0 Bug: the scan's start extrapolates noise (dark runs lost from short circuit on)
-
-**Found** 2026-11-10 on FauxPV's ion grid (layer axes to 1 µm, A100): 834 of about 3.5 million
-scans are unconverged from −0.075…0 V to the last voltage. Always the dark run; every device
-has a 1 µm transport layer doped 1e15 cm⁻³, a short diffusion length, ions frozen at flat band.
-
-**Cause.** `batch._solve_one.scan` starts each voltage from the last two solutions extrapolated
-linearly, `guess = y + ratio·(y − y_prev)` (SIMsalabim's `Extrapolate_Solution`). In the dark a
-minority density far below `n_floor` is weighted out of the convergence test, so its logarithm
-is undetermined: between two neighbouring converged voltages `ln p` differs by 30–100 at single
-nodes. The extrapolation carries that difference into the start (e^100 off), Newton's capped
-steps (5 per logarithm) do not bring it back, the state becomes NaN, and the scan carries the
-NaN through every later voltage. Measured on 12 of 12 sampled devices: as it is, 53–56 of 61
-voltages unconverged and ~3400 Newton steps; with the extrapolated change clipped to Newton's
-own caps (10 `V_T`, 5, 5; the ion logs 5), 0 unconverged and ~190 steps; with the last solution
-as the start, 0 and ~230; currents equal to 1e-9 of the generated current, and to 1e-10 where
-the scan as it is still converged.
-
-**Where the first difference comes from** (same device, the dark run, 2026-11-10). The first
-scan voltage (−0.2 V) is declared converged while hole densities below `n_floor` still move:
-40 more Newton steps there move `ln p` at hundreds of nodes. With the ions frozen at flat band
-the pre-bias is `V_bi`, the longest way to the first voltage (1.25 V), and the leftover is
-largest: at `ℓ` 0.5 a node had overshot to 4.5e-5 m⁻³ and comes back by 29 in the logarithm
-(true value 1.4e8); at `ℓ` 0.2 and 1.0 on the same stack the leftover is 2.6 and 12.5, at a
-pre-bias of 0.79 V 4.6, and none of those scans fails. So the ion distribution is systematic
-(all 834 are at flat band); which diffusion length fails is the timing of when the densities
-above the floor converge, not a threshold (0.2 and 0.5 fail on the grid, never 1 or more).
-The clip below bounds what the extrapolation makes of a leftover; scanning from `V_pre`
-outwards (1.2 a) would shorten the way that leaves it.
-
-**Fix** (small; `batch.py` and the same place in `solver.py` if the single-device scan
-extrapolates too):
-
-1. Clip the extrapolated change to the Newton step's caps before adding it (`jnp.clip`), for
-   `y` and for the ion logs. One named constant shared with `_newton_solve`'s `caps`.
-2. Do not carry an unconverged solution: where a voltage did not converge (`ok` false) or the
-   new state is not finite, keep the carry's last converged `y`, `logs` (`jnp.where`), so one
-   failed voltage costs one voltage, not the rest of the scan.
-3. Regression test in `tests/`: one of the failing devices as SimSS input files under
-   `tests/data/` (as the three there; written by FauxPV's `write_point` (in its `tools/dd_tables.py`) for
-   ion-grid index `(3, 1, 0, 0, 0, 0, 8, 1)`, the dark run: 1000 nm absorber, `ℓ` 0.5, ions
-   1e15 at flat band, ETL 1 nm undoped, HTL 1000 nm on the axis at 1e15). Assert: every voltage
-   converged, and a property, not only a value: the dark current is monotone in `V` and 0 at
-   0 V within `CURRENT_TOL` of the scale.
-4. Check that nothing else moved: `tests/` green; the benchmark and validation sets of
-   `docs/validation.md` within their criteria; Newton steps per voltage on the benchmark
-   batch not higher than before (the clip should lower them: note the number in
-   `docs/batching.md`).
-5. `docs/solver.md` (the start of a voltage; why a density below the floor has no determined
-   logarithm) and `docs/differences.md` (jaxdd no longer extrapolates as SIMsalabim does where
-   the change exceeds a Newton step). Then this section leaves the plan.
-
-**Done when** the regression device converges at all 61 voltages, the existing tests and
-validation hold, and the commit is named to FauxPV (its `docs/tasks/M20/M20-00f-dark-scan-start.md`
-re-solves the 834 scans with it).
-
-**Not here:** re-solving FauxPV's tables (FauxPV's task); the lockstep work of 1.2, although
-(b) there is this start.
-
 ### 1.1 Validation at scale: a large grid with ions
 
 A grid of 918 050 perovskite cells with mobile ions (four absorber thicknesses, diffusion

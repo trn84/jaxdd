@@ -27,8 +27,10 @@ from jaxdd.constants import Q
 from jaxdd.device import Device
 from jaxdd.solver import (
     BERNOULLI,
+    ION_LOG_CAP,
     ROUND_OFF_FLOOR,
     STALL_STEPS,
+    STEP_CAPS,
     _block_thomas,
     _ion_constraints,
     _ion_logs,
@@ -38,6 +40,7 @@ from jaxdd.solver import (
     _poisson_val,
     _recombination,
     _stencils,
+    step_caps,
 )
 
 __all__ = ["prepare", "solve_batch"]
@@ -152,7 +155,7 @@ def _poisson_solve(y, d, s, ion, Vint, max_iter):
         dV = jax.lax.linalg.tridiagonal_solve(
             lo.at[0].set(0.0), mid, up.at[-1].set(0.0), -F[:, None]
         )[:, 0]
-        dV = jnp.clip(dV, -10.0 * Vt, 10.0 * Vt)
+        dV = jnp.clip(dV, -STEP_CAPS[0] * Vt, STEP_CAPS[0] * Vt)
         shift = dV / Vt
         return y + jnp.stack([dV, shift, -shift], axis=-1), jnp.max(jnp.abs(shift)), it + 1
 
@@ -193,9 +196,9 @@ def _newton_solve(y, logs, d, s, ion, Vint, g_frac, B, tol, max_iter, strict=Fal
         schur = D - jnp.einsum("irk,irl->kl", W, XU)
         d_logs = jnp.linalg.solve(schur, -g - jnp.einsum("irk,ir->k", W, XF))
         delta = XF - XU @ d_logs
-        caps = jnp.array([10.0, 5.0, 5.0]) * jnp.array([Vt, 1.0, 1.0])
+        caps = step_caps(Vt)
         stepv = jnp.clip(delta, -caps, caps)
-        d_logs = jnp.clip(d_logs, -5.0, 5.0)
+        d_logs = jnp.clip(d_logs, -ION_LOG_CAP, ION_LOG_CAP)
         new = y + stepv
         dens = jnp.exp(new[:, 1:])
         weight = dens / (dens + s["n_floor"][:, None])
@@ -285,17 +288,30 @@ def _solve_one(d, voltages, B, tol, max_iter, strict):
     )
     s, ion = _freeze(s, ion, y, logs, Vt, (d["pre_cond"] > 0) & (d["fix_ions"] > 0))
 
+    caps = step_caps(Vt)
+
     def scan(carry, Vint):
-        # The start: the last two solutions extrapolated linearly in the voltage (SIMsalabim's
-        # `Extrapolate_Solution`); at the first voltage, the pre-bias solution as it is.
+        # The start: the last two converged solutions extrapolated linearly in the voltage
+        # (SIMsalabim's `Extrapolate_Solution`), the change held to one Newton step's caps; at
+        # the first voltage, the pre-bias solution as it is. Unclipped, the extrapolation
+        # carries the undetermined logarithm of a density below `n_floor` (30–100 apart between
+        # neighbouring voltages) into the start, e^100 off (docs/solver.md).
         y, logs, y_prev, logs_prev, V_last, V_before = carry
         ratio = jnp.where(V_last != V_before, (Vint - V_last) / (V_last - V_before), 0.0)
-        guess = y + ratio * (y - y_prev)
-        logs_guess = logs + ratio * (logs - logs_prev)
+        guess = y + jnp.clip(ratio * (y - y_prev), -caps, caps)
+        logs_guess = logs + jnp.clip(ratio * (logs - logs_prev), -ION_LOG_CAP, ION_LOG_CAP)
         y_new, logs_new, J, ok, it = _newton_solve(
             guess, logs_guess, d, s, ion, Vint, g_frac, B, tol, max_iter, strict
         )
-        return (y_new, logs_new, y, logs, Vint, V_last), (J, ok, it)
+        # Only a converged, finite solution is carried on: one failed voltage costs that
+        # voltage, not the rest of the scan.
+        keep = ok & jnp.all(jnp.isfinite(y_new)) & jnp.all(jnp.isfinite(logs_new))
+        carry = jax.tree_util.tree_map(
+            lambda new, old: jnp.where(keep, new, old),
+            (y_new, logs_new, y, logs, Vint, V_last),
+            carry,
+        )
+        return carry, (J, ok, it)
 
     start = (y, logs, y, logs, first, first)
     _, (J, ok, its) = jax.lax.scan(scan, start, voltages)

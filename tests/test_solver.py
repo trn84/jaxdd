@@ -119,6 +119,28 @@ def test_batch_matches_the_one_device_solver() -> None:
         assert np.max(np.abs(np.asarray(J[k]) - single.J)) < 1e-6 * scale
 
 
+def test_a_dark_scan_with_a_density_far_below_the_floor_converges() -> None:
+    """Regression: in the dark, a thick doped transport layer holds a minority density far
+    below `n_floor`, whose logarithm is undetermined between neighbouring voltages. The batched
+    scan's extrapolated start once carried that into NaN at every voltage from short circuit on.
+    Every voltage converges, and the dark current is what a dark current must be: monotone in
+    `V` and zero at 0 V, to `CURRENT_TOL` of the generation's current; and SimSS's curve to 2e-5
+    of its scale (SimSS's own early stops at −0.2 and −0.175 V lie well within that)."""
+    from jaxdd.batch import CURRENT_TOL, prepare, solve_batch
+
+    case = DATA / "frozen_thick_htl_dark"
+    setup = read_setup(case / "simulation_setup.txt")
+    check_supported(setup)
+    ref = np.genfromtxt(case / "JV.dat", names=True)
+    batch = prepare([build_device(setup)])
+    J, ok, _ = solve_batch(batch, ref["Vint"], bernoulli_name="simss")
+    J, scale = np.asarray(J[0]), float(batch["J_scale"][0])
+    assert np.asarray(ok).all()
+    assert np.all(np.diff(J) > -CURRENT_TOL * scale)
+    assert abs(J[np.argmin(np.abs(ref["Vint"]))]) < CURRENT_TOL * scale
+    assert np.max(np.abs(J - ref["Jext"])) < 2e-5 * np.max(np.abs(ref["Jext"]))
+
+
 def test_the_block_sweep_solves_the_block_tridiagonal_system() -> None:
     """Invariant: the sweep gives the dense solve's solution to round-off, with several
     right-hand sides."""

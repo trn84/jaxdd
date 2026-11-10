@@ -11,3 +11,12 @@ pre-bias `V_pre = 0` under light and frozen for the scan (`preCond`, `fixIons`),
 alone).
 
 `steady_1e17_thin_light/`: the same ions free at every voltage, the unpatched SimSS 5.36.
+
+`frozen_thick_htl_dark/`: a different stack, in the dark: a 1000 nm absorber whose diffusion
+length is half its thickness, 2.5e14 cm⁻³ of mobile ions settled at the pre-bias `V_pre = 1.05`
+V (about flat band) and frozen; a 2 nm undoped ETL and a 2000 nm HTL p-doped at 2.5e14 cm⁻³.
+In the dark, the electrons in that HTL and the holes across much of the absorber lie far below
+jaxdd's convergence floor, which once made the batched scan's extrapolated start fail from
+short circuit on (docs/solver.md). SimSS
+5.36 with the patch above; its first two voltages are SimSS stopping early
+(docs/differences.md §1).

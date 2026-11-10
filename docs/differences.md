@@ -80,6 +80,23 @@ with the exact `B`.
 SimSS's trapezoidal rule. With SimSS's approximate `B`, the two differ by `O(Δ³)` per step; the
 largest effect seen is 1.9e-4 of the current scale (1e18 cm⁻³ free ions, doped layers).
 
+## 4 The start of each voltage
+
+**What.** SIMsalabim starts each voltage of a scan from the last two solutions extrapolated
+linearly in the voltage (`Extrapolate_Solution`).
+
+**jaxdd.** The batched solver does the same, but holds the extrapolated change of each unknown
+at each point to one Newton step's caps (10 `V_T` in the potential, 5 in `ln n`, `ln p` and the
+ion logarithms), and extrapolates only from voltages that converged. A density far below
+anything that matters (in the dark, over much of a thick device with a thick doped transport
+layer) has an undetermined logarithm, and extrapolating it unclipped put the start e^100 off
+and lost every voltage after short circuit ([solver.md](solver.md), "Why the extrapolated
+change is clipped"). Where the change is within
+the caps, which is everywhere on the benchmark devices and on 1000 devices of a perovskite
+parameter table, the start is SIMsalabim's and the curves are bit for bit the same. The
+one-device `solve_jv` starts from the last converged solution. This is a difference in the
+path, not in the result: a converged voltage is the solution of the same equations either way.
+
 ## Not differences
 
 Reproduced on purpose, because they are part of the discrete equations SimSS defines:

@@ -60,10 +60,11 @@ paid   = iterations.max(axis=0).sum()       # what the batch paid
 ```
 
 On the benchmark devices (`validation/bench.py`) the ratio is about 1.4: 2.8 steps needed per
-voltage, 3.9 paid. On a real parameter grid it can be much larger. A grid that spans thin and
-thick absorbers, short and long diffusion lengths and ion densities up to 1e18 cm⁻³ paid ×8.6
-per voltage at batch 16384, because at nearly every voltage *some* device of 16384 needed a
-dozen steps or more.
+voltage, 3.9 paid (2.77 and 3.95 on 2048 of them; unchanged by the clipped start of each
+voltage, [solver.md](solver.md), which is never active there). On a real parameter grid it can
+be much larger. A grid that spans thin and thick absorbers, short and long diffusion lengths and
+ion densities up to 1e18 cm⁻³ paid ×8.6 per voltage at batch 16384, because at nearly every
+voltage *some* device of 16384 needed a dozen steps or more.
 
 What helps, cheapest first:
 

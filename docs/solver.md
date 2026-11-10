@@ -52,10 +52,11 @@ flowchart TD
     F -- "yes" --> G["freeze: the free ion profile<br/>becomes a fixed charge"]
     F -- "no" --> H
     G --> H["for each voltage of the scan"]
-    H --> I["start: extrapolate linearly<br/>from the last two solutions"]
+    H --> I["start: extrapolate linearly from the<br/>last two converged solutions,<br/>the change held to one Newton step"]
     I --> J["coupled Newton<br/>until converged or max_iter"]
     J --> K["current J (integral form)"]
-    K --> L{"more voltages?"}
+    K --> N["carry the solution on<br/>only if converged and finite"]
+    N --> L{"more voltages?"}
     L -- "yes" --> H
     L -- "no" --> M["J(V), converged, iterations"]
 ```
@@ -76,12 +77,14 @@ function solve_one(device, voltages):
     V_last, V_before ← V_first, V_first
     for V in voltages:                                  # lax.scan
         r     ← (V − V_last)/(V_last − V_before) if V_last ≠ V_before else 0
-        guess ← y_last + r · (y_last − y_before)        # the ion scalars alike
-        y_new, logs, ok, steps ← newton(guess, logs, V)
+        guess ← y_last + clip(r · (y_last − y_before), ±caps)   # the ion scalars alike
+        y_new, logs_new, ok, steps ← newton(guess, logs, V)
         J[V]         ← terminal_current(y_new, V)
         converged[V] ← ok and pre_ok
-        y_before, y_last ← y_last, y_new
-        V_before, V_last ← V_last, V
+        if ok and y_new, logs_new finite:               # jnp.where, per lane
+            y_before, y_last ← y_last, y_new
+            V_before, V_last ← V_last, V
+            logs ← logs_new
     return J, converged, steps
 ```
 
@@ -94,8 +97,31 @@ potential close before the coupled system starts; it is a scalar tridiagonal sol
 each voltage from the linear extrapolation of the last two solutions (SIMsalabim's
 `Extrapolate_Solution`) instead of from the last one saves Newton steps at every voltage;
 together with the quadratic stop below it took the average from 4.6 to 2.8 steps per voltage
-on the benchmark devices. The first voltage after a pre-bias starts from the pre-bias solution as it is; it is
-usually the hardest voltage of a curve.
+on the benchmark devices. The first voltage after a pre-bias starts from the pre-bias solution
+as it is; it is usually the hardest voltage of a curve. The one-device `solve_jv` starts each
+voltage from the last converged solution, without extrapolating.
+
+**Why the extrapolated change is clipped.** Convergence weighs out a density far below anything
+that matters (`n_floor`, [below](#when-is-a-voltage-converged)): its logarithm does not enter
+the test, so Newton stops with it wherever round-off left it. That logarithm is undetermined.
+In the dark, in a thick device with a thick doped transport layer, the electrons in that layer
+and the holes across much of the absorber lie at such densities (1e-30 m⁻³ and below), and
+between two neighbouring converged voltages their logarithms differ by 30–100 at single points.
+Extrapolated linearly, that difference became the start of the next voltage, e^100 off; Newton's
+capped steps did not bring it back, the state became NaN, and the scan carried the NaN through
+every later voltage. So the extrapolated change of every unknown at every point is held to the
+caps of one Newton step (`solver.STEP_CAPS`: 10 `V_T`, 5 in `ln n` and `ln p`; 5 in the ion
+logarithms, the [damping](#damping) below). Where the solution moves smoothly the change is far
+inside the caps and the start is the plain extrapolation: on the benchmark devices and on 1000
+devices of a perovskite parameter table, light and dark, the curves are bit for bit those of
+the unclipped start. On the device that showed it (`tests/data/frozen_thick_htl_dark`), 55 of
+61 voltages failed in 3402 Newton steps; clipped, all 61 converge in 193.
+
+**Why only a converged solution is carried on.** A voltage that fails (`max_iter`, or a state
+that is not finite) does not become the start of the next: the scan keeps its last converged
+solution and voltage, so the next voltage extrapolates from the last two converged ones (and
+`solve_jv` starts from the last converged one). A failed voltage costs that voltage, not the rest
+of the curve.
 
 ## The Newton step
 
@@ -192,7 +218,8 @@ A full Newton step far from the solution can overshoot by many `V_T`. Each compo
 is clipped per point: the potential to ±10 `V_T`, the logarithms of the densities and of the ion
 normalisations to ±5 (a factor e⁵). This is SIMsalabim's limit on the potential update
 (`maxDelV`), applied to all three unknowns. Near the solution the clips are inactive and Newton
-converges quadratically.
+converges quadratically. The same caps (`solver.STEP_CAPS`, `ION_LOG_CAP`) hold the batched
+scan's extrapolated start.
 
 ## When is a voltage converged?
 
@@ -218,4 +245,6 @@ frozen ions at high density leave a carrier-free bulk in which the potential kee
 `V_T` of round-off noise; the current has settled long before.
 
 A voltage that reaches `max_iter` without any of these is returned as it is, **flagged**
-`converged = False`. jaxdd never stops early silently, and it never drops a voltage.
+`converged = False`. jaxdd never stops early silently, and it never drops a voltage. The next
+voltage starts from the last converged solution
+([above](#the-sequence-of-solves-for-one-device)).

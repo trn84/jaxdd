@@ -104,7 +104,7 @@ and offers a switch that reproduces SimSS's number. Each such case is in
 | `src/jaxdd/solver.py` | the discrete equations, the Newton step, the block sweep; `solve_jv` for one device |
 | `src/jaxdd/batch.py` | the same solver as one pure function, `vmap`ped: `prepare`, `solve_batch` |
 | `src/jaxdd/constants.py` | SIMsalabim's physical constants |
-| `tests/` | pytest suite; `tests/data/` three SimSS runs (inputs and `JV.dat`) as reference |
+| `tests/` | pytest suite; `tests/data/` four SimSS runs (inputs and `JV.dat`) as reference |
 | `validation/` | scripts that compare with SimSS and time the solver ([validation.md](validation.md)) |
 | `benchmarks/` | jaxdd against SimSS per machine, the README's figure ([hardware.md](hardware.md)) |
 | `rocm/` | running on AMD MI50 (gfx906) cards ([hardware.md](hardware.md)) |

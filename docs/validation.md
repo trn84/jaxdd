@@ -47,6 +47,7 @@ convergence", and a rerun at tight tolerances. The cases where SimSS was wrong s
 | `test_jv_reproduces_simss` | the J-V curve of `tests/data/thin_l1_light` against SimSS's `JV.dat` |
 | `test_jv_with_ions_reproduces_simss` | the same for frozen and free ions |
 | `test_batch_matches_the_one_device_solver` | `solve_batch` against `solve_jv` |
+| `test_a_dark_scan_with_a_density_far_below_the_floor_converges` | a dark scan with densities far below the convergence floor: every voltage converges, the current monotone and zero at 0 V, SimSS's curve (the extrapolated start, [solver.md](solver.md)) |
 | `test_free_ions_keep_their_number` | the ions' constraint holds to round-off |
 | `test_the_block_sweep_solves_the_block_tridiagonal_system` | the sweep against a dense solve |
 | `test_short_circuit_current_never_exceeds_the_generation` | an invariant |
@@ -55,10 +56,11 @@ convergence", and a rerun at tight tolerances. The cases where SimSS was wrong s
 | `test_unsupported_input_is_refused_by_name` | `check_supported` |
 | `test_benchmark.py` | `benchmarks/run.py` hands SimSS exactly the devices jaxdd solves |
 
-`tests/data/` holds three SimSS 5.36 runs, inputs and `JV.dat` unchanged: a perovskite cell
+`tests/data/` holds four SimSS 5.36 runs, inputs and `JV.dat` unchanged: a perovskite cell
 without ions, the same with 1e17 cm⁻³ ions frozen after a pre-bias (SimSS with
 [`simss/fixed_ions.patch`](../simss/README.md)),
-and the same with the ions free.
+the same with the ions free, and a thick cell in the dark with a thick doped transport layer
+and ions frozen near flat band.
 
 ## The validation scripts
 

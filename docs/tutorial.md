@@ -18,7 +18,7 @@ the CPU.
 
 A device is described by SIMsalabim's files: `simulation_setup.txt`, one parameter file per
 layer (`l1`, `l2`, ... in the setup), and the generation profile it names. The repository has
-three such devices under `tests/data/`.
+four such devices under `tests/data/`.
 
 ```python
 from pathlib import Path

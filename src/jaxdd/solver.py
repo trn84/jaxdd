@@ -44,6 +44,19 @@ STALL_STEPS = 3
 #: Densities below this share of the largest `N_c` do not count for convergence (m⁻³ there).
 DENSITY_FLOOR = 1e-12
 
+#: The largest change of an unknown in one Newton step, per point: the potential in V_T (as
+#: SIMsalabim's `maxDelV`), `ln n` and `ln p` (a factor e^5). The batched scan's extrapolated
+#: start is held to the same caps (`batch._solve_one`, docs/solver.md).
+STEP_CAPS = (10.0, 5.0, 5.0)
+#: The same for the ions' normalisation logarithms.
+ION_LOG_CAP = 5.0
+
+
+def step_caps(Vt):
+    """`STEP_CAPS` in the unknowns' units: `(V, ln n, ln p)`."""
+    return jnp.array(STEP_CAPS) * jnp.array([Vt, 1.0, 1.0])
+
+
 #: Below |x| < this, `B(x)` by its series: the full expression is 0/0 at 0.
 _SERIES_BELOW = 1e-2
 
@@ -291,10 +304,10 @@ def _newton_step(y, logs, bounds, s, ion, Vt, g_frac, bernoulli_name="exact"):
     d_logs = jnp.linalg.solve(schur, -g - jnp.einsum("irk,ir->k", W, XF))
     delta = XF - XU @ d_logs
     # Damping per point, as SIMsalabim limits its potential update (maxDelV): no potential
-    # step past 10 V_T and no density step past a factor e^5.
-    caps = jnp.array([10.0 * Vt, 5.0, 5.0])
+    # step past 10 V_T and no density step past a factor e^5 (`STEP_CAPS`).
+    caps = step_caps(Vt)
     step = jnp.clip(delta, -caps, caps)
-    d_logs = jnp.clip(d_logs, -5.0, 5.0)
+    d_logs = jnp.clip(d_logs, -ION_LOG_CAP, ION_LOG_CAP)
     new = y + step
     # Converged by the potential in V_T and the densities relatively — a density far below any
     # that matters (n_floor) is weighted out: its logarithm is round-off at the end.
@@ -355,7 +368,7 @@ def _poisson_step(y, bounds, s, ion, Vt):
     dV = jax.lax.linalg.tridiagonal_solve(lo.at[0].set(0.0), mid, up.at[-1].set(0.0), -F[:, None])[
         :, 0
     ]
-    dV = jnp.clip(dV, -10.0 * Vt, 10.0 * Vt)
+    dV = jnp.clip(dV, -STEP_CAPS[0] * Vt, STEP_CAPS[0] * Vt)
     shift = dV / Vt
     new = y + jnp.stack([dV, shift, -shift], axis=-1)
     return new, jnp.max(jnp.abs(shift))
@@ -489,11 +502,15 @@ def solve_jv(dev: Device, voltages: np.ndarray, g_frac: float | None = None,
 
     J, conv, its = [], [], []
     for Vint in voltages:
-        y, logs, ok, it = settle(y, logs, s, ion, float(Vint))
+        y_new, logs_new, ok, it = settle(y, logs, s, ion, float(Vint))
         bounds = bounds_at(float(Vint))
         full = np.concatenate(
-            [np.asarray(bounds[0])[None], np.asarray(y), np.asarray(bounds[1])[None]]
+            [np.asarray(bounds[0])[None], np.asarray(y_new), np.asarray(bounds[1])[None]]
         )
+        # Each voltage starts from the last converged solution: a failed one costs that
+        # voltage, not the rest of the scan.
+        if ok and np.isfinite(full).all() and np.isfinite(np.asarray(logs_new)).all():
+            y, logs = y_new, logs_new
         J.append(_current(dev, full[:, 0], np.exp(full[:, 1]), np.exp(full[:, 2]), g_frac))
         conv.append(ok)
         its.append(it)

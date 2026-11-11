@@ -11,3 +11,7 @@ data/*.npz
 # Validation results written by scripts
 validation/*.json
 rocm/*.log
+# The Apptainer route (benchmarks/apptainer.sh): image, the container's venv, the log
+*.sif
+.venvct/
+benchmarks/*.log

@@ -64,6 +64,25 @@ curves per second after compilation. `breakdown.py batch` times each part of one
 its own (residual, Jacobian blocks, ion columns and constraints, the sweep, the current), which
 shows where a step's time goes.
 
+### A host with an old glibc or driver: Apptainer
+
+A host with glibc 2.17 takes no current JAX wheel, and on NVIDIA driver 530 (CUDA 12.1) the
+newest JAX that does install (0.5.3) grew to tens of GB of host memory on its first solve and
+was killed; JAX 0.4.31 with the CUDA 12.1 tools runs, at a sixth of the speed. Current JAX runs
+on such a host inside an Apptainer container with a current Ubuntu, on the host's driver, as
+long as the image's CUDA compat libraries stay out (they need driver 535: `cuInit 803`).
+`benchmarks/apptainer.sh` does all of it: it pulls the image, makes the container's venv on the
+first start, and runs the tests, `breakdown.py`, `bench.py` and `benchmarks/run.py` in the
+background, logging to `benchmarks/apptainer.log`:
+
+```bash
+git clone https://github.com/trn84/jaxdd.git ~/jaxdd && cd ~/jaxdd
+benchmarks/apptainer.sh                          # STEPS="breakdown bench" for a part
+```
+
+On an A100-SXM4-40GB it ran at 925 curves/s in the container, before the Jacobian was assembled
+by intervals (the 40 GB card's bandwidth is 0.8 of the 80 GB PCIe's).
+
 ## AMD Instinct MI50 (gfx906)
 
 gfx906 left ROCm's supported list with ROCm 6.3, and from JAX 0.5 on XLA compiles through

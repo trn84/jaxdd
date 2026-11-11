@@ -6,10 +6,12 @@ Each part of one Newton step of `jaxdd.batch` is jitted on its own over a batch 
 devices and timed after compilation: the residual, the Jacobian blocks and the ions' columns
 (autodiff of each row), the ions' constraint, the linear solve (sweep, three right-hand sides),
 and the current; the solver assembles the first three by edges (`_assemble`), and the
-autodiff of each row it replaced is timed beside it. The part that dominates is the candidate
+autodiff of each row it replaced is timed beside it; on a GPU the sweep both as the scan and
+as the kernel (jaxdd.sweep) at three tiles. The part that dominates is the candidate
 for a kernel of its own (PLAN.md, section 1.2).
 """
 
+import functools
 import sys
 import time
 
@@ -19,6 +21,7 @@ from bench import variants
 
 from jaxdd.batch import _bounds, _current, _initial, prepare
 from jaxdd.solver import BERNOULLI, _assemble, _block_thomas, _ion_constraints, _kernels
+from jaxdd.sweep import SWEEP_TILE, pallas_sweep, sweep_kind
 
 REPEATS = 5
 
@@ -85,9 +88,18 @@ def main(batch_size: int = 256) -> None:
     total = 0.0
     total += timed("residual, blocks, ion columns (edges)", jax.jit(jax.vmap(assembled)), batch)
     total += timed("ion constraint (jacrev)", jax.jit(jax.vmap(constraint)), batch)
-    total += timed("linear solve (block sweep)", jax.jit(jax.vmap(_block_thomas)), A, B, C, rhs)
+    scan = timed("linear solve (block sweep, scan)", jax.jit(jax.vmap(_block_thomas)), A, B, C, rhs)
+    if jax.default_backend() == "gpu":
+        tiles = {
+            tile: timed(f"linear solve (sweep kernel, tile {tile})",
+                        jax.jit(functools.partial(pallas_sweep, tile=tile)), A, B, C, rhs)
+            for tile in (64, 128, 256)
+        }  # fmt: skip
+        total += tiles[SWEEP_TILE] if sweep_kind() == "pallas" else scan
+    else:
+        total += scan
     total += timed("current", jax.jit(jax.vmap(current)), batch)
-    print(f"  {'sum of the parts (with the sweep)':38s} {total:9.2f} ms")
+    print(f"  {'sum of the parts (the sweep the solver uses)':38s} {total:9.2f} ms")
 
 
 if __name__ == "__main__":

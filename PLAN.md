@@ -20,9 +20,12 @@ sweep 21.2, the assembly 9.1, the current 2.4, the ion constraint 1.3
 Next:
 
 - A chunk of the large grid on the A100 (64 s before, on the 80 GB PCIe card).
-- The block sweep is now the largest part. It is sequential over the grid points and
-  bandwidth-bound; parallel cyclic reduction was slower (docs/solver.md). What is left there is
-  the fused kernel below.
+- The block sweep as one Pallas kernel (`jaxdd.sweep`, docs/solver.md), against the scan's
+  ~1450 kernel launches per sweep: on the RTX 4070 Ti SUPER the sweep 17.5 ms instead of 30 at
+  batch 16 384, the benchmark +8 %. To measure on the A100, where the launches weigh more
+  (`STEPS="breakdown bench hard" benchmarks/apptainer.sh`), and to keep only if it pays there.
+  It uses Pallas's Triton backend, deprecated in JAX 0.12 (the scan runs where it is gone);
+  its successor, Mosaic GPU, targets Hopper.
 
 A fused kernel for the whole step stays the large lever (from the A100's bandwidth an estimated
 10⁴–3·10⁴ curves/s, 5–15× today's). It is not needed for the steady state; decide it with Stage C (section 4) and after

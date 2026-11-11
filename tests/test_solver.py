@@ -260,6 +260,48 @@ def test_the_jacobian_by_edges_is_autodiff_of_the_rows(case: str, bern: str) -> 
         assert np.max(np.abs(r - g) / np.maximum(scale, 1e-300)) < 1e-11, name
 
 
+@pytest.mark.parametrize("n", [5, 70])
+def test_the_sweep_kernel_is_the_scan(n: int) -> None:
+    """`sweep.pallas_sweep` (the whole batch's sweep in one kernel) gives `_block_thomas`'s
+    solution to round-off, three right-hand sides, a batch that is not a whole number of tiles;
+    on a CPU in Pallas's interpreter."""
+    from jaxdd import solver as S
+    from jaxdd.sweep import pallas_sweep
+
+    rng = np.random.default_rng(3)
+    NP = 12
+    A = rng.normal(size=(n, NP, 3, 3))
+    C = rng.normal(size=(n, NP, 3, 3))
+    B = rng.normal(size=(n, NP, 3, 3)) + 8 * np.eye(3)
+    d = rng.normal(size=(n, NP, 3, 3))
+    ref = np.asarray(jax.vmap(S._block_thomas)(A, B, C, d))
+    gpu = jax.default_backend() == "gpu"
+    got = np.asarray(pallas_sweep(*(jnp.asarray(x) for x in (A, B, C, d)), tile=32,
+                                  interpret=not gpu))  # fmt: skip
+    assert np.max(np.abs(got - ref)) < 1e-12 * np.max(np.abs(ref))
+
+
+def test_the_batch_is_the_same_with_either_sweep(monkeypatch) -> None:
+    """`solve_batch` with the sweep kernel and with the scan (`JAXDD_SWEEP`): the same curves to
+    round-off, the same flags and Newton steps. Only where the kernel runs (an NVIDIA GPU)."""
+    from jaxdd.batch import prepare, solve_batch
+    from jaxdd.sweep import sweep_kind
+
+    monkeypatch.delenv("JAXDD_SWEEP", raising=False)
+    if sweep_kind() != "pallas":
+        pytest.skip("the sweep kernel runs on an NVIDIA GPU")
+    cases = ["thin_l1_light", "frozen_1e17_x1_thin_light", "steady_1e17_thin_light"]
+    batch = prepare([build_device(read_setup(DATA / c / "simulation_setup.txt")) for c in cases])
+    V = np.round(np.arange(-0.2, 1.3 + 1e-9, 0.1), 6)
+    kernel = [np.asarray(a) for a in solve_batch(batch, V)]
+    monkeypatch.setenv("JAXDD_SWEEP", "scan")
+    jax.clear_caches()  # the sweep is chosen when `solve_batch` is traced
+    scan = [np.asarray(a) for a in solve_batch(batch, V)]
+    jax.clear_caches()
+    assert np.array_equal(kernel[1], scan[1]) and np.array_equal(kernel[2], scan[2])
+    assert np.max(np.abs(kernel[0] - scan[0])) < 1e-9 * np.max(np.abs(scan[0]))
+
+
 def test_the_block_sweep_solves_the_block_tridiagonal_system() -> None:
     """Invariant: the sweep gives the dense solve's solution to round-off, with several
     right-hand sides."""

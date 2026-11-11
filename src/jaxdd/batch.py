@@ -32,7 +32,6 @@ from jaxdd.solver import (
     STALL_STEPS,
     STEP_CAPS,
     _assemble,
-    _block_thomas,
     _ion_constraints,
     _ion_logs,
     _ion_setup,
@@ -42,6 +41,7 @@ from jaxdd.solver import (
     _stencils,
     step_caps,
 )
+from jaxdd.sweep import block_sweep
 
 __all__ = ["prepare", "solve_batch"]
 
@@ -186,7 +186,7 @@ def _newton_solve(y, logs, d, s, ion, Vint, g_frac, B, tol, max_iter, strict=Fal
         dg_dV, D = jax.jacrev(constraints, argnums=(0, 1))(full[1:-1, 0], logs)
         D = D + jnp.diag(jnp.where(jnp.stack([ion["a_total"], ion["c_total"]]) > 0, 0.0, 1.0))
         W = jnp.zeros((y.shape[0], 3, 2)).at[:, 0, :].set(dg_dV.T)
-        X = _block_thomas(A, Bb, C, jnp.concatenate([-F[..., None], U], axis=-1))
+        X = block_sweep(A, Bb, C, jnp.concatenate([-F[..., None], U], axis=-1))
         XF, XU = X[..., 0], X[..., 1:]
         schur = D - jnp.einsum("irk,irl->kl", W, XU)
         d_logs = jnp.linalg.solve(schur, -g - jnp.einsum("irk,ir->k", W, XF))

@@ -249,14 +249,34 @@ backward, i = NP … 1:                       # lax.scan, reverse
     x[i]  ← d'[i] − C'[i]·x[i+1]
 ```
 
-Two details make it fast on a GPU, where the 2 × NP sequential steps otherwise each launch their
-own small kernels: the 3×3 inverse is written out by the adjugate (elementwise arithmetic,
-no batched LU call), and the 3×3 products as multiply-and-sum (no GEMM call per product), so
-XLA fuses each step into one kernel; the scan is unrolled by 8, so eight grid points share a
-kernel. Parallel cyclic reduction (log₂ NP fully parallel levels instead of a sequential sweep)
-and a hybrid of both were built and measured: slower on every machine and batch size, because
-each level passes over every block of every device and becomes bandwidth-bound. They were taken
-out.
+The 3×3 inverse is written out by the adjugate (elementwise arithmetic, no batched LU call)
+and the 3×3 products as multiply-and-sum (no GEMM call per product).
+
+Under `vmap` on a GPU that scan becomes two XLA while loops of about 50 iterations each (400
+points, unrolled by 8). XLA does not make a step one kernel: the forward loop's body launches
+19 kernels for its eight points, the backward one 10, about 1450 launches per sweep, and each
+iteration reads its loop condition back to the host. On an A100 that latency is much of the
+sweep's time (10.5 ms at batch 4096, 21 ms at 16 384, `validation/breakdown.py`). More unrolling
+does not help: the kernels per iteration grow with it.
+
+On an NVIDIA GPU the batched solver therefore runs the whole sweep, forward and back, as one
+Pallas kernel (`jaxdd.sweep`): each program takes 64 devices and runs over every grid point
+itself, its carry in registers. The kernel wants the devices on the last axis, so that a
+program's loads are contiguous: the blocks are transposed in and the solution out. An
+optimization barrier before the transposes is essential: without it XLA fused the blocks'
+whole assembly into each of the four transposes and computed it four times, which made the
+kernel slower than the scan. On an RTX 4070 Ti SUPER at batch 16 384 the sweep takes 17.5 ms
+instead of 30, assembly and sweep together 43.5 ms instead of 57, and `bench.py` runs at 910
+curves/s instead of 840. The kernel agrees with the scan to 1e-12 (tests).
+
+The scan stays for one device (`solve_jv`), on a CPU and on ROCm; `JAXDD_SWEEP=scan` chooses
+it anywhere, `JAXDD_SWEEP=pallas` the kernel. The kernel uses Pallas's Triton backend, which
+JAX 0.12 marks deprecated; where it is gone, the scan runs.
+
+Parallel cyclic reduction (log₂ NP fully parallel levels instead of a sequential sweep) and a
+hybrid of it with the sweep were built and measured: slower on every machine and batch size,
+because each level passes over every block of every device and becomes bandwidth-bound. They
+were taken out.
 
 ### Damping
 

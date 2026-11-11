@@ -89,7 +89,7 @@ and offers a switch that reproduces SimSS's number. Each such case is in
 | Unknowns | `(V, ln n, ln p)` per grid point | densities never go negative, the 20 orders of magnitude live in the logarithm; Scharfetter–Gummel stays in `n`, `p` |
 | Nonlinear solver | coupled Newton | few steps per voltage, robust at high injection; a Gummel scheme needs many more iterations and does not batch better |
 | Jacobian | by intervals: each Scharfetter–Gummel flux and its derivatives once (`B'` by `jax.jvp`), each point's 3×3 blocks from its two intervals; tested against `jax.jacfwd` of one point's residual | 4× faster than autodiff of each point, and no round-off floor where frozen ions leave a carrier-free bulk; never the dense Jacobian of the whole device |
-| Linear solver | block Thomas sweep (`lax.scan`) | the system is block tridiagonal; parallel cyclic reduction was built and measured slower on every machine and batch size |
+| Linear solver | block Thomas sweep: a `lax.scan`, and for a batch on an NVIDIA GPU one Pallas kernel | the system is block tridiagonal; the kernel saves the scan's ~1450 kernel launches per sweep; parallel cyclic reduction was built and measured slower on every machine and batch size |
 | Input | SIMsalabim's parameter files | every SimSS user's sweep runs unchanged; a Python API of pytrees beside it |
 | Scope | general structure, physics in stages | anyone who sweeps SimSS can use it; each stage of physics validated against SimSS before the next |
 | First GPU | NVIDIA A100 (CUDA) | JAX works there as is; the code stays plain JAX, so other platforms have nothing to undo |
@@ -103,6 +103,7 @@ and offers a switch that reproduces SimSS's number. Each such case is in
 | `src/jaxdd/device.py` | SIMsalabim's grid and every static array of one device (`build_device`) |
 | `src/jaxdd/solver.py` | the discrete equations, the Newton step, the block sweep; `solve_jv` for one device |
 | `src/jaxdd/batch.py` | the same solver as one pure function, `vmap`ped: `prepare`, `solve_batch` |
+| `src/jaxdd/sweep.py` | the batch's block sweep in one GPU kernel (Pallas), and the switch between it and the scan |
 | `src/jaxdd/constants.py` | SIMsalabim's physical constants |
 | `tests/` | pytest suite; `tests/data/` four SimSS runs (inputs and `JV.dat`) as reference |
 | `validation/` | scripts that compare with SimSS and time the solver ([validation.md](validation.md)) |

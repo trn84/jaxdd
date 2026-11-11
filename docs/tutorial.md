@@ -68,9 +68,10 @@ group as its own batch.
 
 The first call compiles. That takes seconds on a CPU and up to a minute on a GPU at large
 batches, and it happens again for every new **shape or option**: another batch size, another
-`NP`, another number of voltages, another `max_iter`, `bernoulli_name` or `strict`. For a long
-sweep, cut the devices into batches of one fixed size (pad the last one by repeating a device)
-and keep the options fixed; then every batch after the first runs without compiling.
+`NP`, another number of voltages, another `max_iter`, `first_max_iter`, `bernoulli_name` or
+`strict`. For a long sweep, cut the devices into batches of one fixed size (pad the last one by
+repeating a device) and keep the options fixed; then every batch after the first runs without
+compiling, but for the second pass, which compiles once per power of two of stragglers.
 
 ### Options
 
@@ -78,6 +79,7 @@ and keep the options fixed; then every batch after the first runs without compil
 |---|---|---|
 | `tol` | 1e-10 | the Newton step (potential in `V_T`, densities relatively) at which a voltage is converged |
 | `max_iter` | 60 | Newton steps per voltage at most; a voltage that reaches it is flagged, not dropped |
+| `first_max_iter` | 25 | the first pass's limit: devices with a voltage that misses it are solved again with `max_iter` ([batching.md](batching.md)); `None` for one pass |
 | `bernoulli_name` | `"exact"` | `"simss"` reproduces SimSS's series approximation of the Bernoulli function ([differences.md](differences.md) §2) |
 | `strict` | `False` | `True` turns off the two shortcuts (the quadratic stop and the settled current, [solver.md](solver.md)), for checking them; about one Newton step more per voltage |
 

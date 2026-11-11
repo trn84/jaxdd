@@ -71,9 +71,13 @@ What helps, cheapest first:
 1. **Sort devices into batches of similar difficulty.** Diffusion length, ion density and
    doping are known before solving; the hard devices (short diffusion length, many ions) then
    hold up only each other.
-2. **Two passes.** Solve with a low `max_iter` first, then solve the devices that missed it
-   again, together, with a higher one (25, then 60). On a large grid with ions this took the
-   cost per voltage from 25.5 to 12.5 steps.
+2. **Two passes**, which `solve_batch` does itself: every device with at most `first_max_iter`
+   (25) Newton steps per voltage, then the devices with a voltage that missed it again,
+   together, with `max_iter` (60). The stragglers are padded to a power of two (repeating the
+   last), so few shapes compile. On a large grid with ions this took the cost per voltage from
+   25.5 to 12.5 steps. A device solved in the first pass gets exactly the one-pass result (the
+   Poisson start is capped by `max_iter` in both passes); a re-solved one gets its second pass,
+   `iterations` included. `first_max_iter=None` solves in one pass.
 3. **Smaller batches.** The expected maximum over fewer lanes is lower. On an A100, batch 4096
    runs at about 88 % of the rate of 16384.
 
@@ -83,7 +87,8 @@ was in.
 ## Compilation
 
 The compiled program depends on the shapes (batch size, `NP`, number of voltages) and on the
-options `max_iter`, `bernoulli_name` and `strict`. Each new combination compiles again: a few
+options `max_iter`, `first_max_iter`, `bernoulli_name` and `strict`; the second pass compiles
+once for each power of two of stragglers. Each new combination compiles again: a few
 seconds on a CPU at small batches, 20 s on an A100 and about 60 s on a consumer GPU at batch
 16384. A sweep should use one batch size throughout, padding the last batch.
 

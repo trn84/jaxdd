@@ -275,12 +275,14 @@ def _freeze(s, ion, y, logs, Vt, flag):
     return s, ion
 
 
-def _solve_one(d, voltages, B, tol, max_iter, strict):
-    """One device's J-V curve: the pre-bias stage, then the scan."""
+def _solve_one(d, voltages, B, tol, max_iter, poisson_iter, strict):
+    """One device's J-V curve: the pre-bias stage, then the scan. `max_iter` caps Newton per
+    voltage, `poisson_iter` the unflagged Poisson start (the final pass's cap in both passes,
+    so a first pass changes no device's start)."""
     s, ion, Vt, g_frac = d["s"], d["ion"], d["Vt"], d["g_frac"]
     first = jnp.where(d["pre_cond"] > 0, d["V_pre"], voltages[0])
     y = _initial(d, first)[1:-1]
-    y = _poisson_solve(y, d, s, ion, first, max_iter)
+    y = _poisson_solve(y, d, s, ion, first, poisson_iter)
     bounds = _bounds(d, first)
     logs = _ion_logs(jnp.concatenate([bounds[0][:1], y[:, 0], bounds[1][:1]]), ion)
     y, logs, _, pre_ok, _ = _newton_solve(
@@ -318,16 +320,48 @@ def _solve_one(d, voltages, B, tol, max_iter, strict):
     return J, ok & pre_ok, its
 
 
-@functools.partial(jax.jit, static_argnames=("bernoulli_name", "max_iter", "strict"))
-def _solve_batch(batch, voltages, tol, max_iter, bernoulli_name, strict):
+@functools.partial(
+    jax.jit, static_argnames=("bernoulli_name", "max_iter", "poisson_iter", "strict")
+)
+def _solve_batch(batch, voltages, tol, max_iter, poisson_iter, bernoulli_name, strict):
     B = BERNOULLI[bernoulli_name]
-    one = functools.partial(_solve_one, B=B, tol=tol, max_iter=max_iter, strict=strict)
+    one = functools.partial(
+        _solve_one, B=B, tol=tol, max_iter=max_iter, poisson_iter=poisson_iter, strict=strict
+    )
     return jax.vmap(one, in_axes=(0, None))(batch, voltages)
 
 
-def solve_batch(batch, voltages, tol=1e-10, max_iter=60, bernoulli_name="exact", strict=False):
+def _stragglers(ok):
+    """The devices with a voltage not converged, and the same indices padded to a power of two
+    (at most the batch) by repeating the last: few shapes to compile, whatever their number."""
+    idx = np.flatnonzero(~np.asarray(ok).all(axis=1))
+    if idx.size == 0:
+        return idx, idx
+    padded = min(len(ok), 1 << (idx.size - 1).bit_length())
+    return idx, np.concatenate([idx, np.full(padded - idx.size, idx[-1])])
+
+
+def solve_batch(batch, voltages, tol=1e-10, max_iter=60, first_max_iter=25,
+                bernoulli_name="exact", strict=False):  # fmt: skip
     """J-V curves of a batch (`prepare`) at `voltages`: `(J, converged, iterations)`, each
     batch × voltages.
+
+    Two passes (docs/batching.md): every device with at most `first_max_iter` Newton steps per
+    voltage, then the devices with a voltage that missed it again, together, with `max_iter`.
+    A device that converges in the first pass gets the same result as with `max_iter` alone;
+    a re-solved one returns its second pass, and its `iterations` are that pass's. With
+    `first_max_iter` None (or not below `max_iter`) one pass.
     `strict`: Newton only to `tol` (or the round-off floor) — no quadratic stop, no settled
     current; for checking the shortcuts, at about one more step per voltage."""
-    return _solve_batch(batch, voltages, tol, max_iter, bernoulli_name, strict)
+    if first_max_iter is None or first_max_iter >= max_iter:
+        return _solve_batch(batch, voltages, tol, max_iter, max_iter, bernoulli_name, strict)
+    J, ok, its = _solve_batch(
+        batch, voltages, tol, first_max_iter, max_iter, bernoulli_name, strict
+    )
+    idx, padded = _stragglers(ok)
+    if idx.size == 0:
+        return J, ok, its
+    part = jax.tree_util.tree_map(lambda leaf: leaf[padded], batch)
+    J2, ok2, its2 = _solve_batch(part, voltages, tol, max_iter, max_iter, bernoulli_name, strict)
+    n = idx.size
+    return J.at[idx].set(J2[:n]), ok.at[idx].set(ok2[:n]), its.at[idx].set(its2[:n])

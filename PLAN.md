@@ -28,8 +28,6 @@ ion distribution, stack). By what that shows:
 - (d) The host on smaller machines: writing and reading a device's input files costs ~90 ms
   on one core. `read_setup` from a mapping of file names to texts, so that sweeps build devices
   without files.
-- (f) The two passes as part of jaxdd (`solve_batch` re-solving its stragglers), instead of
-  each caller writing them.
 - (e) The Jacobian by edges (each interval's flux and its derivatives once, not twice from both
   neighbouring rows) and in one `jacfwd` with the ion columns: estimated 1.5–2×. A Newton step
   of 16 384 devices on an A100 is 67 ms, 46 of it the Jacobian blocks and ion columns, 15 the

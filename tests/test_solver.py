@@ -145,6 +145,32 @@ def test_batch_matches_the_one_device_solver() -> None:
         assert np.max(np.abs(np.asarray(J[k]) - single.J)) < 1e-6 * scale
 
 
+def test_two_passes_give_the_one_pass_result() -> None:
+    """`solve_batch` re-solves the devices that missed `first_max_iter` with `max_iter`: the
+    result is the one pass's, flags and Newton steps exactly, curves to round-off (a smaller
+    batch compiles to other roundings); the stragglers are padded to a power of two by
+    repeating the last."""
+    from jaxdd.batch import _stragglers, prepare, solve_batch
+
+    cases = ["thin_l1_light", "frozen_1e17_x1_thin_light", "steady_1e17_thin_light"]
+    devices = [build_device(read_setup(DATA / c / "simulation_setup.txt")) for c in cases]
+    batch = prepare(devices + devices[:2])
+    V = np.round(np.arange(-0.2, 1.3 + 1e-9, 0.1), 6)
+    one = [np.asarray(a) for a in solve_batch(batch, V, first_max_iter=None)]
+    first = np.asarray(solve_batch(batch, V, max_iter=14, first_max_iter=None)[1])
+    assert 0 < (~first.all(axis=1)).sum() < len(first)  # thin_l1_light's start needs 15
+    two = [np.asarray(a) for a in solve_batch(batch, V, first_max_iter=14)]
+    assert one[1].all()
+    assert np.array_equal(one[1], two[1]) and np.array_equal(one[2], two[2])
+    assert np.max(np.abs(one[0] - two[0])) < 1e-12 * np.max(np.abs(one[0]))
+
+    ok = np.ones((6, 2), dtype=bool)
+    ok[[1, 4, 5], 0] = False
+    idx, padded = _stragglers(ok)
+    assert idx.tolist() == [1, 4, 5] and padded.tolist() == [1, 4, 5, 5]
+    assert _stragglers(np.ones((3, 2), dtype=bool))[1].size == 0
+
+
 def test_a_dark_scan_with_a_density_far_below_the_floor_converges() -> None:
     """Regression: in the dark, a thick doped transport layer holds a minority density far
     below `n_floor`, whose logarithm is undetermined between neighbouring voltages. The batched

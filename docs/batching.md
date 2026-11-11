@@ -81,7 +81,8 @@ What helps, cheapest first:
    last), so few shapes compile. A device solved in the first pass gets exactly the one-pass
    result (Poisson and Newton at the pre-bias are capped by `max_iter` in both passes); a
    re-solved one gets its second pass, `iterations` included. `first_max_iter=None` solves in
-   one pass.
+   one pass, and so does a call inside `jax.jit`, `jax.jvp` or `jax.vmap`: the second pass's
+   shape is the number of stragglers, known only once the first pass has run.
 
    Two passes are insurance against the device that does not converge: in one pass it makes
    the whole batch pay `max_iter` at its voltages, in two it costs the batch `first_max_iter`.

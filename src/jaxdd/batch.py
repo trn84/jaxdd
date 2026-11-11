@@ -328,11 +328,16 @@ def _solve_one(d, voltages, B, tol, max_iter, start_iter, strict):
 
 @functools.partial(jax.jit, static_argnames=("bernoulli_name", "max_iter", "start_iter", "strict"))
 def _solve_batch(batch, voltages, tol, max_iter, start_iter, bernoulli_name, strict):
+    """One pass. `_solve_one` wants the voltages ascending: sorted here, inside the jit (they
+    may be traced), and the results put back in the caller's order."""
     B = BERNOULLI[bernoulli_name]
     one = functools.partial(
         _solve_one, B=B, tol=tol, max_iter=max_iter, start_iter=start_iter, strict=strict
     )
-    return jax.vmap(one, in_axes=(0, None))(batch, voltages)
+    order = jnp.argsort(voltages)
+    J, ok, its = jax.vmap(one, in_axes=(0, None))(batch, voltages[order])
+    back = jnp.argsort(order)
+    return J[:, back], ok[:, back], its[:, back]
 
 
 def _stragglers(ok):
@@ -345,20 +350,8 @@ def _stragglers(ok):
     return idx, np.concatenate([idx, np.full(padded - idx.size, idx[-1])])
 
 
-def _passes(batch, voltages, tol, max_iter, first_max_iter, bernoulli_name, strict):
-    """`solve_batch` at ascending voltages."""
-    if first_max_iter is None or first_max_iter >= max_iter:
-        return _solve_batch(batch, voltages, tol, max_iter, max_iter, bernoulli_name, strict)
-    J, ok, its = _solve_batch(
-        batch, voltages, tol, first_max_iter, max_iter, bernoulli_name, strict
-    )
-    idx, padded = _stragglers(ok)
-    if idx.size == 0:
-        return J, ok, its
-    part = jax.tree_util.tree_map(lambda leaf: leaf[padded], batch)
-    J2, ok2, its2 = _solve_batch(part, voltages, tol, max_iter, max_iter, bernoulli_name, strict)
-    n = idx.size
-    return J.at[idx].set(J2[:n]), ok.at[idx].set(ok2[:n]), its.at[idx].set(its2[:n])
+def _traced(*trees) -> bool:
+    return any(isinstance(leaf, jax.core.Tracer) for leaf in jax.tree_util.tree_leaves(trees))
 
 
 def solve_batch(batch, voltages, tol=1e-10, max_iter=60, first_max_iter=6,
@@ -372,13 +365,21 @@ def solve_batch(batch, voltages, tol=1e-10, max_iter=60, first_max_iter=6,
     voltage, then the devices with a voltage that missed it again, together, with `max_iter`.
     A device that converges in the first pass gets the same result as with `max_iter` alone;
     a re-solved one returns its second pass, and its `iterations` are that pass's. With
-    `first_max_iter` None (or not below `max_iter`) one pass.
+    `first_max_iter` None (or not below `max_iter`) one pass; one pass too where `batch` or
+    `voltages` are traced (inside `jax.jit`, `jax.jvp`, `jax.vmap`): the stragglers' number,
+    which sets the second pass's shape, is known only once the first has run.
     `strict`: Newton only to `tol` (or the round-off floor) — no quadratic stop, no settled
     current; for checking the shortcuts, at about one more step per voltage."""
-    voltages = np.asarray(voltages, dtype=float)
-    order = np.argsort(voltages, kind="stable")
-    out = _passes(batch, voltages[order], tol, max_iter, first_max_iter, bernoulli_name, strict)
-    if np.array_equal(order, np.arange(order.size)):
-        return out
-    back = np.argsort(order)
-    return tuple(a[:, back] for a in out)
+    voltages = jnp.asarray(voltages, dtype=float)
+    if first_max_iter is None or first_max_iter >= max_iter or _traced(batch, voltages):
+        return _solve_batch(batch, voltages, tol, max_iter, max_iter, bernoulli_name, strict)
+    J, ok, its = _solve_batch(
+        batch, voltages, tol, first_max_iter, max_iter, bernoulli_name, strict
+    )
+    idx, padded = _stragglers(ok)
+    if idx.size == 0:
+        return J, ok, its
+    part = jax.tree_util.tree_map(lambda leaf: leaf[padded], batch)
+    J2, ok2, its2 = _solve_batch(part, voltages, tol, max_iter, max_iter, bernoulli_name, strict)
+    n = idx.size
+    return J.at[idx].set(J2[:n]), ok.at[idx].set(ok2[:n]), its.at[idx].set(its2[:n])

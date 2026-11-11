@@ -55,11 +55,14 @@ about two A100s).
 |---|---|---|
 | **M4** | The grid in space (2.1) | 400 points or fewer meet the validation criteria on the hardest devices, or bucketing by grid size is justified |
 | **M6** | Adaptive parameter axes (2.2) | the refined axes meet a table's interpolation tolerance with fewer devices than hand-made ones |
-| **M7** | Gradients of the converged solution by implicit differentiation (`jax.custom_root` or a custom VJP: one transposed linear solve per voltage); `lax.while_loop` has no reverse mode | gradients against finite differences on the test devices; a fit of a measured curve |
+| **M7** | Gradients of the converged solution by implicit differentiation (`jax.custom_root` or a custom VJP: one transposed linear solve per voltage); `lax.while_loop` has no reverse mode. Forward mode (`jax.jvp`) through the Newton iterations works today (tests) | gradients against finite differences on the test devices; a fit of a measured curve |
 | — | Several GPUs in one process: the batch axis sharded (`NamedSharding` or `shard_map`, not `pmap`); the devices are independent, so no communication | the rate scales with the number of GPUs |
 
-M7 comes before any fused kernel: written afterwards, the gradients would have to be written
-twice (the kernel needs its own adjoint, the transposed block sweep).
+M7 comes before any fused kernel of the whole Newton step: written afterwards, the gradients
+would have to be written twice (such a kernel needs its own adjoint). The block sweep's kernel
+(`jaxdd.sweep`) does not: the transposed system of the adjoint is block tridiagonal again, its
+blocks rearranged (`Aᵢ ← Cᵢ₋₁ᵀ`, `Bᵢ ← Bᵢᵀ`, `Cᵢ ← Aᵢ₊₁ᵀ`), and the same sweep, kernel or scan,
+solves it.
 
 ### 2.1 M4: the grid in space
 

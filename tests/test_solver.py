@@ -204,6 +204,27 @@ def test_the_batch_returns_the_voltages_in_the_order_given() -> None:
         assert np.array_equal(a, b[:, ::-1])
 
 
+def test_the_batch_runs_inside_jit_and_jvp() -> None:
+    """`solve_batch` inside `jax.jit` and `jax.jvp` (one pass there: the second pass's shape is
+    known only once the first has run): the curves of a call outside, and forward-mode
+    derivatives in a parameter (the generation's share) that finite differences confirm."""
+    from jaxdd.batch import prepare, solve_batch
+
+    cases = ["thin_l1_light", "frozen_1e17_x1_thin_light"]
+    batch = prepare([build_device(read_setup(DATA / c / "simulation_setup.txt")) for c in cases])
+    V = np.round(np.arange(1.3, -0.2 - 1e-9, -0.1), 6)
+
+    def curves(g):
+        return solve_batch(dict(batch, g_frac=batch["g_frac"] * g), V)[0]
+
+    outside = np.asarray(solve_batch(batch, V)[0])
+    inside = np.asarray(jax.jit(curves)(1.0))
+    assert np.max(np.abs(inside - outside)) < 1e-9 * np.max(np.abs(outside))
+    _, dJ = jax.jvp(curves, (1.0,), (1.0,))
+    fd = (np.asarray(curves(1.0 + 1e-6)) - np.asarray(curves(1.0 - 1e-6))) / 2e-6
+    assert np.max(np.abs(np.asarray(dJ) - fd)) < 1e-5 * np.max(np.abs(fd))
+
+
 def test_a_dark_scan_with_a_density_far_below_the_floor_converges() -> None:
     """Regression: in the dark, a thick doped transport layer holds a minority density far
     below `n_floor`, whose logarithm is undetermined between neighbouring voltages. The batched

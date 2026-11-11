@@ -79,9 +79,26 @@ compiling, but for the second pass, which compiles once per power of two of stra
 |---|---|---|
 | `tol` | 1e-10 | the Newton step (potential in `V_T`, densities relatively) at which a voltage is converged |
 | `max_iter` | 60 | Newton steps per voltage at most; a voltage that reaches it is flagged, not dropped |
-| `first_max_iter` | 6 | the first pass's limit: devices with a voltage that misses it are solved again with `max_iter` ([batching.md](batching.md)); `None` for one pass |
+| `first_max_iter` | 6 | the first pass's limit: devices with a voltage that misses it are solved again with `max_iter` ([batching.md](batching.md)); `None` for one pass, and one pass always inside `jax.jit`, `jax.jvp` or `jax.vmap` |
 | `bernoulli_name` | `"exact"` | `"simss"` reproduces SimSS's series approximation of the Bernoulli function ([differences.md](differences.md) §2) |
 | `strict` | `False` | `True` turns off the two shortcuts (the quadratic stop and the settled current, [solver.md](solver.md)), for checking them; about one Newton step more per voltage |
+
+### Inside JAX transformations
+
+`solve_batch` runs inside `jax.jit`, `jax.vmap` and `jax.jvp`, in one pass there (the second
+pass's shape depends on how many devices the first leaves). Forward-mode derivatives of the
+curves in any array of the batch, through the Newton iterations, come from `jax.jvp` or
+`jax.jacfwd`; they agree with finite differences (tests):
+
+```python
+def curves(g):                                   # J(V) at a share g of the generation
+    return solve_batch(dict(batch, g_frac=batch["g_frac"] * g), V)[0]
+
+J, dJ_dg = jax.jvp(curves, (1.0,), (1.0,))
+```
+
+Reverse mode (`jax.grad`) does not work yet: `lax.while_loop` has none. Gradients by implicit
+differentiation of the converged solution are planned ([PLAN.md](../PLAN.md), M7).
 
 ### Reading the result
 

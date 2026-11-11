@@ -132,7 +132,8 @@ def pallas_sweep(A, B, C, d, tile: int = SWEEP_TILE, interpret: bool = False):
     pad = (-n) % tile
     # The blocks once, in the solver's layout: without the barrier XLA fuses their whole
     # assembly into each of the four transposes below, and computes it four times.
-    A, B, C, d = jax.lax.optimization_barrier((A, B, C, d))
+    barrier = getattr(jax.lax, "optimization_barrier", lambda x: x)  # not in JAX 0.4.31
+    A, B, C, d = barrier((A, B, C, d))
 
     def lay(M, cols):  # n × NP × 3 × cols → 3·cols × NP × (n + pad)
         M = M.reshape(n, NP, 3 * cols)

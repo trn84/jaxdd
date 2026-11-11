@@ -9,29 +9,23 @@ the handbook.
 ### 1.2 Speed: the lockstep tail on real grids
 
 Under `vmap` every voltage costs the batch's slowest device ([docs/batching.md](docs/batching.md)).
-On a chunk of the large grid with ions ([docs/validation.md](docs/validation.md); 250 nm absorber, every diffusion length, ion density and ion
-distribution, batch 16 384) the devices needed 2.97 Newton steps per voltage and the batch paid
-25.5. Two passes (`max_iter` 25, then the ~0.15 % that miss it again with 60) brought it to 12.5:
-a chunk 75 → 64 s. The rest is the tail of the *ordinary*
-devices: at nearly every voltage some device of 16 384 needs about 12 steps.
+The scan now runs outwards from the pre-bias and the first pass stops at 6 Newton steps
+([docs/solver.md](docs/solver.md), [docs/batching.md](docs/batching.md)); on the RTX 4070 Ti SUPER
+that took 16 384 devices of the 250 nm grid with ions from 116 s (two passes, limit 25) to 89 s.
+What is left of the tail is a few dozen devices with strong frozen charge above 0.7 V, which the
+second pass takes.
 
-Next: measure on thousands of devices, not hundreds, where those ~12 steps sit (voltage,
-ion distribution, stack). By what that shows:
+Next:
 
-- (a) The scan from `V_pre` outwards instead of from −0.2 V: a device's hardest voltage is
-  usually its first, up to 1.25 V from the frozen pre-bias it starts from. It would also let
-  the first pass's limit drop to about 10, and shorten the way that leaves undetermined
-  logarithms below the floor at the first voltage (docs/solver.md, the start of a voltage).
-- (b) A better start per voltage than linear extrapolation where the tail sits.
-- (c) Smaller batches: the expected maximum over 4096 devices is lower, and an A100 runs 4096 at
-  88 % of the rate of 16 384.
+- The A100 at batch 16 384 with the new defaults: a chunk of the large grid took 64 s with the
+  old scan and limit 25; the steps paid per voltage should fall from 12.9 to about 5.5.
 - (d) The host on smaller machines: writing and reading a device's input files costs ~90 ms
   on one core. `read_setup` from a mapping of file names to texts, so that sweeps build devices
   without files.
 - (e) The Jacobian by edges (each interval's flux and its derivatives once, not twice from both
   neighbouring rows) and in one `jacfwd` with the ion columns: estimated 1.5–2×. A Newton step
   of 16 384 devices on an A100 is 67 ms, 46 of it the Jacobian blocks and ion columns, 15 the
-  sweep.
+  sweep. With the tail gone this is the next lever.
 
 A fused kernel for the whole step stays the large lever (an estimated 15–30× from the A100's
 bandwidth). It is not needed for the steady state; decide it with Stage C (section 4) and after

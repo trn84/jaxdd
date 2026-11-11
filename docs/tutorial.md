@@ -79,7 +79,7 @@ compiling, but for the second pass, which compiles once per power of two of stra
 |---|---|---|
 | `tol` | 1e-10 | the Newton step (potential in `V_T`, densities relatively) at which a voltage is converged |
 | `max_iter` | 60 | Newton steps per voltage at most; a voltage that reaches it is flagged, not dropped |
-| `first_max_iter` | 25 | the first pass's limit: devices with a voltage that misses it are solved again with `max_iter` ([batching.md](batching.md)); `None` for one pass |
+| `first_max_iter` | 6 | the first pass's limit: devices with a voltage that misses it are solved again with `max_iter` ([batching.md](batching.md)); `None` for one pass |
 | `bernoulli_name` | `"exact"` | `"simss"` reproduces SimSS's series approximation of the Bernoulli function ([differences.md](differences.md) §2) |
 | `strict` | `False` | `True` turns off the two shortcuts (the quadratic stop and the settled current, [solver.md](solver.md)), for checking them; about one Newton step more per voltage |
 

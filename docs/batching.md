@@ -26,6 +26,7 @@ solve_batch(batch, voltages) = jit( vmap( solve_one, over the batch axis ) )(bat
 | Python `for` over the voltages | `lax.scan` over the voltages |
 | Python `while` over the Newton steps | `lax.while_loop`, the convergence test in its condition |
 | `if dev.pre_cond:` pre-bias, `if dev.fix_ions:` freeze | always solve at the first voltage (`V_pre` or `V[0]`, chosen by `jnp.where`); freeze by a mask: `jnp.where(flag, frozen, free)` |
+| the voltages in order, from the pre-bias | outwards from `V_pre`: one `lax.scan` over the voltages permuted per device (up, then down), the carry reset to the pre-bias at the turn by `jnp.where` |
 | current in NumPy after each voltage | current in JAX inside the loop (it is also a convergence criterion) |
 | `RuntimeError` if the pre-bias fails | the pre-bias's flag folded into every voltage's `converged` |
 
@@ -62,9 +63,10 @@ paid   = iterations.max(axis=0).sum()       # what the batch paid
 On the benchmark devices (`validation/bench.py`) the ratio is about 1.4: 2.8 steps needed per
 voltage, 3.9 paid (2.77 and 3.95 on 2048 of them; unchanged by the clipped start of each
 voltage, [solver.md](solver.md), which is never active there). On a real parameter grid it can
-be much larger. A grid that spans thin and thick absorbers, short and long diffusion lengths and
-ion densities up to 1e18 cm⁻³ paid ×8.6 per voltage at batch 16384, because at nearly every
-voltage *some* device of 16384 needed a dozen steps or more.
+be much larger. On 16 384 devices of a grid with ions (every diffusion length, ion density
+and ion distribution; light and dark) the devices need 2.8 steps per voltage, and one pass at
+batch 16 384 pays 21: the few dozen devices with strong frozen charge take 15 to 60 steps at
+voltages above 0.7 V, and every device pays them there.
 
 What helps, cheapest first:
 
@@ -72,12 +74,19 @@ What helps, cheapest first:
    doping are known before solving; the hard devices (short diffusion length, many ions) then
    hold up only each other.
 2. **Two passes**, which `solve_batch` does itself: every device with at most `first_max_iter`
-   (25) Newton steps per voltage, then the devices with a voltage that missed it again,
+   (6) Newton steps per voltage, then the devices with a voltage that missed it again,
    together, with `max_iter` (60). The stragglers are padded to a power of two (repeating the
-   last), so few shapes compile. On a large grid with ions this took the cost per voltage from
-   25.5 to 12.5 steps. A device solved in the first pass gets exactly the one-pass result (the
-   Poisson start is capped by `max_iter` in both passes); a re-solved one gets its second pass,
-   `iterations` included. `first_max_iter=None` solves in one pass.
+   last), so few shapes compile. A device solved in the first pass gets exactly the one-pass
+   result (Poisson and Newton at the pre-bias are capped by `max_iter` in both passes); a
+   re-solved one gets its second pass, `iterations` included. `first_max_iter=None` solves in
+   one pass.
+
+   The limit works because each scan runs outwards from its pre-bias ([solver.md](solver.md)):
+   an ordinary device then takes 2–4 steps at every voltage and at most 8, and only the few
+   with strong frozen charge take more. On 16 384 devices of a grid with ions (250 nm absorber,
+   light and dark, batch 4096 on an RTX 4070 Ti SUPER) one pass took 143 s, two passes with
+   limit 25 took 116 s, with 6 89 s, with 5 84 s; 6 keeps a step's margin over the 5 steps
+   ordinary devices sometimes take.
 3. **Smaller batches.** The expected maximum over fewer lanes is lower. On an A100, batch 4096
    runs at about 88 % of the rate of 16384.
 

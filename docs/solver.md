@@ -51,8 +51,8 @@ flowchart TD
     E --> F{"preCond and fixIons?"}
     F -- "yes" --> G["freeze: the free ion profile<br/>becomes a fixed charge"]
     F -- "no" --> H
-    G --> H["for each voltage of the scan"]
-    H --> I["start: extrapolate linearly from the<br/>last two converged solutions,<br/>the change held to one Newton step"]
+    G --> H["for each voltage, outwards from the pre-bias:<br/>up from it, then down from it"]
+    H --> I["start: extrapolate linearly from the<br/>last two converged solutions,<br/>the change held to one Newton step;<br/>the pre-bias solution at each direction's first"]
     I --> J["coupled Newton<br/>until converged or max_iter"]
     J --> K["current J (integral form)"]
     K --> N["carry the solution on<br/>only if converged and finite"]
@@ -61,10 +61,11 @@ flowchart TD
     L -- "no" --> M["J(V), converged, iterations"]
 ```
 
-As pseudocode (`batch._solve_one`, the one-device form of the batched solver):
+As pseudocode (`batch._solve_one`, the one-device form of the batched solver; `solve_batch`
+sorts the voltages and returns the results in the caller's order):
 
 ```text
-function solve_one(device, voltages):
+function solve_one(device, voltages):                   # voltages ascending
     V_first  ← device.V_pre if device.pre_cond else voltages[0]
     y        ← initial_guess(device, V_first)          # linear V, linear Fermi level
     y        ← poisson_only(y, V_first)                 # Newton on V alone, n and p follow V
@@ -73,9 +74,11 @@ function solve_one(device, voltages):
     if device.pre_cond and device.fix_ions:
         freeze_ions(y, logs)                            # profile → fixed charge, scalars held
 
-    y_last, y_before ← y, y
-    V_last, V_before ← V_first, V_first
-    for V in voltages:                                  # lax.scan
+    up   ← [V in voltages if V ≥ V_first]               # ascending
+    down ← [V in voltages if V < V_first], descending
+    for V in up + down:                                 # one lax.scan, permuted per device
+        if V is down[0]:                                # turn: back to the pre-bias
+            y_last, y_before, V_last, V_before ← y, y, V_first, V_first
         r     ← (V − V_last)/(V_last − V_before) if V_last ≠ V_before else 0
         guess ← y_last + clip(r · (y_last − y_before), ±caps)   # the ion scalars alike
         y_new, logs_new, ok, steps ← newton(guess, logs, V)
@@ -97,9 +100,22 @@ potential close before the coupled system starts; it is a scalar tridiagonal sol
 each voltage from the linear extrapolation of the last two solutions (SIMsalabim's
 `Extrapolate_Solution`) instead of from the last one saves Newton steps at every voltage;
 together with the quadratic stop below it took the average from 4.6 to 2.8 steps per voltage
-on the benchmark devices. The first voltage after a pre-bias starts from the pre-bias solution
-as it is; it is usually the hardest voltage of a curve. The one-device `solve_jv` starts each
-voltage from the last converged solution, without extrapolating.
+on the benchmark devices. The first voltage of each direction starts from the pre-bias solution
+as it is. The one-device `solve_jv` scans the voltages in the order given, from the pre-bias to
+the first, and starts each voltage from the last converged solution, without extrapolating.
+
+**Why outwards from the pre-bias.** With the ions frozen (or free, or none) the steady state at
+a voltage does not depend on the way there, so the scan may take the voltages in any order. A
+scan from the lowest voltage up starts with a jump from `V_pre` to it, 1.25 V with ions frozen
+at flat band (`V_pre` at `V_bi`, the scan from −0.2 V); on 16 384 devices of a parameter grid with
+ions that first voltage took 11.5 Newton steps on average and up to 28, and 11 454 of the devices
+took 10 or more there. Under `vmap` every device pays the slowest one's steps at every voltage
+([batching.md](batching.md)), so that one voltage set the first pass's limit. Outwards from
+`V_pre`, each direction's first voltage is at most one voltage step away: on the same devices it
+takes at most 4 steps, and 31 devices take 10 or more anywhere (above 0.7 V, most of them dark
+with ions frozen at full accumulation: the strong frozen charge of [tutorial.md](tutorial.md),
+"Known limits"). The curves agree with the upward scan's to 8e-6 of the generation current, within the
+settled-current stop.
 
 **Why the extrapolated change is clipped.** Convergence weighs out a density far below anything
 that matters (`n_floor`, [below](#when-is-a-voltage-converged)): its logarithm does not enter
@@ -109,10 +125,12 @@ and the holes across much of the absorber lie at such densities (1e-30 m⁻³ an
 between two neighbouring converged voltages their logarithms differ by 30–100 at single points.
 Extrapolated linearly, that difference became the start of the next voltage, e^100 off; Newton's
 capped steps did not bring it back, the state became NaN, and the scan carried the NaN through
-every later voltage. The first such difference is left at the first voltage of the scan: it is
-declared converged while densities below the floor still move (40 more Newton steps there move
-`ln p` at hundreds of points, at one by 29). The leftover is largest where the way from the
-pre-bias is longest: ions frozen at flat band, a pre-bias at `V_bi`, 1.25 V from −0.2 V.
+every later voltage. The first such difference is left at a voltage reached by a long way from
+the pre-bias: it is declared converged while densities below the floor still move (40 more
+Newton steps there move `ln p` at hundreds of points, at one by 29). The leftover is largest
+where that way is longest: ions frozen at flat band, a pre-bias at `V_bi`, 1.25 V from −0.2 V
+(the scan from the lowest voltage up; the scan outwards from the pre-bias shortens it to one
+voltage step).
 Whether a scan then failed was a matter of timing (of when the densities above the floor
 converge), not of a threshold in any one parameter. So the extrapolated change of every unknown at every point is held to the
 caps of one Newton step (`solver.STEP_CAPS`: 10 `V_T`, 5 in `ln n` and `ln p`; 5 in the ion

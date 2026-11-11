@@ -275,29 +275,32 @@ def _freeze(s, ion, y, logs, Vt, flag):
     return s, ion
 
 
-def _solve_one(d, voltages, B, tol, max_iter, poisson_iter, strict):
-    """One device's J-V curve: the pre-bias stage, then the scan. `max_iter` caps Newton per
-    voltage, `poisson_iter` the unflagged Poisson start (the final pass's cap in both passes,
-    so a first pass changes no device's start)."""
+def _solve_one(d, voltages, B, tol, max_iter, start_iter, strict):
+    """One device's J-V curve: the pre-bias stage, then the scan outwards from it. `voltages`
+    ascending; `max_iter` caps Newton per voltage of the scan, `start_iter` Poisson and Newton
+    at the pre-bias (the final pass's cap in both passes: a first pass changes no device's
+    start, and a low first cap does not fail the pre-bias, which a batch pays once)."""
     s, ion, Vt, g_frac = d["s"], d["ion"], d["Vt"], d["g_frac"]
     first = jnp.where(d["pre_cond"] > 0, d["V_pre"], voltages[0])
     y = _initial(d, first)[1:-1]
-    y = _poisson_solve(y, d, s, ion, first, poisson_iter)
+    y = _poisson_solve(y, d, s, ion, first, start_iter)
     bounds = _bounds(d, first)
     logs = _ion_logs(jnp.concatenate([bounds[0][:1], y[:, 0], bounds[1][:1]]), ion)
     y, logs, _, pre_ok, _ = _newton_solve(
-        y, logs, d, s, ion, first, g_frac, B, tol, max_iter, strict
+        y, logs, d, s, ion, first, g_frac, B, tol, start_iter, strict
     )
     s, ion = _freeze(s, ion, y, logs, Vt, (d["pre_cond"] > 0) & (d["fix_ions"] > 0))
 
     caps = step_caps(Vt)
 
-    def scan(carry, Vint):
+    def scan(carry, x):
         # The start: the last two converged solutions extrapolated linearly in the voltage
         # (SIMsalabim's `Extrapolate_Solution`), the change held to one Newton step's caps; at
-        # the first voltage, the pre-bias solution as it is. Unclipped, the extrapolation
-        # carries the undetermined logarithm of a density below `n_floor` (30–100 apart between
-        # neighbouring voltages) into the start, e^100 off (docs/solver.md).
+        # the first voltage of each direction, the pre-bias solution as it is. Unclipped, the
+        # extrapolation carries the undetermined logarithm of a density below `n_floor` (30–100
+        # apart between neighbouring voltages) into the start, e^100 off (docs/solver.md).
+        Vint, turn = x
+        carry = jax.tree_util.tree_map(lambda s0, c: jnp.where(turn, s0, c), start, carry)
         y, logs, y_prev, logs_prev, V_last, V_before = carry
         ratio = jnp.where(V_last != V_before, (Vint - V_last) / (V_last - V_before), 0.0)
         guess = y + jnp.clip(ratio * (y - y_prev), -caps, caps)
@@ -315,18 +318,24 @@ def _solve_one(d, voltages, B, tol, max_iter, poisson_iter, strict):
         )
         return carry, (J, ok, it)
 
+    # Outwards from the pre-bias (docs/solver.md): up from the first voltage at or above it,
+    # then, from the pre-bias solution again, down from the last below it. Without a pre-bias
+    # `first` is the lowest voltage and the scan runs upwards only.
+    n = voltages.shape[0]
+    below = jnp.searchsorted(voltages, first)
+    j = jnp.arange(n)
+    order = jnp.where(j < n - below, below + j, n - 1 - j)
     start = (y, logs, y, logs, first, first)
-    _, (J, ok, its) = jax.lax.scan(scan, start, voltages)
+    _, (J, ok, its) = jax.lax.scan(scan, start, (voltages[order], j == n - below))
+    J, ok, its = (jnp.zeros_like(a).at[order].set(a) for a in (J, ok, its))
     return J, ok & pre_ok, its
 
 
-@functools.partial(
-    jax.jit, static_argnames=("bernoulli_name", "max_iter", "poisson_iter", "strict")
-)
-def _solve_batch(batch, voltages, tol, max_iter, poisson_iter, bernoulli_name, strict):
+@functools.partial(jax.jit, static_argnames=("bernoulli_name", "max_iter", "start_iter", "strict"))
+def _solve_batch(batch, voltages, tol, max_iter, start_iter, bernoulli_name, strict):
     B = BERNOULLI[bernoulli_name]
     one = functools.partial(
-        _solve_one, B=B, tol=tol, max_iter=max_iter, poisson_iter=poisson_iter, strict=strict
+        _solve_one, B=B, tol=tol, max_iter=max_iter, start_iter=start_iter, strict=strict
     )
     return jax.vmap(one, in_axes=(0, None))(batch, voltages)
 
@@ -341,18 +350,8 @@ def _stragglers(ok):
     return idx, np.concatenate([idx, np.full(padded - idx.size, idx[-1])])
 
 
-def solve_batch(batch, voltages, tol=1e-10, max_iter=60, first_max_iter=25,
-                bernoulli_name="exact", strict=False):  # fmt: skip
-    """J-V curves of a batch (`prepare`) at `voltages`: `(J, converged, iterations)`, each
-    batch × voltages.
-
-    Two passes (docs/batching.md): every device with at most `first_max_iter` Newton steps per
-    voltage, then the devices with a voltage that missed it again, together, with `max_iter`.
-    A device that converges in the first pass gets the same result as with `max_iter` alone;
-    a re-solved one returns its second pass, and its `iterations` are that pass's. With
-    `first_max_iter` None (or not below `max_iter`) one pass.
-    `strict`: Newton only to `tol` (or the round-off floor) — no quadratic stop, no settled
-    current; for checking the shortcuts, at about one more step per voltage."""
+def _passes(batch, voltages, tol, max_iter, first_max_iter, bernoulli_name, strict):
+    """`solve_batch` at ascending voltages."""
     if first_max_iter is None or first_max_iter >= max_iter:
         return _solve_batch(batch, voltages, tol, max_iter, max_iter, bernoulli_name, strict)
     J, ok, its = _solve_batch(
@@ -365,3 +364,26 @@ def solve_batch(batch, voltages, tol=1e-10, max_iter=60, first_max_iter=25,
     J2, ok2, its2 = _solve_batch(part, voltages, tol, max_iter, max_iter, bernoulli_name, strict)
     n = idx.size
     return J.at[idx].set(J2[:n]), ok.at[idx].set(ok2[:n]), its.at[idx].set(its2[:n])
+
+
+def solve_batch(batch, voltages, tol=1e-10, max_iter=60, first_max_iter=6,
+                bernoulli_name="exact", strict=False):  # fmt: skip
+    """J-V curves of a batch (`prepare`) at `voltages`: `(J, converged, iterations)`, each
+    batch × voltages, in the order of `voltages`.
+
+    Each device's scan runs outwards from its pre-bias, up, then down (docs/solver.md); the
+    steady state at a voltage does not depend on the way there.
+    Two passes (docs/batching.md): every device with at most `first_max_iter` Newton steps per
+    voltage, then the devices with a voltage that missed it again, together, with `max_iter`.
+    A device that converges in the first pass gets the same result as with `max_iter` alone;
+    a re-solved one returns its second pass, and its `iterations` are that pass's. With
+    `first_max_iter` None (or not below `max_iter`) one pass.
+    `strict`: Newton only to `tol` (or the round-off floor) — no quadratic stop, no settled
+    current; for checking the shortcuts, at about one more step per voltage."""
+    voltages = np.asarray(voltages, dtype=float)
+    order = np.argsort(voltages, kind="stable")
+    out = _passes(batch, voltages[order], tol, max_iter, first_max_iter, bernoulli_name, strict)
+    if np.array_equal(order, np.arange(order.size)):
+        return out
+    back = np.argsort(order)
+    return tuple(a[:, back] for a in out)

@@ -114,12 +114,13 @@ fi
 
 GPU="$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1 || true)"
 LABEL="${LABEL:-${GPU#NVIDIA } apptainer}"
-export APPTAINERENV_STEPS="$STEPS" APPTAINERENV_LABEL="$LABEL"
+COMMIT="$(git rev-parse --short=12 HEAD)$(git diff --quiet || echo ' with local changes')"
+export APPTAINERENV_STEPS="$STEPS" APPTAINERENV_LABEL="$LABEL" APPTAINERENV_JAXDD_COMMIT="$COMMIT"
 
 start=$(( $(stat -c %s "$LOG" 2>/dev/null || echo 0) + 1 ))
 {
     say "start: steps $STEPS, label \"$LABEL\""
-    echo "jaxdd $(git rev-parse --short HEAD)$(git diff --quiet || echo ' (changed)'), image $SIF"
+    echo "jaxdd $COMMIT, image $SIF"
 } >> "$LOG"
 echo "starting the steps \"$STEPS\" in $SIF; log $LOG"
 # -s hides apptainer's harmless "gocryptfs not found".

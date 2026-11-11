@@ -1,0 +1,66 @@
+{
+ "label": "A100-SXM4-40GB apptainer",
+ "date": "2026-11-11",
+ "machine": {
+  "cpu": "AMD EPYC 7282 16-Core Processor",
+  "logical_cores": 32,
+  "memory_gb": 541.0,
+  "os": "Linux-3.10.0-1160.6.1.el7.x86_64-x86_64-with-glibc2.39",
+  "gpu": "NVIDIA A100-SXM4-40GB"
+ },
+ "versions": {
+  "jaxdd": "c7c222e85253",
+  "jax": "0.12.0.1",
+  "python": "3.12.16"
+ },
+ "workload": {
+  "cases": "validation/bench.py CASES, random traps, ions and doping",
+  "seed": 20261107,
+  "voltages": 61,
+  "run": "one J-V curve"
+ },
+ "results": [
+  {
+   "solver": "jaxdd",
+   "device": "gpu",
+   "gpu": "NVIDIA A100-SXM4-40GB",
+   "batch": 4096,
+   "runs": 8192,
+   "seconds": 5.857269165106118,
+   "runs_per_s": 1398.6039857622939,
+   "first_batch_s": 10.219130578450859,
+   "converged": 1.0,
+   "steps_needed": 2.760806224385246,
+   "steps_paid": 3.3442622950819674,
+   "lockstep": 1.2113353938220133
+  },
+  {
+   "solver": "jaxdd",
+   "device": "gpu",
+   "gpu": "NVIDIA A100-SXM4-40GB",
+   "batch": 16384,
+   "runs": 32768,
+   "seconds": 15.793760167434812,
+   "runs_per_s": 2074.7434209849794,
+   "first_batch_s": 12.855242129415274,
+   "converged": 1.0,
+   "steps_needed": 2.760806224385246,
+   "steps_paid": 3.3442622950819674,
+   "lockstep": 1.2113353938220133
+  },
+  {
+   "solver": "jaxdd",
+   "device": "cpu",
+   "procs": 8,
+   "batch": 2,
+   "runs": 256,
+   "seconds": 0.8917785612866282,
+   "runs_per_s": 287.0667799309413,
+   "per_process_runs_per_s": 39.65719845109879,
+   "converged": 1.0,
+   "steps_needed": 2.7950819672131146,
+   "steps_paid": 3.19672131147541,
+   "lockstep": 1.1436950146627567
+  }
+ ]
+}

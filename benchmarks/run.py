@@ -85,6 +85,9 @@ def _memory_gb() -> float | None:
 
 
 def _jaxdd_commit() -> str | None:
+    """The checkout's commit; where there is no git (a container), `JAXDD_COMMIT` as the host
+    gave it (benchmarks/apptainer.sh)."""
+
     def git(*args: str) -> str:
         return subprocess.run(["git", "-C", str(ROOT), *args], check=True,
                               capture_output=True, text=True).stdout.strip()  # fmt: skip
@@ -93,7 +96,7 @@ def _jaxdd_commit() -> str | None:
         commit = git("rev-parse", "--short=12", "HEAD")
         dirty = git("status", "--porcelain", "--untracked-files=no")
     except (OSError, subprocess.CalledProcessError):
-        return None
+        return os.environ.get("JAXDD_COMMIT")
     return commit + (" with local changes" if dirty else "")
 
 

@@ -192,17 +192,7 @@ microseconds per evaluation are needed.
 | interactive (7) | yes, even on a CPU | not needed |
 | 2D (8) | a different solver | dense batched LU or a preconditioned Krylov method |
 
-## 6 Before a release
-
-- `NOTICE` lists the modules derived from SIMsalabim code (none so far): keep it current, and
-  where code follows SIMsalabim's, keep its copyright notice with a note that it was translated
-  and changed, with the date (GPL-3.0 §5 a).
-- A word with SIMsalabim's maintainers (who also maintain pySIMsalabim): a GPU backend may be
-  of use to them, at best a joint effort.
-- Citation of SIMsalabim in the README and with every published result.
-- A package release on PyPI, versioned, with a changelog from then on.
-
-## 7 Risks
+## 6 Risks
 
 | Risk | Effect | Mitigation |
 |---|---|---|
@@ -211,7 +201,7 @@ microseconds per evaluation are needed.
 | ROCm on gfx906 | the MI50 may never run it | not on the critical path; three ways in (1.3), the last independent of XLA's ROCm support |
 | Scope creep towards a full SIMsalabim | months | every addition its own decision, module by module, each released when validated |
 
-## 8 Decisions ahead
+## 7 Decisions ahead
 
 | Decision | When | With |
 |---|---|---|

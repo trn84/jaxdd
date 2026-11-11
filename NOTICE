@@ -18,6 +18,11 @@ with the SIMsalabim unit and version it follows and the date it was changed):
 
     (none yet)
 
+src/jaxdd/device.py, solver.py and constants.py follow SIMsalabim 5.36's discrete equations,
+routines and constants, which their docstrings name. They were written for JAX rather than
+translated line by line, but have not been checked against SIMsalabim's Pascal code line by
+line; where they carry over its code, that code is SIMsalabim's, under the copyright above.
+
 Changes to SIMsalabim distributed here (LGPL-3.0, as SIMsalabim):
 
     simss/fixed_ions.patch — a change to SIMsalabim 5.36, Units/DDRoutines.pas

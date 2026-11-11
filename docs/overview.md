@@ -111,3 +111,20 @@ and offers a switch that reproduces SimSS's number. Each such case is in
 | `simss/` | building SimSS, the reference, with the patch for frozen ions ([README](../simss/README.md)) |
 | `PLAN.md` | what is planned and what may come |
 | `NOTICE`, `COPYING*` | licence and attribution |
+
+## Licence and attribution
+
+jaxdd is under the LGPL-3.0, as SIMsalabim. [`NOTICE`](../NOTICE) names SIMsalabim and lists
+what derives from its code; it is kept current with every such change:
+
+- A file whose code is translated or carried over from SIMsalabim keeps SIMsalabim's
+  copyright notice in its header, says that it was translated and changed, names the
+  SIMsalabim unit and version it follows and the date, and is listed in `NOTICE`
+  (GPL-3.0 §5 a).
+- A module that follows SIMsalabim's equations or routines names them in its docstring, as
+  `device.py` and `solver.py` do; where it carries over code, the rule above applies too.
+- A change to SIMsalabim itself (the patch in `simss/`) is listed in `NOTICE` with the file,
+  the version and the date.
+
+Every published result obtained with jaxdd cites SIMsalabim, as the README's
+[Citing](../README.md#citing) asks.

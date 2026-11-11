@@ -5,7 +5,7 @@ describes what exists.
 
 | Page | For |
 |---|---|
-| [Overview](overview.md) | what jaxdd is, why it batches, what it solves and what it refuses, the design decisions, the repository |
+| [Overview](overview.md) | what jaxdd is, why it batches, what it solves and what it refuses, the design decisions, the repository, licence and attribution |
 | [Tutorial](tutorial.md) | installing; one device from SIMsalabim's files; many devices in a batch; reading the result; known limits |
 | [The model](model.md) | the device equations and their discretisation: grid, Poisson, Scharfetter–Gummel, interfaces, recombination, ions, the current |
 | [The solver](solver.md) | how a J-V curve is solved: the sequence of solves, the Newton step, the bordered system, the block sweep, convergence; flowcharts and pseudocode |

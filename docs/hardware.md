@@ -60,7 +60,12 @@ cd validation && ../.venv/bin/python breakdown.py 16384 2>&1 | tee ../breakdown_
 ```
 
 `bench.py N batch` solves `N` variants of the committed test devices in batches and prints
-curves per second after compilation. `breakdown.py batch` times each part of one Newton step on
+curves per second after compilation. Those devices are easy; `validation/hard.py N batch` is a
+hard workload (frozen ions from 1e15 to 4e18 cm⁻³ at every accumulation, absorbers and transport
+layers over wide ranges, light and dark) and prints the Newton steps a batch pays besides the
+rate: on 4096 of them one pass pays 5.4 steps per voltage, where the solver before the scan from
+the pre-bias and the Jacobian by intervals paid 10.1 (up to 35 at the first voltage).
+`breakdown.py batch` times each part of one Newton step on
 its own (residual, Jacobian blocks, ion columns and constraints, the sweep, the current), which
 shows where a step's time goes.
 

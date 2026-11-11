@@ -15,7 +15,7 @@
 #
 # Each time:
 #   cd ~/jaxdd && git pull
-#   benchmarks/apptainer.sh                       # every step, about 15 min on an A100
+#   benchmarks/apptainer.sh                       # every step, about 20 min on an A100
 #   STEPS="breakdown bench" benchmarks/apptainer.sh
 # Ctrl+C ends only the following of the log; the run goes on. To follow it again:
 #   tail -F benchmarks/apptainer.log
@@ -25,6 +25,8 @@
 #   tests      the test suite (a broken install fails here, in a minute)
 #   breakdown  validation/breakdown.py at batch 4096 and 16384: one Newton step, part by part
 #   bench      validation/bench.py 65536 16384: curves per second
+#   hard       validation/hard.py 16384 16384: a hard workload (frozen ions over a wide range,
+#              light and dark), two passes against one, the Newton steps a batch pays
 #   run        benchmarks/run.py: GPU at batch 4096 and 16384, jaxdd on this job's CPU cores;
 #              writes benchmarks/results/<label>.json for benchmarks/plot.py
 #
@@ -40,7 +42,7 @@ SIF="${SIF:-$ROOT/cuda129.sif}"
 IMAGE="${IMAGE:-docker://nvidia/cuda:12.9.1-base-ubuntu24.04}"
 VENV="${VENV:-$ROOT/.venvct}"
 LOG="$ROOT/benchmarks/apptainer.log"
-STEPS="${STEPS:-info tests breakdown bench run}"
+STEPS="${STEPS:-info tests breakdown bench hard run}"
 
 say() { printf '\n== %s  %s\n' "$(date '+%F %T')" "$*"; }
 
@@ -64,13 +66,16 @@ if [ "${1:-}" = "--inside" ]; then
             bench)
                 "$py" validation/bench.py 65536 16384
                 ;;
+            hard)
+                "$py" validation/hard.py 16384 16384
+                ;;
             run)
                 # No SimSS in the container: jaxdd on the GPU and on this job's cores only.
                 "$py" benchmarks/run.py --label "$LABEL" --skip simss,accuracy \
                     --cpu-procs "$(nproc)"
                 ;;
             *)
-                echo "unknown step $step (info tests breakdown bench run)"
+                echo "unknown step $step (info tests breakdown bench hard run)"
                 ;;
         esac || echo "!! step $step failed (exit $?); going on"
     done
@@ -93,7 +98,7 @@ if pgrep -u "$(id -un)" -f "benchmarks/apptainer.sh --inside" >/dev/null; then
 fi
 if [ -n "${SLURM_JOB_ID:-}" ]; then
     echo "this job has $(squeue -h -j "$SLURM_JOB_ID" -o %L 2>/dev/null || echo '?') left" \
-         "(every step: about 15 min on an A100)"
+         "(every step: about 20 min on an A100)"
 fi
 
 # The host's LD_LIBRARY_PATH stays out, as do the image's CUDA compat libraries, which need a

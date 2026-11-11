@@ -75,22 +75,25 @@ What helps, cheapest first:
 1. **Sort devices into batches of similar difficulty.** Diffusion length, ion density and
    doping are known before solving; the hard devices (short diffusion length, many ions) then
    hold up only each other.
-2. **Two passes**, which `solve_batch` does itself: every device with at most `first_max_iter`
-   (6) Newton steps per voltage, then the devices with a voltage that missed it again,
+2. **Two passes**, which `solve_batch` does with `first_max_iter` (6, say): every device with
+   at most that many Newton steps per voltage, then the devices with a voltage that missed it again,
    together, with `max_iter` (60). The stragglers are padded to a power of two (repeating the
    last), so few shapes compile. A device solved in the first pass gets exactly the one-pass
    result (Poisson and Newton at the pre-bias are capped by `max_iter` in both passes); a
-   re-solved one gets its second pass, `iterations` included. `first_max_iter=None` solves in
-   one pass, and so does a call inside `jax.jit`, `jax.jvp` or `jax.vmap`: the second pass's
-   shape is the number of stragglers, known only once the first pass has run.
+   re-solved one gets its second pass, `iterations` included. One pass is the default, and a
+   call inside `jax.jit`, `jax.jvp` or `jax.vmap` always makes one: the second pass's shape is
+   the number of stragglers, known only once the first pass has run.
 
    Two passes are insurance against the device that does not converge: in one pass it makes
    the whole batch pay `max_iter` at its voltages, in two it costs the batch `first_max_iter`.
-   Where no device fails, one pass is a little faster. On the 16 384 devices above (batch 4096,
-   an RTX 4070 Ti SUPER) one pass took 35 s, two passes with limit 6 38 s and with 8 43 s; with
-   the residual still assembled row by row, where some devices failed, one pass took 143 s and
-   two passes with limit 6 89 s. An ordinary device takes 2–4 steps at every voltage, sometimes
-   5: 6 keeps a step's margin.
+   With the residual assembled row by row some devices did fail, and two passes paid: on the
+   16 384 devices above (batch 4096, an RTX 4070 Ti SUPER) one pass took 143 s, two with limit
+   6 89 s. Assembled by intervals none fails, and the insurance costs: the second pass solves a
+   few dozen devices over every voltage, a small batch that keeps a GPU barely busy and still
+   takes a good part of a full one's time. On `validation/hard.py` (16 384 devices) one pass ran
+   at 1725 curves/s on an A100-SXM4-80GB, two at 1338; on the A100-SXM4-40GB 1049 against 1005;
+   on the RTX 4070 Ti SUPER about even. Hence one pass by default; two (limit 6: an ordinary
+   device takes 2–4 steps, sometimes 5) for batches where devices fail.
 3. **Smaller batches.** The expected maximum over fewer lanes is lower. On an A100, batch 4096
    runs at about 88 % of the rate of 16384.
 

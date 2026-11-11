@@ -17,7 +17,9 @@ The last is what a J-V curve needs: the current settles before the potential's l
 
 from __future__ import annotations
 
+import contextlib
 import functools
+import warnings
 
 import jax
 import jax.numpy as jnp
@@ -350,19 +352,32 @@ def _stragglers(ok):
     return idx, np.concatenate([idx, np.full(padded - idx.size, idx[-1])])
 
 
+@contextlib.contextmanager
+def _quiet():
+    """Without the deprecation warning of Pallas's Triton backend, which the sweep kernel uses
+    (jaxdd.sweep, docs/solver.md) and which JAX gives when it compiles it: known, and noise to
+    a caller (one whose tests make warnings errors failed on it)."""
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", "The Pallas Triton backend is deprecated",
+                                DeprecationWarning)  # fmt: skip
+        yield
+
+
 def _traced(*trees) -> bool:
     return any(isinstance(leaf, jax.core.Tracer) for leaf in jax.tree_util.tree_leaves(trees))
 
 
-def solve_batch(batch, voltages, tol=1e-10, max_iter=60, first_max_iter=6,
+def solve_batch(batch, voltages, tol=1e-10, max_iter=60, first_max_iter=None,
                 bernoulli_name="exact", strict=False):  # fmt: skip
     """J-V curves of a batch (`prepare`) at `voltages`: `(J, converged, iterations)`, each
     batch × voltages, in the order of `voltages`.
 
     Each device's scan runs outwards from its pre-bias, up, then down (docs/solver.md); the
     steady state at a voltage does not depend on the way there.
-    Two passes (docs/batching.md): every device with at most `first_max_iter` Newton steps per
-    voltage, then the devices with a voltage that missed it again, together, with `max_iter`.
+    One pass by default. With `first_max_iter` (docs/batching.md), two: every device with at
+    most `first_max_iter` Newton steps per voltage, then the devices with a voltage that missed
+    it again, together, with `max_iter`, so that a device that does not converge costs the batch
+    `first_max_iter` steps at its voltages, not `max_iter`.
     A device that converges in the first pass gets the same result as with `max_iter` alone;
     a re-solved one returns its second pass, and its `iterations` are that pass's. With
     `first_max_iter` None (or not below `max_iter`) one pass; one pass too where `batch` or
@@ -370,7 +385,13 @@ def solve_batch(batch, voltages, tol=1e-10, max_iter=60, first_max_iter=6,
     which sets the second pass's shape, is known only once the first has run.
     `strict`: Newton only to `tol` (or the round-off floor) — no quadratic stop, no settled
     current; for checking the shortcuts, at about one more step per voltage."""
-    voltages = jnp.asarray(voltages, dtype=float)
+    with _quiet():
+        return _passes(batch, jnp.asarray(voltages, dtype=float), tol, max_iter, first_max_iter,
+                       bernoulli_name, strict)  # fmt: skip
+
+
+def _passes(batch, voltages, tol, max_iter, first_max_iter, bernoulli_name, strict):
+    """`solve_batch`'s one or two passes."""
     if first_max_iter is None or first_max_iter >= max_iter or _traced(batch, voltages):
         return _solve_batch(batch, voltages, tol, max_iter, max_iter, bernoulli_name, strict)
     J, ok, its = _solve_batch(

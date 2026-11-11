@@ -27,8 +27,11 @@ REPEATS = 5
 
 
 def timed(name, fn, *args):
-    out = fn(*args)
-    jax.block_until_ready(out)
+    # Twice before timing: the first call compiles, and a Pallas kernel's second call costs
+    # about half a second once more (Triton loads its module).
+    for _ in range(2):
+        out = fn(*args)
+        jax.block_until_ready(out)
     start = time.perf_counter()
     for _ in range(REPEATS):
         out = fn(*args)

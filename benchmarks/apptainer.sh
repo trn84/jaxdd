@@ -124,7 +124,7 @@ export APPTAINERENV_STEPS="$STEPS" APPTAINERENV_LABEL="$LABEL" APPTAINERENV_JAXD
 
 start=$(( $(stat -c %s "$LOG" 2>/dev/null || echo 0) + 1 ))
 {
-    say "start: steps $STEPS, label \"$LABEL\""
+    say "start: steps $STEPS, label \"$LABEL\", JAXDD_SWEEP ${JAXDD_SWEEP:-auto}"
     echo "jaxdd $COMMIT, image $SIF"
 } >> "$LOG"
 echo "starting the steps \"$STEPS\" in $SIF; log $LOG"

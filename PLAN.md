@@ -11,7 +11,8 @@ the handbook.
 The lockstep's tail is gone on the hardest grid known: on 16 384 devices of the 250 nm grid with
 ions no voltage takes more than 12 Newton steps and none fails ([docs/batching.md](docs/batching.md)),
 since the scan runs outwards from the pre-bias and the Jacobian is assembled by intervals
-([docs/solver.md](docs/solver.md)). On the RTX 4070 Ti SUPER those devices took 116 s with the
+([docs/solver.md](docs/solver.md)); `solve_batch` makes one pass by default again (two passes
+cost up to 29 % where nothing fails). On the RTX 4070 Ti SUPER those devices took 116 s with the
 Jacobian by rows (two passes, limit 25) and take 38 s now. On an A100-SXM4-40GB the benchmark
 runs at 2075 curves/s (batch 16 384); a Newton step of 16 384 devices there is 34 ms: the block
 sweep 21.2, the assembly 9.1, the current 2.4, the ion constraint 1.3

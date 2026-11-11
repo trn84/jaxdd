@@ -140,7 +140,7 @@ export STEPS LABEL CPU_PROCS
 
 start=$(( $(stat -c %s "$LOG" 2>/dev/null || echo 0) + 1 ))
 {
-    say "start: steps $STEPS, label \"$LABEL\", $CPU_PROCS CPU processes"
+    say "start: steps $STEPS, label \"$LABEL\", $CPU_PROCS CPU processes, JAXDD_SWEEP ${JAXDD_SWEEP:-auto}"
     echo "jaxdd $COMMIT"
 } >> "$LOG"
 echo "starting the steps \"$STEPS\"; log $LOG"

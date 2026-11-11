@@ -66,6 +66,25 @@ def test_grid_split_first_layer_on_a_whole_share() -> None:
     assert make_grid(("1e-07", "5e-07", "2e-07"), 400, 4.0, "exact")[3][0] == 50
 
 
+def test_a_setup_from_texts_builds_the_same_device() -> None:
+    """`setup_from_texts` (file names to texts, no files) gives the device `read_setup` gives;
+    a file the setup names but the mapping lacks is refused by name."""
+    import dataclasses
+
+    from jaxdd.simss_input import setup_from_texts
+
+    case = DATA / "frozen_1e17_x1_thin_light"
+    files = {f.name: f.read_text() for f in case.iterdir() if f.suffix == ".txt"}
+    a = build_device(read_setup(case / "simulation_setup.txt"))
+    b = build_device(setup_from_texts(files))
+    for field in dataclasses.fields(a):
+        assert np.array_equal(getattr(a, field.name), getattr(b, field.name)), field.name
+    profile = setup_from_texts(files).raw["genProfile"]
+    without = {k: v for k, v in files.items() if k != profile}
+    with pytest.raises(FileNotFoundError, match="genProfile"):
+        build_device(setup_from_texts(without))
+
+
 def test_jv_reproduces_simss() -> None:
     """The discrete equations are SimSS's: with its Bernoulli approximation, its curve to its
     own convergence tolerance at every voltage."""

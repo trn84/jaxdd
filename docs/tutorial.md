@@ -107,7 +107,23 @@ variant = Setup(raw=dict(base.raw), layers=tuple(Layer(r) for r in layers),
 dev = build_device(variant)
 ```
 
-Building a device is NumPy work on the host, about 25 ms. For very large sweeps build the next
+Without any files, give `setup_from_texts` the texts by file name, under the names the setup
+file uses (`l1`, `l2`, …, `genProfile`):
+
+```python
+from jaxdd.simss_input import setup_from_texts
+
+setup = setup_from_texts({
+    "simulation_setup.txt": setup_text,
+    "L1_parameters.txt": etl_text, "L2_parameters.txt": absorber_text,
+    "L3_parameters.txt": htl_text,
+    "generation_profile.txt": profile_text,
+})
+dev = build_device(setup)
+```
+
+Reading and building a device is NumPy work on the host, about 1.5 ms on one core of a desktop
+CPU; whatever writes the inputs usually costs more. For very large sweeps build the next
 batch's devices in worker processes while the solver runs on the current one.
 
 ## Comparing with SimSS

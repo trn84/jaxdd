@@ -19,9 +19,6 @@ Next:
 
 - The A100 at batch 16 384 with the new defaults: a chunk of the large grid took 64 s with the
   old scan and limit 25; the steps paid per voltage should fall from 12.9 to about 5.5.
-- (d) The host on smaller machines: writing and reading a device's input files costs ~90 ms
-  on one core. `read_setup` from a mapping of file names to texts, so that sweeps build devices
-  without files.
 - (e) The Jacobian by edges (each interval's flux and its derivatives once, not twice from both
   neighbouring rows) and in one `jacfwd` with the ion columns: estimated 1.5–2×. A Newton step
   of 16 384 devices on an A100 is 67 ms, 46 of it the Jacobian blocks and ion columns, 15 the

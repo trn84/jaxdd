@@ -4,20 +4,32 @@ The format is SIMsalabim's: one `name = value * comment` per line, `*` comments,
 for reading. Values are kept as strings here and converted where they are used, so that a
 parameter `jaxdd` does not implement can be named in an error instead of silently dropped
 (`check_supported`).
+
+The files come from a directory (`read_setup`) or from a mapping of file names to texts
+(`setup_from_texts`), for sweeps that build devices without writing files.
 """
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
-__all__ = ["Layer", "Setup", "check_supported", "read_parameter_file", "read_setup"]
+__all__ = [
+    "Layer",
+    "Setup",
+    "check_supported",
+    "parse_parameters",
+    "read_parameter_file",
+    "read_setup",
+    "setup_from_texts",
+]
 
 
-def read_parameter_file(path: Path) -> dict[str, str]:
-    """`{name: value}` of a SIMsalabim parameter file."""
+def parse_parameters(text: str) -> dict[str, str]:
+    """`{name: value}` of a SIMsalabim parameter file's text."""
     values: dict[str, str] = {}
-    for line in path.read_text().splitlines():
+    for line in text.splitlines():
         body = line.split("*", 1)[0].strip()
         if "=" not in body:
             continue
@@ -25,6 +37,11 @@ def read_parameter_file(path: Path) -> dict[str, str]:
         if name:
             values[name] = value
     return values
+
+
+def read_parameter_file(path: Path) -> dict[str, str]:
+    """`{name: value}` of a SIMsalabim parameter file."""
+    return parse_parameters(path.read_text())
 
 
 @dataclass(frozen=True)
@@ -42,11 +59,14 @@ class Layer:
 
 @dataclass(frozen=True)
 class Setup:
-    """`simulation_setup.txt` with its layers, in order from the left electrode."""
+    """`simulation_setup.txt` with its layers, in order from the left electrode. The files it
+    names (the generation profile) are read from `files`, file name to text, where given there,
+    else from `directory`."""
 
     raw: dict[str, str]
     layers: tuple[Layer, ...]
-    directory: Path
+    directory: Path | None = None
+    files: Mapping[str, str] | None = None
 
     def f(self, name: str) -> float:
         return float(self.raw[name])
@@ -54,19 +74,37 @@ class Setup:
     def i(self, name: str) -> int:
         return int(float(self.raw[name]))
 
-    def path(self, name: str) -> Path:
-        return self.directory / self.raw[name]
+    def text(self, name: str) -> str:
+        """The text of the file the parameter `name` names."""
+        file = self.raw[name]
+        if self.files is not None and file in self.files:
+            return self.files[file]
+        if self.directory is None:
+            raise FileNotFoundError(f"{name} = {file}: not among the setup's files")
+        return (self.directory / file).read_text()
+
+
+def _layers(raw: dict[str, str], read) -> tuple[Layer, ...]:
+    layers = []
+    k = 1
+    while f"l{k}" in raw:
+        layers.append(Layer(parse_parameters(read(raw[f"l{k}"]))))
+        k += 1
+    return tuple(layers)
 
 
 def read_setup(path: Path) -> Setup:
     """The setup file and every layer file `l1`, `l2`, … it names."""
     raw = read_parameter_file(path)
-    layers = []
-    k = 1
-    while f"l{k}" in raw:
-        layers.append(Layer(read_parameter_file(path.parent / raw[f"l{k}"])))
-        k += 1
-    return Setup(raw=raw, layers=tuple(layers), directory=path.parent)
+    layers = _layers(raw, lambda file: (path.parent / file).read_text())
+    return Setup(raw=raw, layers=layers, directory=path.parent)
+
+
+def setup_from_texts(files: Mapping[str, str], setup: str = "simulation_setup.txt") -> Setup:
+    """`read_setup` without files: `files` maps each file name (as the setup names it) to its
+    text, the setup file under `setup`."""
+    raw = parse_parameters(files[setup])
+    return Setup(raw=raw, layers=_layers(raw, lambda file: files[file]), files=dict(files))
 
 
 #: Stage A (docs/overview.md, "Scope"): the values a supported input must have. Ions are

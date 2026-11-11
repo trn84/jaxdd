@@ -7,6 +7,7 @@ solve the same discrete equations. Plain NumPy: built once per device, then hand
 
 from __future__ import annotations
 
+import io
 from collections.abc import Sequence
 from dataclasses import dataclass
 from fractions import Fraction
@@ -183,7 +184,7 @@ def _generation(setup: Setup, x: np.ndarray, lid: np.ndarray, layer_gen: np.ndar
     """SIMsalabim's `Init_Generation_Profile`, `Use_gen_profile` 2: the file's profile, its
     x-axis stretched to the device, interpolated linearly; zero where a layer does not
     generate and on any point the interpolation loop does not reach."""
-    table = np.loadtxt(setup.path("genProfile"), skiprows=1)
+    table = np.loadtxt(io.StringIO(setup.text("genProfile")), skiprows=1)
     a, gr = table[:, 0].copy(), table[:, 1]
     a *= total / a[-1]
     g = np.zeros_like(x)

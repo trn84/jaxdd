@@ -6,23 +6,23 @@ the handbook.
 
 ## 1 Open now
 
-### 1.2 Speed: the lockstep tail on real grids
+### 1.2 Speed: the Newton step
 
-Under `vmap` every voltage costs the batch's slowest device ([docs/batching.md](docs/batching.md)).
-The scan now runs outwards from the pre-bias and the first pass stops at 6 Newton steps
-([docs/solver.md](docs/solver.md), [docs/batching.md](docs/batching.md)); on the RTX 4070 Ti SUPER
-that took 16 384 devices of the 250 nm grid with ions from 116 s (two passes, limit 25) to 89 s.
-What is left of the tail is a few dozen devices with strong frozen charge above 0.7 V, which the
-second pass takes.
+The lockstep's tail is gone on the hardest grid known: on 16 384 devices of the 250 nm grid with
+ions no voltage takes more than 12 Newton steps and none fails ([docs/batching.md](docs/batching.md)),
+since the scan runs outwards from the pre-bias and the Jacobian is assembled by intervals
+([docs/solver.md](docs/solver.md)). On the RTX 4070 Ti SUPER those devices took 116 s with the
+Jacobian by rows (two passes, limit 25) and take 38 s now; a Newton step of 4096 devices is
+18 ms: the block sweep 7.6, the assembly 6.9, the current 2.2, the ion constraint 1.1
+(`validation/breakdown.py`).
 
 Next:
 
-- The A100 at batch 16 384 with the new defaults: a chunk of the large grid took 64 s with the
-  old scan and limit 25; the steps paid per voltage should fall from 12.9 to about 5.5.
-- (e) The Jacobian by edges (each interval's flux and its derivatives once, not twice from both
-  neighbouring rows) and in one `jacfwd` with the ion columns: estimated 1.5–2×. A Newton step
-  of 16 384 devices on an A100 is 67 ms, 46 of it the Jacobian blocks and ion columns, 15 the
-  sweep. With the tail gone this is the next lever.
+- The A100 at batch 16 384: the benchmark (`benchmarks/run.py`, `validation/breakdown.py`) and a
+  chunk of the large grid (64 s before). The curves per second in section 5 date from before.
+- The block sweep is now the largest part. It is sequential over the grid points and
+  bandwidth-bound; parallel cyclic reduction was slower (docs/solver.md). What is left there is
+  the fused kernel below.
 
 A fused kernel for the whole step stays the large lever (an estimated 15–30× from the A100's
 bandwidth). It is not needed for the steady state; decide it with Stage C (section 4) and after
@@ -100,12 +100,13 @@ not only on throughput.
 **Why.** Frozen at full accumulation, 1e18 cm⁻³ of ions pile up in nanometre layers at the
 interfaces at 1.5e21 cm⁻³, 1500 times their mean and close to the perovskite's lattice-site
 density (~1e22 cm⁻³). Boltzmann statistics let ions stack without limit; real vacancies cannot.
-The carrier-free bulk between such layers is what leaves the solver at its round-off floor, in
-SimSS as in jaxdd (the hard case in [docs/tutorial.md](docs/tutorial.md), "Known limits").
+The carrier-free bulk between such layers is where SimSS skips a third of the voltages (jaxdd
+converges there since its Jacobian is assembled by intervals; [docs/tutorial.md](docs/tutorial.md),
+"Known limits").
 
 **What.** The modified Poisson–Boltzmann (Bikerman) occupancy for the ions: saturation at a site
 density `N_max`, in the free steady state and so in the frozen profile. Physically the better
-model; it caps the peaks and removes the near-singular regime at its source. It departs from
+model; it caps the peaks. It departs from
 SimSS (to be documented in docs/differences.md, switchable, SimSS's Boltzmann the reproduction),
 and it changes what an ion density means at the high end, so results computed with and without
 it must not be mixed. `N_max` needs a source (a literature value for the halide vacancy site

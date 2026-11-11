@@ -63,10 +63,12 @@ paid   = iterations.max(axis=0).sum()       # what the batch paid
 On the benchmark devices (`validation/bench.py`) the ratio is about 1.4: 2.8 steps needed per
 voltage, 3.9 paid (2.77 and 3.95 on 2048 of them; unchanged by the clipped start of each
 voltage, [solver.md](solver.md), which is never active there). On a real parameter grid it can
-be much larger. On 16 384 devices of a grid with ions (every diffusion length, ion density
-and ion distribution; light and dark) the devices need 2.8 steps per voltage, and one pass at
-batch 16 384 pays 21: the few dozen devices with strong frozen charge take 15 to 60 steps at
-voltages above 0.7 V, and every device pays them there.
+be larger. On 16 384 devices of a grid with ions (250 nm absorber, every diffusion length, ion
+density and ion distribution; light and dark) the devices need 2.8 steps per voltage; the
+largest over the batch is 4 at most voltages and up to 12 above 0.7 V, so one pass pays about
+6.8 at batch 16 384 and 5.6 at 4096. Two things took that from 21.8: the scan outwards from
+the pre-bias (the first voltage had cost up to 28, [solver.md](solver.md)) and the Jacobian
+assembled by intervals (devices with strong frozen charge had taken up to 60).
 
 What helps, cheapest first:
 
@@ -81,12 +83,13 @@ What helps, cheapest first:
    re-solved one gets its second pass, `iterations` included. `first_max_iter=None` solves in
    one pass.
 
-   The limit works because each scan runs outwards from its pre-bias ([solver.md](solver.md)):
-   an ordinary device then takes 2–4 steps at every voltage and at most 8, and only the few
-   with strong frozen charge take more. On 16 384 devices of a grid with ions (250 nm absorber,
-   light and dark, batch 4096 on an RTX 4070 Ti SUPER) one pass took 143 s, two passes with
-   limit 25 took 116 s, with 6 89 s, with 5 84 s; 6 keeps a step's margin over the 5 steps
-   ordinary devices sometimes take.
+   Two passes are insurance against the device that does not converge: in one pass it makes
+   the whole batch pay `max_iter` at its voltages, in two it costs the batch `first_max_iter`.
+   Where no device fails, one pass is a little faster. On the 16 384 devices above (batch 4096,
+   an RTX 4070 Ti SUPER) one pass took 35 s, two passes with limit 6 38 s and with 8 43 s; with
+   the residual still assembled row by row, where some devices failed, one pass took 143 s and
+   two passes with limit 6 89 s. An ordinary device takes 2–4 steps at every voltage, sometimes
+   5: 6 keeps a step's margin.
 3. **Smaller batches.** The expected maximum over fewer lanes is lower. On an A100, batch 4096
    runs at about 88 % of the rate of 16384.
 

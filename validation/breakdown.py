@@ -5,8 +5,9 @@
 Each part of one Newton step of `jaxdd.batch` is jitted on its own over a batch of `bench.py`'s
 devices and timed after compilation: the residual, the Jacobian blocks and the ions' columns
 (autodiff of each row), the ions' constraint, the linear solve (sweep, three right-hand sides),
-the current, and the whole step. The part that dominates is the candidate for a kernel of its
-own (PLAN.md, section 1.2).
+and the current; the solver assembles the first three by edges (`_assemble`), and the
+autodiff of each row it replaced is timed beside it. The part that dominates is the candidate
+for a kernel of its own (PLAN.md, section 1.2).
 """
 
 import sys
@@ -17,7 +18,7 @@ import jax.numpy as jnp
 from bench import variants
 
 from jaxdd.batch import _bounds, _current, _initial, prepare
-from jaxdd.solver import BERNOULLI, _block_thomas, _ion_constraints, _kernels
+from jaxdd.solver import BERNOULLI, _assemble, _block_thomas, _ion_constraints, _kernels
 
 REPEATS = 5
 
@@ -56,6 +57,11 @@ def main(batch_size: int = 256) -> None:
         args = (full[:-2], full[1:-1], full[2:], d["s"], d["Vt"], d["g_frac"], logs[0], logs[1])
         return row_jac(*args), row_ions(*args)
 
+    def assembled(d):
+        full, logs = state(d)
+        return _assemble(full, d["s"], d["Vt"], d["g_frac"], logs[0], logs[1],
+                         BERNOULLI["exact"])  # fmt: skip
+
     def constraint(d):
         full, logs = state(d)
 
@@ -74,9 +80,10 @@ def main(batch_size: int = 256) -> None:
         full, _ = state(d)
         return _current(d, full, d["g_frac"])
 
+    timed("residual (rows, the reference)", jax.jit(jax.vmap(residual)), batch)
+    timed("blocks + ion columns (jacfwd, reference)", jax.jit(jax.vmap(jacobian)), batch)
     total = 0.0
-    total += timed("residual (rows)", jax.jit(jax.vmap(residual)), batch)
-    total += timed("Jacobian blocks + ion columns (jacfwd)", jax.jit(jax.vmap(jacobian)), batch)
+    total += timed("residual, blocks, ion columns (edges)", jax.jit(jax.vmap(assembled)), batch)
     total += timed("ion constraint (jacrev)", jax.jit(jax.vmap(constraint)), batch)
     total += timed("linear solve (block sweep)", jax.jit(jax.vmap(_block_thomas)), A, B, C, rhs)
     total += timed("current", jax.jit(jax.vmap(current)), batch)

@@ -226,6 +226,40 @@ def test_a_dark_scan_with_a_density_far_below_the_floor_converges() -> None:
     assert np.max(np.abs(J - ref["Jext"])) < 2e-5 * np.max(np.abs(ref["Jext"]))
 
 
+@pytest.mark.parametrize("bern", ["exact", "simss"])
+@pytest.mark.parametrize(
+    "case", ["thin_l1_light", "frozen_1e17_x1_thin_light", "steady_1e17_thin_light"]
+)
+def test_the_jacobian_by_edges_is_autodiff_of_the_rows(case: str, bern: str) -> None:
+    """`_assemble` (each interval's fluxes once, assembled by hand) gives `_kernels`' residual,
+    Jacobian blocks and ion columns (`jacfwd` of each row) to round-off, at a perturbed state
+    whose neighbouring potentials differ from nothing to many V_T, free ions included."""
+    from jaxdd import solver as S
+    from jaxdd.solver import BERNOULLI, _assemble, _ion_setup, _kernels, _stencils
+
+    dev = build_device(read_setup(DATA / case / "simulation_setup.txt"))
+    s = {k: jnp.asarray(v) for k, v in _stencils(dev).items()}
+    rng = np.random.default_rng(1)
+    y0 = S._initial(dev, 0.3)
+    NP = len(dev.x) - 2
+    noise = np.zeros_like(y0)
+    noise[1:-1] = rng.normal(0, 1, (NP, 3)) * np.array([5 * dev.Vt, 2.0, 2.0])
+    noise[1:-1:7, 0] = 0.0  # some neighbours at exactly equal potential: B's series
+    full = jnp.asarray(y0 + noise)
+    la, lc = S._ion_logs(full[:, 0], {k: jnp.asarray(v) if isinstance(v, np.ndarray) else v
+                                      for k, v in _ion_setup(dev).items()})  # fmt: skip
+    B = BERNOULLI[bern]
+    row_val, row_jac, row_ions = _kernels(B)
+    args = (full[:-2], full[1:-1], full[2:], s, dev.Vt, dev.G_frac, la, lc)
+    ref = (row_val(*args), *row_jac(*args), jnp.stack(row_ions(*args), -1))
+    got = _assemble(full, s, dev.Vt, dev.G_frac, la, lc, B)
+    for name, r, g in zip(("F", "A", "B", "C", "U"), ref, got, strict=True):
+        r, g = np.asarray(r), np.asarray(g)
+        assert r.shape == g.shape, name
+        scale = np.max(np.abs(r), axis=tuple(range(1, r.ndim)), keepdims=True)
+        assert np.max(np.abs(r - g) / np.maximum(scale, 1e-300)) < 1e-11, name
+
+
 def test_the_block_sweep_solves_the_block_tridiagonal_system() -> None:
     """Invariant: the sweep gives the dense solve's solution to round-off, with several
     right-hand sides."""

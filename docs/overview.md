@@ -88,7 +88,7 @@ and offers a switch that reproduces SimSS's number. Each such case is in
 | Language | JAX (Python) | batching by `vmap`, the Jacobian by automatic differentiation, CPU and GPU from one code, gradients available later; Python, where most sweeps and fits are written |
 | Unknowns | `(V, ln n, ln p)` per grid point | densities never go negative, the 20 orders of magnitude live in the logarithm; Scharfetter–Gummel stays in `n`, `p` |
 | Nonlinear solver | coupled Newton | few steps per voltage, robust at high injection; a Gummel scheme needs many more iterations and does not batch better |
-| Jacobian | `jax.jacfwd` of one grid point's residual in its three neighbours | exact 3×3 blocks with no hand-derived Scharfetter–Gummel derivatives; never the dense Jacobian of the whole device |
+| Jacobian | by intervals: each Scharfetter–Gummel flux and its derivatives once (`B'` by `jax.jvp`), each point's 3×3 blocks from its two intervals; tested against `jax.jacfwd` of one point's residual | 4× faster than autodiff of each point, and no round-off floor where frozen ions leave a carrier-free bulk; never the dense Jacobian of the whole device |
 | Linear solver | block Thomas sweep (`lax.scan`) | the system is block tridiagonal; parallel cyclic reduction was built and measured slower on every machine and batch size |
 | Input | SIMsalabim's parameter files | every SimSS user's sweep runs unchanged; a Python API of pytrees beside it |
 | Scope | general structure, physics in stages | anyone who sweeps SimSS can use it; each stage of physics validated against SimSS before the next |

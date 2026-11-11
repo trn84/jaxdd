@@ -16,8 +16,9 @@ solution is SIMsalabim's to its tolerance:
 What differs is only how they are solved: SIMsalabim iterates Poisson and the two continuity
 equations in turn (Gummel); here all three are solved at once, Newton's method on the
 unknowns `(V, ln n, ln p)` at every interior point. The Jacobian is block-tridiagonal with
-3×3 blocks; each row's three blocks come from `jax.jacfwd` of that row's residual in its
-three neighbours (docs/solver.md), and the system is solved by a block Thomas sweep.
+3×3 blocks, assembled from each interval's fluxes and their derivatives (`_assemble`; `_row`
+and `jax.jacfwd` of it are the reference it is tested against, docs/solver.md), and the
+system is solved by a block Thomas sweep.
 """
 
 from __future__ import annotations
@@ -195,6 +196,79 @@ def _kernels(B):
     )
 
 
+def _assemble(full, s, Vt, g_frac, la, lc, B=bernoulli):
+    """`_row`'s residual (NP × 3), Jacobian blocks `A, B, C` (NP × 3 × 3, in the left, own and
+    right point's unknowns) and ion columns (NP × 3 × 2) for every interior point at once,
+    from `full` (NP + 2 × 3, contacts included).
+
+    By edges: each interval's Scharfetter–Gummel fluxes and their derivatives are computed
+    once, `B` and `B'` in one forward pass, and each row takes its two intervals' (autodiff of
+    each row in its three neighbours evaluated every flux twice, and the residual a third
+    time; docs/solver.md). Equal to `_kernels` to round-off (tests).
+    """
+    V, ln_n, ln_p = full[:, 0], full[:, 1], full[:, 2]
+    n, p = jnp.exp(ln_n), jnp.exp(ln_p)
+    # Per edge e = 0 … NP, between points e and e + 1.
+    offn = jnp.concatenate([s["offn"][:, 0], s["offn"][-1, 1:]])
+    offp = jnp.concatenate([s["offp"][:, 0], s["offp"][-1, 1:]])
+    cn = Vt * jnp.concatenate([s["mun_m"], s["mun_p"][-1:]])
+    cp = Vt * jnp.concatenate([s["mup_m"], s["mup_p"][-1:]])
+    xn = jnp.diff(V + offn) / Vt
+    xp = jnp.diff(V + offp) / Vt
+    args = jnp.concatenate([xn, -xn, xp, -xp])
+    Bv, dB = jax.jvp(B, (args,), (jnp.ones_like(args),))
+    Bn_f, Bn_b, Bp_f, Bp_b = jnp.split(Bv, 4)
+    dBn_f, dBn_b, dBp_f, dBp_b = jnp.split(dB, 4)
+    n0, n1, p0, p1 = n[:-1], n[1:], p[:-1], p[1:]
+    zero = jnp.zeros_like(xn)
+    # Electrons: Fn = cn·(B(x)·n₁ − B(−x)·n₀); holes: Fp = cp·(B(x)·p₀ − B(−x)·p₁).
+    Fn = cn * (Bn_f * n1 - Bn_b * n0)
+    gn = cn * (dBn_f * n1 + dBn_b * n0) / Vt
+    dFn0 = jnp.stack([-gn, -cn * Bn_b * n0, zero], -1)
+    dFn1 = jnp.stack([gn, cn * Bn_f * n1, zero], -1)
+    Fp = cp * (Bp_f * p0 - Bp_b * p1)
+    gp = cp * (dBp_f * p0 + dBp_b * p1) / Vt
+    dFp0 = jnp.stack([-gp, zero, cp * Bp_f * p0], -1)
+    dFp1 = jnp.stack([gp, zero, -cp * Bp_b * p1], -1)
+
+    # Per interior point i = 1 … NP: its left edge i − 1 ([:-1]) and right edge i ([1:]).
+    Vm, nm, pm = V[1:-1], n[1:-1], p[1:-1]
+    hm, hp, fac = s["hm"][:, None], s["hp"][:, None], s["fac"]
+    R, dR_n = jax.jvp(lambda a: _recombination(a, pm, s), (nm,), (nm,))
+    _, dR_p = jax.jvp(lambda b: _recombination(nm, b, s), (pm,), (pm,))
+    net = s["G"] * g_frac - R
+    zm = jnp.zeros_like(Vm)
+    dnet = jnp.stack([zm, -dR_n, -dR_p], -1)
+    elec = hm[:, 0] * Fn[1:] - hp[:, 0] * Fn[:-1] + fac * net
+    hole = hp[:, 0] * Fp[:-1] - hm[:, 0] * Fp[1:] + fac * net
+    anion = s["a_mask"] * jnp.exp(la + Vm / Vt)
+    cation = s["c_mask"] * jnp.exp(lc - Vm / Vt)
+    poisson = (
+        s["fac_l"] * V[:-2]
+        + s["fac_m"] * Vm
+        + s["fac_u"] * V[2:]
+        - Q * (nm - pm + s["dop"] + s["a_fix"] + anion - s["c_fix"] - cation)
+    )
+
+    P_A = jnp.stack([s["fac_l"], zm, zm], -1)
+    P_C = jnp.stack([s["fac_u"], zm, zm], -1)
+    P_B = jnp.stack([s["fac_m"] - Q * (anion + cation) / Vt, -Q * nm, Q * pm], -1)
+    sP, sC = s["sP"][:, None], s["sC"][:, None]
+    A = jnp.stack([P_A * sP, -hp * dFn0[:-1] * sC, hp * dFp0[:-1] * sC], -2)
+    Bb = jnp.stack([
+        P_B * sP,
+        (-hp * dFn1[:-1] + hm * dFn0[1:] + fac[:, None] * dnet) * sC,
+        (hp * dFp1[:-1] - hm * dFp0[1:] + fac[:, None] * dnet) * sC,
+    ], -2)  # fmt: skip
+    C = jnp.stack([P_C * sP, hm * dFn1[1:] * sC, -hm * dFp1[1:] * sC], -2)
+    F = jnp.stack([poisson * s["sP"], elec * s["sC"], hole * s["sC"]], -1)
+    U = jnp.stack([
+        jnp.stack([-Q * anion * s["sP"], zm, zm], -1),
+        jnp.stack([Q * cation * s["sP"], zm, zm], -1),
+    ], -1)  # fmt: skip
+    return F, A, Bb, C, U
+
+
 def _ion_constraints(V_full, la, lc, ion):
     """`(g_a, g_c)`: each mobile species' number over its total, less 1 (trapezoidal over its
     region, as SIMsalabim's `Rescale_Ion_Density`); 0 for a species without one."""
@@ -279,13 +353,9 @@ def _newton_step(y, logs, bounds, s, ion, Vt, g_frac, bernoulli_name="exact"):
     solved by the block Thomas sweep on three right-hand sides and a 2×2 Schur complement
     (Sherman–Morrison–Woodbury, docs/solver.md).
     """
-    row_val, row_jac, row_ions = _kernels(BERNOULLI[bernoulli_name])
     la, lc = logs[0], logs[1]
     full = jnp.concatenate([bounds[0][None], y, bounds[1][None]])
-    left, mid, right = full[:-2], full[1:-1], full[2:]
-    F = row_val(left, mid, right, s, Vt, g_frac, la, lc)
-    A, B, C = row_jac(left, mid, right, s, Vt, g_frac, la, lc)
-    U = jnp.stack(row_ions(left, mid, right, s, Vt, g_frac, la, lc), axis=-1)  # NP × 3 × 2
+    F, A, B, C, U = _assemble(full, s, Vt, g_frac, la, lc, BERNOULLI[bernoulli_name])
 
     def constraints(V_interior, logs_):
         V_full = jnp.concatenate([bounds[0][:1], V_interior, bounds[1][:1]])
@@ -471,8 +541,7 @@ def solve_jv(dev: Device, voltages: np.ndarray, g_frac: float | None = None,
 
     def settle(y, logs, s, ion, Vint):
         """Newton to `tol`, or to the round-off floor: a step below `ROUND_OFF_FLOOR` that has
-        stopped falling for `STALL_STEPS` iterations (strong frozen charge leaves the potential
-        a few 1e-8 V_T of noise)."""
+        stopped falling for `STALL_STEPS` iterations."""
         bounds = bounds_at(Vint)
         sizes: list[float] = []
         while len(sizes) < max_iter:

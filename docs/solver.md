@@ -112,9 +112,9 @@ ions that first voltage took 11.5 Newton steps on average and up to 28, and 11 4
 took 10 or more there. Under `vmap` every device pays the slowest one's steps at every voltage
 ([batching.md](batching.md)), so that one voltage set the first pass's limit. Outwards from
 `V_pre`, each direction's first voltage is at most one voltage step away: on the same devices it
-takes at most 4 steps, and 31 devices take 10 or more anywhere (above 0.7 V, most of them dark
-with ions frozen at full accumulation: the strong frozen charge of [tutorial.md](tutorial.md),
-"Known limits"). The curves agree with the upward scan's to 8e-6 of the generation current, within the
+takes at most 4 steps, and no voltage takes more than 12 (9 devices take 10 or more, above
+0.7 V; with the Jacobian assembled by intervals, [below](#the-residual-and-the-jacobian-by-intervals)).
+The curves agree with the upward scan's to 8e-6 of the generation current, within the
 settled-current stop.
 
 **Why the extrapolated change is clipped.** Convergence weighs out a density far below anything
@@ -152,12 +152,11 @@ One step solves the linearised system for a correction of every unknown at once.
 
 ```mermaid
 flowchart TD
-    A["y, logs at the current voltage"] --> B["residual F per interior point<br/>3 equations from 3 neighbours"]
-    A --> C["Jacobian blocks A, B, C per point<br/>jax.jacfwd of the point's residual"]
-    A --> D["ion columns U<br/>jax.jacfwd in ln C_a, ln C_c"]
+    A["y, logs at the current voltage"] --> B["fluxes per interval and their derivatives<br/>B and B' in one forward pass"]
+    B --> C["residual F, Jacobian blocks A, B, C<br/>each point from its two intervals"]
+    A --> D["ion columns U<br/>Poisson's ion terms"]
     A --> E["ion constraints g and their row W, D<br/>jax.jacrev (2 outputs)"]
-    B --> F["block Thomas sweep<br/>3 right-hand sides: −F and the 2 ion columns"]
-    C --> F
+    C --> F["block Thomas sweep<br/>3 right-hand sides: −F and the 2 ion columns"]
     D --> F
     F --> G["2×2 Schur complement<br/>→ correction of the ion scalars"]
     E --> G
@@ -169,24 +168,48 @@ flowchart TD
     K -- "yes" --> L["solution at this voltage"]
 ```
 
-### The residual, one point at a time
+### The residual and the Jacobian, by intervals
 
-`solver._row` computes the three residuals of point `i` (Poisson, electron continuity, hole
-continuity) from `y` at `i − 1`, `i`, `i + 1` and the two ion scalars. Each row is scaled by the
-size of its terms (Poisson by `1/(q·N_c)`, continuity by `1/(μ_max·V_T·N_c·h)`), which keeps the
-3×3 blocks well conditioned. `jax.vmap` over the points gives the whole residual `F`.
+Each point has three residuals: Poisson, electron continuity, hole continuity. Poisson's
+involves only the point and its neighbours' potentials. A continuity residual is the
+difference of the Scharfetter–Gummel fluxes through the point's two intervals, plus generation
+less recombination at the point:
 
-### The Jacobian by automatic differentiation
+```text
+Fn[e] = μn[e]·V_T·( B(x)·n[e+1] − B(−x)·n[e] ),   x = (Vgn[e+1] − Vgn[e]) / V_T
+Fp[e] = μp[e]·V_T·( B(x)·p[e] − B(−x)·p[e+1] ),   x = (Vgp[e+1] − Vgp[e]) / V_T
+elec[i] = h[i−1]·Fn[i] − h[i]·Fn[i−1] + fac[i]·(G − R)[i]       (holes alike, signs turned)
+```
 
-The derivative of `_row` with respect to its three neighbour arguments, `jax.jacfwd(_row,
-argnums=(0, 1, 2))`, is exactly the row's three 3×3 blocks of the block-tridiagonal Jacobian:
-`A[i]` (in `y[i−1]`), `B[i]` (in `y[i]`), `C[i]` (in `y[i+1]`). There are no hand-derived
-Scharfetter–Gummel derivatives, the error-prone part of every drift-diffusion code, and no
-dense Jacobian of the device (1200×1200, 11.5 MB per device) is ever formed: three forward
-passes per point instead.
+A flux depends only on the six unknowns at its interval's ends. `solver._assemble` computes
+every interval's fluxes and their derivatives once (`B` and `B'` in one forward pass,
+`jax.jvp`, for the exact `B` as for SimSS's piecewise one), and each point takes its two
+intervals': the residual `F` and the three 3×3 blocks of the block-tridiagonal Jacobian, `A[i]`
+(in `y[i−1]`), `B[i]` (in `y[i]`), `C[i]` (in `y[i+1]`). Recombination's derivatives come from
+`jax.jvp` as well. Each row is scaled by the size of its terms (Poisson by `1/(q·N_c)`,
+continuity by `1/(μ_max·V_T·N_c·h)`), which keeps the blocks well conditioned. No dense
+Jacobian of the device (1200×1200, 11.5 MB per device) is ever formed.
 
-The ion scalars enter every Poisson row of their layer: `jax.jacfwd` in `ln C_a`, `ln C_c` gives
-two extra columns `U` (NP × 3 × 2). The two constraints, "each free species holds its number of
+The reference is `solver._row`, the three residuals of one point from its three neighbours as
+SIMsalabim writes them, and `jax.jacfwd` of it in its three neighbour arguments: `_assemble`
+equals it to 1e-11 (tests). It was the solver's assembly before; two things replaced it.
+
+- **Speed.** The row form evaluated every flux twice, once from each neighbouring row, in each
+  of its nine forward passes, and the residual a third time. By intervals, a Newton step of
+  4096 devices on an RTX 4070 Ti SUPER takes 18 ms instead of 73 (the assembly 7 instead of
+  61; `validation/breakdown.py`).
+- **Round-off.** The row form sums `lo·n[i−1] + m·n[i] + up·n[i+1]`, with `m` holding both
+  intervals' terms. Where frozen ions at high density leave a carrier-free bulk under a strong
+  field, those terms are many orders larger than their sum, and the residual kept a round-off
+  that Newton could not get below: the potential kept a few 1e-5 `V_T` of noise there, voltages
+  converged only by the settled current or not at all (in the dark, above about 0.8 V). As a
+  difference of the two intervals' fluxes the residual has no such floor: on the hardest
+  devices known (1e18 cm⁻³ frozen at full accumulation, `L_diff/d` 0.2) Newton without
+  shortcuts reaches its 1e-10 step at every voltage, in about 5 steps, where the row form
+  stalled at a third to a half of the voltages.
+
+The ion scalars enter every Poisson row of their layer, through the Boltzmann densities
+`exp(ln C ± V/V_T)`: two extra columns `U` (NP × 3 × 2), assembled with the rest. The two constraints, "each free species holds its number of
 ions", depend on the potential at every point of its layer; their derivatives (two rows `W` and
 a 2×2 corner `D`) come from `jax.jacrev`, two reverse passes for two outputs. (Forward mode
 there would take `NP` passes; it once cost 90 % of a Newton step.)
@@ -259,13 +282,16 @@ these holds:
 | settled current | step < 1e-3 and the terminal current unchanged to 1e-5 of the current scale over the last four steps | `solve_batch` unless `strict` |
 
 The first two are what the one-device `solve_jv` uses. The last two are the batched solver's
-shortcuts: together they save about a quarter of the Newton steps. Checked against `strict=True`
-on some 2000 devices of a perovskite parameter table and the ion cases, they change `J` by at most 1.8e-6 of
-the generation current, in the median by 2e-10 (`validation/shortcuts.py`).
+shortcuts: together they save about a quarter of the Newton steps (2.60 per voltage instead
+of 3.51). Checked against `strict=True` on 2014 devices of a perovskite parameter table and the
+ion cases, they change `J` by at most 1.2e-10 of the generation current, in the median by 4e-12
+(`validation/shortcuts.py`).
 
-The settled current is what a J-V curve needs where the potential cannot converge further:
-frozen ions at high density leave a carrier-free bulk in which the potential keeps a few 1e-5
-`V_T` of round-off noise; the current has settled long before.
+The settled current stops a voltage whose current no longer changes while the potential's last
+digits still do. With the row form of the residual it was what let the carrier-free bulk of
+strong frozen charge converge at all ([above](#the-residual-and-the-jacobian-by-intervals));
+assembled by intervals, every known device converges to `tol` without it, and it is a shortcut
+like the quadratic stop.
 
 A voltage that reaches `max_iter` without any of these is returned as it is, **flagged**
 `converged = False`. jaxdd never stops early silently, and it never drops a voltage. The next

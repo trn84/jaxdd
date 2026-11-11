@@ -46,11 +46,14 @@ so that the solver is never the larger error in what is computed from it.
 - **jaxdd's own failures on that grid**, with its transport layers extended to 1 µm (4.7 M
   devices): every curve with an unconverged voltage (2260) solved again with the clipped scan
   start ([solver.md](solver.md)) kept 5019 of its 45 051, under 2e-5 of all voltages, each
-  flagged; where both runs converged the curves agree to 4e-5 in `η`. The rest are all in the dark, from 0.775 V up, with ions frozen at full
-  accumulation and at least 5e17 cm⁻³ on the device: single voltages scattered through the
-  scan, the strong frozen charge of [tutorial.md](tutorial.md), "Known limits".
+  flagged; where both runs converged the curves agree to 4e-5 in `η`. The rest were all in the
+  dark, from 0.775 V up, with ions frozen at full accumulation and at least 5e17 cm⁻³ on the
+  device: the round-off floor of the residual assembled row by row. Assembled by intervals
+  ([solver.md](solver.md)), a sample of 16 384 devices of the 250 nm grid (light and dark) has
+  no unconverged voltage, the six hardest converge without the shortcuts too, and the curves
+  agree with the row form's to 9e-6 of the generation current where both converged.
 - **The batched solver** matches the one-device solver to 1e-10, and its shortcuts change `J` by
-  at most 1.8e-6 of the generation current ([solver.md](solver.md)).
+  at most 1.2e-10 of the generation current ([solver.md](solver.md)).
 
 When jaxdd and SimSS disagree, check SimSS first: its `errJ` at that voltage, its log for "No
 convergence", and a rerun at tight tolerances. The cases where SimSS was wrong so far are all in

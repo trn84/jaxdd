@@ -11,8 +11,8 @@ iteration cap bounds the rest.
 Convergence, per device and voltage: the Newton step below `tol`; or the round-off floor (a step
 below `ROUND_OFF_FLOOR` that has stopped falling); or the current settled — unchanged to
 `CURRENT_TOL` of its scale over `STALL_STEPS` steps while the step is below `CURRENT_STEP_CAP`.
-The last is what a J-V curve needs: where strong frozen charge leaves the potential a few 1e-5
-`V_T` of noise in a carrier-free bulk, the current is settled long before (docs/solver.md).
+The last is what a J-V curve needs: the current settles before the potential's last digits
+(docs/solver.md).
 """
 
 from __future__ import annotations
@@ -31,11 +31,11 @@ from jaxdd.solver import (
     ROUND_OFF_FLOOR,
     STALL_STEPS,
     STEP_CAPS,
+    _assemble,
     _block_thomas,
     _ion_constraints,
     _ion_logs,
     _ion_setup,
-    _kernels,
     _poisson_jac,
     _poisson_val,
     _recombination,
@@ -46,8 +46,7 @@ from jaxdd.solver import (
 __all__ = ["prepare", "solve_batch"]
 
 #: The current settled: unchanged to this share of its scale (the generation's current plus
-#: its own size) over `STALL_STEPS` Newton steps. The noise strong frozen charge leaves is up to
-#: 3e-6 of the scale (1e18 cm⁻³ frozen at x_ion 1, l 0.2); SimSS's own errJ is larger.
+#: its own size) over `STALL_STEPS` Newton steps; SimSS's own errJ is larger.
 CURRENT_TOL = 1e-5
 #: ... while the Newton step is already below this (V_T, relative densities).
 CURRENT_STEP_CAP = 1e-3
@@ -169,17 +168,13 @@ def _poisson_solve(y, d, s, ion, Vint, max_iter):
 
 def _newton_solve(y, logs, d, s, ion, Vint, g_frac, B, tol, max_iter, strict=False):
     """Newton at one voltage until converged (module docstring) or `max_iter`."""
-    row_val, row_jac, row_ions = _kernels(B)
     bounds = _bounds(d, Vint)
     Vt = d["Vt"]
 
     def step(y, logs):
         la, lc = logs[0], logs[1]
         full = jnp.concatenate([bounds[0][None], y, bounds[1][None]])
-        left, mid, right = full[:-2], full[1:-1], full[2:]
-        F = row_val(left, mid, right, s, Vt, g_frac, la, lc)
-        A, Bb, C = row_jac(left, mid, right, s, Vt, g_frac, la, lc)
-        U = jnp.stack(row_ions(left, mid, right, s, Vt, g_frac, la, lc), axis=-1)
+        F, A, Bb, C, U = _assemble(full, s, Vt, g_frac, la, lc, B)
 
         def constraints(V_interior, logs_):
             V_full = jnp.concatenate([bounds[0][:1], V_interior, bounds[1][:1]])

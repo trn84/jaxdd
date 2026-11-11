@@ -142,12 +142,11 @@ with the exact Bernoulli function. Larger gaps are usually SimSS's: rerun SimSS 
 ## Known limits
 
 - **Strong frozen charge.** At 1e18 cm⁻³ of ions frozen at full accumulation (thin absorber,
-  `L_diff/d` 0.2), the ions pile up in nanometre layers and leave a carrier-free bulk between
-  them. There the potential keeps a few 1e-5 `V_T` of round-off noise; the batched solver
-  converges by the settled current (noise at most 3e-6 of the scale). SimSS skips a third of
-  those voltages. In the dark, from about 0.8 V up, with ions frozen at full accumulation and
-  5e17 cm⁻³ or more on the device, single voltages can still end unconverged (flagged): on a
-  large parameter grid under 2e-5 of all voltages ([validation.md](validation.md)).
+  `L_diff/d` 0.2), the ions pile up in nanometre layers at 1500 times their mean density and
+  leave a carrier-free bulk between them. jaxdd converges there at every voltage (since its
+  Jacobian is assembled by intervals, [solver.md](solver.md)); SimSS skips a third of those
+  voltages. Whether such a profile is physical is another question: Boltzmann statistics let
+  ions stack without limit ([PLAN.md](../PLAN.md), section 3).
 - **`fixIons` without `preCond`** is refused: SimSS would hold the ions at their initial uniform
   density, which is rarely meant.
 - **One grid size per batch**, and the grid is SIMsalabim's; no adaptive mesh yet

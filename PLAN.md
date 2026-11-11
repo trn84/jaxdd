@@ -12,20 +12,20 @@ The lockstep's tail is gone on the hardest grid known: on 16 384 devices of the 
 ions no voltage takes more than 12 Newton steps and none fails ([docs/batching.md](docs/batching.md)),
 since the scan runs outwards from the pre-bias and the Jacobian is assembled by intervals
 ([docs/solver.md](docs/solver.md)). On the RTX 4070 Ti SUPER those devices took 116 s with the
-Jacobian by rows (two passes, limit 25) and take 38 s now; a Newton step of 4096 devices is
-18 ms: the block sweep 7.6, the assembly 6.9, the current 2.2, the ion constraint 1.1
+Jacobian by rows (two passes, limit 25) and take 38 s now. On an A100-SXM4-40GB the benchmark
+runs at 2075 curves/s (batch 16 384); a Newton step of 16 384 devices there is 34 ms: the block
+sweep 21.2, the assembly 9.1, the current 2.4, the ion constraint 1.3
 (`validation/breakdown.py`).
 
 Next:
 
-- The A100 at batch 16 384: the benchmark (`benchmarks/run.py`, `validation/breakdown.py`) and a
-  chunk of the large grid (64 s before). The curves per second in section 5 date from before.
+- A chunk of the large grid on the A100 (64 s before, on the 80 GB PCIe card).
 - The block sweep is now the largest part. It is sequential over the grid points and
   bandwidth-bound; parallel cyclic reduction was slower (docs/solver.md). What is left there is
   the fused kernel below.
 
-A fused kernel for the whole step stays the large lever (an estimated 15–30× from the A100's
-bandwidth). It is not needed for the steady state; decide it with Stage C (section 4) and after
+A fused kernel for the whole step stays the large lever (from the A100's bandwidth an estimated
+10⁴–3·10⁴ curves/s, 5–15× today's). It is not needed for the steady state; decide it with Stage C (section 4) and after
 M7 (section 2).
 
 ### 1.3 M8: the MI50 cards
@@ -135,10 +135,10 @@ gradients; each says how much speed it needs.
 
 | | Curves/s | Per hour | 1024 curves |
 |---|---|---|---|
-| A100 today (batch 16 384) | ~1200 | 4.3 M | 0.85 s |
+| A100 today (40 GB SXM4, batch 16 384) | ~2100 | 7.5 M | 0.49 s |
 | A100 with a fused kernel (estimate, uncertain by 3×) | 10⁴–3·10⁴ | 36–110 M | 35–100 ms |
-| a 16-core desktop CPU today | ~360 | 1.3 M | 2.9 s |
-| one CPU core today | ~20 | 72 k | 50 s |
+| a 16-core desktop CPU today | ~680 | 2.4 M | 1.5 s |
+| one CPU core today | ~58 | 210 k | 18 s |
 | a neural surrogate, evaluated | ~10⁶ | — | ~1 ms |
 
 1. **A surrogate trained on data simulated during training.** Simulator and network are both
@@ -149,12 +149,12 @@ gradients; each says how much speed it needs.
    recipes, layer stacks with many parameters).
    Training must mask by the `converged` flag, and active learning steers towards the hard
    devices, which the lockstep makes slow. For a fixed dataset today's speed is enough: 10 M
-   curves in about 2.3 h on one A100.
+   curves in about 1.3 h on one A100.
 2. **Parameters from measurements, with uncertainty.** MCMC needs 10⁵–10⁶ simulations per cell,
-   1.4–14 min on one A100. Ensemble samplers and sequential Monte Carlo map onto the batch;
+   0.8–8 min on one A100. Ensemble samplers and sequential Monte Carlo map onto the batch;
    gradient-based samplers and optimisers need M7.
 3. **Sensitivity analysis and uncertainty propagation.** Sobol indices by Saltelli sampling
-   (N·(d+2) simulations: 1.8·10⁵ for N = 10⁴, d = 16, under 3 min) and Monte Carlo over process
+   (N·(d+2) simulations: 1.8·10⁵ for N = 10⁴, d = 16, under 1.5 min) and Monte Carlo over process
    spread: independent devices, exactly the batch.
 4. **Inverse design.** Optimise a stack for efficiency or stability, by gradient (M7), from many
    starting points in parallel.

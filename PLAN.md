@@ -23,7 +23,8 @@ Next:
 - The block sweep as one Pallas kernel (`jaxdd.sweep`, docs/solver.md), against the scan's
   ~1450 kernel launches per sweep: on the RTX 4070 Ti SUPER the sweep 17.5 ms instead of 30 at
   batch 16 384, the benchmark +8 %. To measure on the A100, where the launches weigh more
-  (`STEPS="breakdown bench hard" benchmarks/apptainer.sh`), and to keep only if it pays there.
+  (`STEPS="breakdown bench hard" benchmarks/apptainer.sh`; on a pod `benchmarks/runpod.sh`,
+  whose `scan` step runs the scan on the same card), and to keep only if it pays there.
   It uses Pallas's Triton backend, deprecated in JAX 0.12 (the scan runs where it is gone);
   its successor, Mosaic GPU, targets Hopper.
 

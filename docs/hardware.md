@@ -47,16 +47,29 @@ for development and for checking that everything runs on a GPU.
 
 ### A cloud A100
 
-Any CUDA 12 image with Python ≥ 3.11:
+On a GPU pod (RunPod or alike: any image with an NVIDIA driver, `git` and `curl`; the image's
+Python does not matter) `benchmarks/runpod.sh` does everything. It installs uv if missing, makes
+`.venv` with Python 3.12 and current `jax[cuda12]` on the first start, and runs the tests,
+`breakdown.py`, `bench.py` (with the Pallas sweep and again with the scan), `hard.py` and
+`benchmarks/run.py` in the background, logging to `benchmarks/runpod.log`:
 
 ```bash
-git clone https://github.com/trn84/jaxdd.git && cd jaxdd
-python3 -m venv .venv && .venv/bin/pip install -q --upgrade pip
-.venv/bin/pip install -q -e ".[dev]" "jax[cuda12]"
+cd /workspace && git clone https://github.com/trn84/jaxdd.git && cd jaxdd   # /workspace survives a stop
+benchmarks/runpod.sh                     # about 25 min on an A100; STEPS="bench scan" for a part
+tail -F benchmarks/runpod.log            # to follow it again after Ctrl+C or a new terminal
+```
+
+A closed web terminal does not stop it. The CPU part of `run.py` gets the cores the pod's
+cgroup grants (`CPU_PROCS` to override): a pod sees all of its host's cores, but may use only
+some. The `run` step prints its `benchmarks/results/<label>.json` into the log, so the log
+alone carries the result off the pod.
+
+By hand, in any CUDA 12 image with Python ≥ 3.11:
+
+```bash
+python3 -m venv .venv && .venv/bin/pip install -q -e ".[dev,bench]" "jax[cuda12]"
 .venv/bin/python -c "import jax; print(jax.__version__, jax.devices())"   # a CudaDevice
-.venv/bin/python -m pytest -q
-.venv/bin/python validation/bench.py 65536 16384 2>&1 | tee bench_16384.txt
-cd validation && ../.venv/bin/python breakdown.py 16384 2>&1 | tee ../breakdown_16384.txt
+.venv/bin/python validation/bench.py 65536 16384
 ```
 
 `bench.py N batch` solves `N` variants of the committed test devices in batches and prints

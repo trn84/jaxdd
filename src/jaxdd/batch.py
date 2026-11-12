@@ -367,17 +367,17 @@ def _traced(*trees) -> bool:
     return any(isinstance(leaf, jax.core.Tracer) for leaf in jax.tree_util.tree_leaves(trees))
 
 
-def solve_batch(batch, voltages, tol=1e-10, max_iter=60, first_max_iter=None,
+def solve_batch(batch, voltages, tol=1e-10, max_iter=60, first_max_iter=6,
                 bernoulli_name="exact", strict=False):  # fmt: skip
     """J-V curves of a batch (`prepare`) at `voltages`: `(J, converged, iterations)`, each
     batch × voltages, in the order of `voltages`.
 
     Each device's scan runs outwards from its pre-bias, up, then down (docs/solver.md); the
     steady state at a voltage does not depend on the way there.
-    One pass by default. With `first_max_iter` (docs/batching.md), two: every device with at
-    most `first_max_iter` Newton steps per voltage, then the devices with a voltage that missed
-    it again, together, with `max_iter`, so that a device that does not converge costs the batch
-    `first_max_iter` steps at its voltages, not `max_iter`.
+    Two passes (docs/batching.md): every device with at most `first_max_iter` Newton steps per
+    voltage, then the devices with a voltage that missed it again, together, with `max_iter`,
+    so that a slow device costs the batch `first_max_iter` steps at its voltages, not its own
+    number or `max_iter`. Where no device misses it, that is one pass.
     A device that converges in the first pass gets the same result as with `max_iter` alone;
     a re-solved one returns its second pass, and its `iterations` are that pass's. With
     `first_max_iter` None (or not below `max_iter`) one pass; one pass too where `batch` or

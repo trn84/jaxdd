@@ -75,32 +75,34 @@ What helps, cheapest first:
 1. **Sort devices into batches of similar difficulty.** Diffusion length, ion density and
    doping are known before solving; the hard devices (short diffusion length, many ions) then
    hold up only each other.
-2. **Two passes**, which `solve_batch` does with `first_max_iter` (6, say): every device with
-   at most that many Newton steps per voltage, then the devices with a voltage that missed it again,
+2. **Two passes**, which `solve_batch` does itself: every device with at most `first_max_iter`
+   (6) Newton steps per voltage, then the devices with a voltage that missed it again,
    together, with `max_iter` (60). The stragglers are padded to a power of two (repeating the
    last), so few shapes compile. A device solved in the first pass gets exactly the one-pass
    result (Poisson and Newton at the pre-bias are capped by `max_iter` in both passes); a
-   re-solved one gets its second pass, `iterations` included. One pass is the default, and a
-   call inside `jax.jit`, `jax.jvp` or `jax.vmap` always makes one: the second pass's shape is
-   the number of stragglers, known only once the first pass has run.
+   re-solved one gets its second pass, `iterations` included. Where no device misses the
+   limit there is no second pass (the benchmark devices: none takes more than 4 steps).
+   `first_max_iter=None` solves in one pass, and so does a call inside `jax.jit`, `jax.jvp` or
+   `jax.vmap`: the second pass's shape is the number of stragglers, known only once the first
+   pass has run.
 
-   Two passes are insurance against the device that does not converge: in one pass it makes
-   the whole batch pay `max_iter` at its voltages, in two it costs the batch `first_max_iter`.
+   Two passes keep the slow device from setting the batch's pace: in one pass the whole batch
+   pays its steps at its voltages (`max_iter` if it does not converge), in two the limit.
    With the residual assembled row by row some devices did fail, and two passes paid: on the
    16 384 devices above (batch 4096, an RTX 4070 Ti SUPER) one pass took 143 s, two with limit
    6 89 s. Assembled by intervals none fails, and what is left is a trade: the first pass
    pays at most the limit at every voltage, the second solves a few dozen devices over every
-   voltage, a small batch that keeps a GPU barely busy. On `validation/hard.py` on an RTX 4070
-   Ti SUPER two passes ran 9 % slower than one at batch 4096 (536 against 589 curves/s) and
-   9 % faster at batch 16 384 (601 against 553), where one pass pays 6.4 steps per voltage; on
-   an A100-SXM4-40GB with the scan as the sweep 4 % slower (16 384 devices: 1007 against
-   1049). The A100's figures with the sweep kernel (1100 against 1425, and 1338 against 1725
-   on an A100-SXM4-80GB) held a second compilation of the solver in the two passes' time
-   ([solver.md](solver.md#the-block-thomas-sweep)); the same on the RTX 4070 Ti SUPER made
-   9 % slower look like 29 %. One pass is the default; two (limit 6: an ordinary device takes
-   2–4 steps, sometimes 5) for batches where devices fail, and where they measure faster.
+   voltage, a small batch that keeps a GPU barely busy. On `validation/hard.py` two passes
+   are faster than one at batch 16 384, where one pass pays 6.4 steps per voltage: 1547
+   against 1426 curves/s on an A100-SXM4-40GB, 601 against 553 on an RTX 4070 Ti SUPER. They
+   are slower at batch 4096 on the RTX 4070 Ti SUPER (536 against 589) and with the scan as
+   the sweep, which a small batch keeps waiting on kernel launches (A100, 16 384 devices: 1007
+   against 1049). Each new power of two of stragglers compiles once more. Two passes are the
+   default, for the large batches a GPU wants; the limit is 6 because an ordinary device takes
+   2–4 steps at every voltage, sometimes 5.
 3. **Smaller batches.** The expected maximum over fewer lanes is lower. On an A100, batch 4096
-   runs at about 88 % of the rate of 16384.
+   runs at about three quarters of the rate of 16384 where the steps paid are the same (2143
+   against 2801 curves/s on the benchmark devices).
 
 The `converged` flag is unaffected: a lane that reaches `max_iter` is flagged, whichever pass it
 was in.

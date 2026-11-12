@@ -82,7 +82,7 @@ def main(n: int = 1024, batch_size: int = 256) -> None:
     devices = [build_device(s) for s in hard_setups(n)]
     print(f"{n} devices built in {time.perf_counter() - start:.1f} s")
     batches = [prepare(devices[i : i + batch_size]) for i in range(0, n, batch_size)]
-    for name, limit in (("two passes (limit 6)", 6), ("one pass (default)", None)):
+    for name, limit in (("two passes (default)", 6), ("one pass", None)):
         r = run(batches, limit)
         print(f"{name:21s} {n / r['seconds']:8.1f} curves/s ({r['seconds']:.1f} s); unconverged "
               f"voltages {int((~r['ok']).sum())} of {r['ok'].size}")  # fmt: skip

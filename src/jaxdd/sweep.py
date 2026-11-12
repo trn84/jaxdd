@@ -11,9 +11,9 @@ The kernel wants the devices on the last axis, so that a tile's loads are contig
 block's nine entries (and the right-hand sides') become `(entries, NP, devices)`. The transposes
 in and out are half of its time, and it is still faster than the scan. With
 `transposed=False` it reads the blocks where the solver wrote them, `(devices, NP, entries)`,
-by strided loads and without the transposes: faster on an RTX 4070 Ti SUPER up to batch 8192,
-even at 16 384, not yet measured on an A100 (docs/solver.md; validation/breakdown.py times
-both).
+by strided loads and without the transposes: faster on an RTX 4070 Ti SUPER up to batch 8192
+and even at 16 384, slower on an A100 (9.4 against 7.1 ms at 16 384), hence not the default
+(docs/solver.md; validation/breakdown.py times both).
 
 `block_sweep` is the solver's sweep: for one device the scan; under `vmap`, on an NVIDIA GPU,
 the kernel (`custom_vmap`), and the scan everywhere else (CPU, ROCm). `JAXDD_SWEEP` overrides

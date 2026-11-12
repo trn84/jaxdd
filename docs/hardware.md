@@ -37,11 +37,8 @@ taskset -c 0 python my_sweep.py --part 0 &      # one per core, each pinned
 
 Install the CUDA jaxlib (`pip install "jax[cuda12]"`); JAX then uses the GPU by default. Use
 large batches: the sweep along the grid is sequential, so a GPU is busy only when each step
-covers thousands of devices. On an A100-SXM4-40GB batch 16384 gives about 2800 curves/s in
-`benchmarks/run.py`. `validation/bench.py` gave 2400 there and `run.py` at batch 4096 about
-1000: both figures hold a second compilation of the solver, which every process paid inside
-its second call until Pallas was imported with `jaxdd.sweep`
-([solver.md](solver.md#the-block-thomas-sweep)), and are to be measured again.
+covers thousands of devices. On an A100-SXM4-40GB batch 16384 gives about 2800 curves/s
+(`benchmarks/run.py` and `validation/bench.py` alike), batch 4096 about 2140.
 
 **Time a solver from its third call on, or check that nothing compiles.** A benchmark that
 excludes the first call excludes one compilation. `jaxdd.batch._solve_batch._cache_size()`

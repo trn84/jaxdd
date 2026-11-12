@@ -11,26 +11,16 @@ the handbook.
 The lockstep's tail is gone on the hardest grid known: on 16 384 devices of the 250 nm grid with
 ions no voltage takes more than 12 Newton steps and none fails ([docs/batching.md](docs/batching.md)),
 since the scan runs outwards from the pre-bias and the Jacobian is assembled by intervals
-([docs/solver.md](docs/solver.md)); `solve_batch` makes one pass by default again, and on an
+([docs/solver.md](docs/solver.md)); `solve_batch` makes two passes by default, and on an
 NVIDIA GPU the block sweep is one Pallas kernel instead of a scan's ~1450 kernel launches
 (`jaxdd.sweep`). On the RTX 4070 Ti SUPER those devices took 116 s with the Jacobian by rows
 (two passes, limit 25) and take 38 s now. On an A100-SXM4-40GB the benchmark runs at 2800
-curves/s (`benchmarks/run.py`, batch 16 384), the hard workload (`validation/hard.py`) at 1425;
-a Newton step of 16 384 devices there is 20 ms: the assembly 9.1, the block sweep 7.2, the
+curves/s (batch 16 384; 2140 at 4096), the hard workload (`validation/hard.py`) at 1425 in one
+pass and 1547 in two; a Newton step of 16 384 devices there is 20 ms: the assembly 9.1, the block sweep 7.2, the
 current 2.7, the ion constraint 1.3 (`validation/breakdown.py`).
 
 Next:
 
-- The A100 again (`benchmarks/apptainer.sh` or `runpod.sh`, every step). Until Pallas was
-  imported with `jaxdd.sweep`, every process compiled the solver a second time inside its
-  second call ([docs/solver.md](docs/solver.md)), and three of the A100's figures were timed
-  with that inside: `bench.py` (2365 curves/s, where `run.py` gives 2800), batch 4096 in
-  `run.py` (1037, expected near 2000) and `hard.py`'s two passes (1100 against one pass's
-  1425; about even is expected, and on the RTX 4070 Ti SUPER two passes are 9 % faster than
-  one at batch 16 384: then decide the default, `first_max_iter`, again). The same run's `breakdown.py` times the kernel
-  on the solver's own layout, without its transposes (half of the sweep's time), against the
-  transposed one: 25 % faster on the RTX 4070 Ti SUPER at batch 4096, even at 16 384; if it
-  wins on the A100, `sweep.SWEEP_TRANSPOSED = False`.
 - A chunk of the large grid on the A100 (64 s before, on the 80 GB PCIe card).
 - The assembly is now the largest part (9.1 of 20 ms on the A100). Each interval's fluxes
   and each transcendental are computed once (the compiled program has 18 kernels for it, none

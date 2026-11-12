@@ -29,8 +29,10 @@
 #              light and dark), two passes against one, the Newton steps a batch pays
 #   run        benchmarks/run.py: GPU at batch 4096 and 16384, jaxdd on this job's CPU cores;
 #              writes benchmarks/results/<label>.json for benchmarks/plot.py
+#   chunk      validation/chunk.py on the batch file CHUNK (a real workload built elsewhere and
+#              copied here; not in the default steps)
 #
-# Settings (environment): STEPS; LABEL, the machine's name in the plot (default: the GPU's
+# Settings (environment): STEPS; CHUNK, the batch file of the chunk step; LABEL, the machine's name in the plot (default: the GPU's
 # name and "apptainer"); SIF, the image file (default cuda129.sif in the repository); IMAGE,
 # where it is pulled from. Everything is appended to benchmarks/apptainer.log (not committed).
 set -euo pipefail
@@ -74,8 +76,11 @@ if [ "${1:-}" = "--inside" ]; then
                 "$py" benchmarks/run.py --label "$LABEL" --skip simss,accuracy \
                     --cpu-procs "$(nproc)"
                 ;;
+            chunk)
+                "$py" validation/chunk.py "$CHUNK"
+                ;;
             *)
-                echo "unknown step $step (info tests breakdown bench hard run)"
+                echo "unknown step $step (info tests breakdown bench hard run chunk)"
                 ;;
         esac || echo "!! step $step failed (exit $?); going on"
     done
@@ -121,6 +126,10 @@ GPU="$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1 |
 LABEL="${LABEL:-${GPU#NVIDIA } apptainer}"
 COMMIT="$(git rev-parse --short=12 HEAD)$(git diff --quiet || echo ' with local changes')"
 export APPTAINERENV_STEPS="$STEPS" APPTAINERENV_LABEL="$LABEL" APPTAINERENV_JAXDD_COMMIT="$COMMIT"
+if [[ " $STEPS " == *" chunk "* ]]; then
+    [ -f "${CHUNK:-}" ] || { echo "the chunk step needs CHUNK=<batch file>"; exit 1; }
+    export APPTAINERENV_CHUNK="$(realpath "$CHUNK")"
+fi
 
 start=$(( $(stat -c %s "$LOG" 2>/dev/null || echo 0) + 1 ))
 {

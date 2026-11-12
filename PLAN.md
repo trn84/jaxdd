@@ -21,7 +21,11 @@ current 2.7, the ion constraint 1.3 (`validation/breakdown.py`).
 
 Next:
 
-- A chunk of the large grid on the A100 (64 s before, on the 80 GB PCIe card).
+- A chunk of the large grid on the A100 (64 s before, on the 80 GB PCIe card): the 16 384
+  devices above saved as a batch file (`validation/chunk.py`, 9 MB), solved by
+  `STEPS=chunk CHUNK=<file> benchmarks/apptainer.sh`, with Triton and with `JAXDD_SWEEP=mosaic`.
+  On the RTX 4070 Ti SUPER: 24.5 s after compilation (668 curves/s; 2.76 Newton steps per
+  voltage needed, 4.59 paid, none unconverged).
 - The assembly is now the largest part (9.1 of 20 ms on the A100). Each interval's fluxes
   and each transcendental are computed once (the compiled program has 18 kernels for it, none
   repeating another's work); what is left is memory traffic: the blocks have 36 entries per

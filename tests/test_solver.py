@@ -306,9 +306,32 @@ def test_the_sweep_kernel_is_the_scan(n: int, transposed: bool) -> None:
     assert np.max(np.abs(got - ref)) < 1e-12 * np.max(np.abs(ref))
 
 
-def test_the_batch_is_the_same_with_either_sweep(monkeypatch) -> None:
-    """`solve_batch` with the sweep kernel and with the scan (`JAXDD_SWEEP`): the same curves to
-    round-off, the same flags and Newton steps. Only where the kernel runs (an NVIDIA GPU)."""
+@pytest.mark.parametrize("transposed", [False, True])
+def test_the_mosaic_kernel_is_the_scan(transposed: bool) -> None:
+    """`sweep.mosaic_sweep` (the kernel in Pallas's Mosaic GPU backend) gives `_block_thomas`'s
+    solution to round-off, a batch that is not a whole number of tiles. Only on an NVIDIA GPU
+    (Mosaic GPU has no interpreter that runs this kernel on a CPU)."""
+    from jaxdd import solver as S
+    from jaxdd.sweep import mosaic_sweep, sweep_kind
+
+    if jax.default_backend() != "gpu" or sweep_kind() != "pallas":
+        pytest.skip("Mosaic GPU runs on an NVIDIA GPU")
+    rng = np.random.default_rng(4)
+    n, NP = 200, 12
+    A = rng.normal(size=(n, NP, 3, 3))
+    C = rng.normal(size=(n, NP, 3, 3))
+    B = rng.normal(size=(n, NP, 3, 3)) + 8 * np.eye(3)
+    d = rng.normal(size=(n, NP, 3, 3))
+    ref = np.asarray(jax.vmap(S._block_thomas)(A, B, C, d))
+    got = np.asarray(mosaic_sweep(*(jnp.asarray(x) for x in (A, B, C, d)), transposed=transposed))
+    assert np.max(np.abs(got - ref)) < 1e-12 * np.max(np.abs(ref))
+
+
+@pytest.mark.parametrize("kind", ["pallas", "mosaic"])
+def test_the_batch_is_the_same_with_either_sweep(monkeypatch, kind: str) -> None:
+    """`solve_batch` with a sweep kernel (Triton or Mosaic GPU) and with the scan
+    (`JAXDD_SWEEP`): the same curves to round-off, the same flags and Newton steps. Only where
+    the kernels run (an NVIDIA GPU)."""
     from jaxdd.batch import prepare, solve_batch
     from jaxdd.sweep import sweep_kind
 
@@ -318,6 +341,8 @@ def test_the_batch_is_the_same_with_either_sweep(monkeypatch) -> None:
     cases = ["thin_l1_light", "frozen_1e17_x1_thin_light", "steady_1e17_thin_light"]
     batch = prepare([build_device(read_setup(DATA / c / "simulation_setup.txt")) for c in cases])
     V = np.round(np.arange(-0.2, 1.3 + 1e-9, 0.1), 6)
+    monkeypatch.setenv("JAXDD_SWEEP", kind)
+    jax.clear_caches()
     kernel = [np.asarray(a) for a in solve_batch(batch, V)]
     monkeypatch.setenv("JAXDD_SWEEP", "scan")
     jax.clear_caches()  # the sweep is chosen when `solve_batch` is traced
@@ -339,6 +364,7 @@ def test_the_kernels_imports_do_not_compile_the_solver_again() -> None:
         "from jax.experimental import pallas\n"
         "try:\n"
         "    from jax.experimental.pallas import triton\n"
+        "    from jax.experimental.pallas import mosaic_gpu\n"
         "except ImportError:\n"
         "    pass\n"
         "f(1.0)\n"

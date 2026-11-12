@@ -29,18 +29,22 @@ Next:
   sides 5 of 9), and the kernel reads all 36. A kernel that takes the 24, as separate arrays,
   would spare a third of the blocks' writes and reads; it is a step towards the fused kernel
   below and wants the same decision.
-- The sweep kernel uses Pallas's Triton backend, which JAX 0.12 marks deprecated (the scan
-  runs where it is gone, at 15–36 % less). Its successor in Pallas, Mosaic GPU, names Ampere
-  among its targets in JAX 0.12 (with Hopper and Blackwell) and has loads, stores and loops, so
-  the A100 is not excluded; whether it takes this kernel (64-bit floats, loads straight from
-  global memory) is not tried. Before the backend goes: the kernel in Mosaic GPU on an A100
-  and a consumer card, else `jax_triton` or the XLA FFI.
+- The sweep kernel uses Pallas's Triton backend, which JAX 0.12 marks deprecated. The same
+  kernel runs in its successor, Mosaic GPU (`JAXDD_SWEEP=mosaic`, tests pass; on the RTX 4070 Ti
+  SUPER equal to Triton at batch 16 384, slower at 4096 since its programs take at least 128
+  devices; docs/solver.md). Next: `validation/breakdown.py` 4096 and 16 384 on the A100 (it
+  times both backends), and `validation/hard.py` with `JAXDD_SWEEP=mosaic`; if Mosaic is as
+  fast there, it becomes the default before Triton goes.
 
 A fused kernel for the whole step stays the large lever (from the A100's bandwidth an estimated
 10⁴–3·10⁴ curves/s, 4–10× today's). It is not needed for the steady state; decide it with Stage C (section 4) and after
 M7 (section 2).
 
 ### 1.3 M8: the MI50 cards
+
+Not the focus: jaxdd is made as fast as it can be on NVIDIA first (Mosaic GPU and other
+NVIDIA-only kernels are fine there); an AMD track with its own optimisations follows later,
+beside it, starting from the scan, which runs everywhere.
 
 Prepared: JAX 0.4.31 in `rocm/jax-community:rocm6.0.3-jax0.4.31-py3.11.10` runs `jax.jit` on
 gfx906, and jaxdd passes its tests on JAX 0.4.31 ([docs/hardware.md](docs/hardware.md)). Waiting

@@ -7,9 +7,9 @@ devices and timed after compilation: the residual, the Jacobian blocks and the i
 (autodiff of each row), the ions' constraint, the linear solve (sweep, three right-hand sides),
 and the current; the solver assembles the first three by edges (`_assemble`), and the
 autodiff of each row it replaced is timed beside it; on a GPU the sweep both as the scan and
-as the kernel (jaxdd.sweep) at three tiles, and reading the blocks in the solver's layout
-(`transposed=False`). The part that dominates is the candidate for a kernel of its own
-(PLAN.md, section 1.2).
+as the Triton kernel (jaxdd.sweep) at three tiles and reading the blocks in the solver's layout
+(`transposed=False`), and as the Mosaic GPU kernel at two tiles in both layouts. The part that
+dominates is the candidate for a kernel of its own (PLAN.md, section 1.2).
 """
 
 import functools
@@ -22,7 +22,7 @@ from bench import variants
 
 from jaxdd.batch import _bounds, _current, _initial, prepare
 from jaxdd.solver import BERNOULLI, _assemble, _block_thomas, _ion_constraints, _kernels
-from jaxdd.sweep import SWEEP_TILE, pallas_sweep, sweep_kind
+from jaxdd.sweep import MOSAIC_TILE, SWEEP_TILE, mosaic_sweep, pallas_sweep, sweep_kind
 
 REPEATS = 5
 
@@ -97,7 +97,16 @@ def main(batch_size: int = 256) -> None:
         }  # fmt: skip
         timed(f"linear solve (kernel, {SWEEP_TILE}, solver's layout)",
               jax.jit(functools.partial(pallas_sweep, transposed=False)), A, B, C, rhs)  # fmt: skip
-        total += tiles[SWEEP_TILE] if sweep_kind() == "pallas" else scan
+        mosaic = {}
+        for tile in (128, 256):
+            for transposed in (True, False):
+                layout = "" if transposed else ", solver's layout"
+                mosaic[tile, transposed] = timed(
+                    f"linear solve (Mosaic, tile {tile}{layout})",
+                    jax.jit(functools.partial(mosaic_sweep, tile=tile, transposed=transposed)),
+                    A, B, C, rhs)  # fmt: skip
+        kind = sweep_kind()
+        total += {"pallas": tiles[SWEEP_TILE], "mosaic": mosaic[MOSAIC_TILE, True]}.get(kind, scan)
     else:
         total += scan
     total += timed("current", jax.jit(jax.vmap(current)), batch)

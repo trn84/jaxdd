@@ -14,18 +14,14 @@ since the scan runs outwards from the pre-bias and the Jacobian is assembled by 
 ([docs/solver.md](docs/solver.md)); `solve_batch` makes two passes by default, and on an
 NVIDIA GPU the block sweep is one Pallas kernel instead of a scan's ~1450 kernel launches
 (`jaxdd.sweep`). On the RTX 4070 Ti SUPER those devices took 116 s with the Jacobian by rows
-(two passes, limit 25) and take 38 s now. On an A100-SXM4-40GB the benchmark runs at 2800
+(two passes, limit 25) and take 24.5 s now; on an A100-SXM4-40GB 9.0 s (64 s before, on an
+A100 80 GB PCIe; `validation/chunk.py`). On the A100 the benchmark runs at 2800
 curves/s (batch 16 384; 2140 at 4096), the hard workload (`validation/hard.py`) at 1425 in one
 pass and 1547 in two; a Newton step of 16 384 devices there is 20 ms: the assembly 9.1, the block sweep 7.2, the
 current 2.7, the ion constraint 1.3 (`validation/breakdown.py`).
 
 Next:
 
-- A chunk of the large grid on the A100 (64 s before, on the 80 GB PCIe card): the 16 384
-  devices above saved as a batch file (`validation/chunk.py`, 9 MB), solved by
-  `STEPS=chunk CHUNK=<file> benchmarks/apptainer.sh`.
-  On the RTX 4070 Ti SUPER: 24.5 s after compilation (668 curves/s; 2.76 Newton steps per
-  voltage needed, 4.59 paid, none unconverged).
 - The assembly is now the largest part (9.1 of 20 ms on the A100). Each interval's fluxes
   and each transcendental are computed once (the compiled program has 18 kernels for it, none
   repeating another's work); what is left is memory traffic: the blocks have 36 entries per

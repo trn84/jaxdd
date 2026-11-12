@@ -68,7 +68,13 @@ density and ion distribution; light and dark) the devices need 2.8 steps per vol
 largest over the batch is 4 at most voltages and up to 12 above 0.7 V, so one pass pays about
 6.8 at batch 16 384 and 5.6 at 4096. Two things took that from 21.8: the scan outwards from
 the pre-bias (the first voltage had cost up to 28, [solver.md](solver.md)) and the Jacobian
-assembled by intervals (devices with strong frozen charge had taken up to 60).
+assembled by intervals (devices with strong frozen charge had taken up to 60). In two passes
+(limit 6) they pay 4.59, none unconverged, and the whole batch (`validation/chunk.py`, the
+batch saved to a file) takes 9.0 s on an A100-SXM4-40GB (1816 curves/s; 9.2 with the Mosaic
+sweep) and 24.5 s on an RTX 4070 Ti SUPER, after compilation (about 13 and 7 s more in the
+first call). Such a batch took 64 s on an A100 80 GB PCIe before those two changes. A program
+that builds its devices on the CPU while the GPU solves now has to build about 1800 a second
+on an A100 to keep it busy.
 
 What helps, cheapest first:
 

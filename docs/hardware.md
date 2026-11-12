@@ -38,8 +38,10 @@ taskset -c 0 python my_sweep.py --part 0 &      # one per core, each pinned
 Install the CUDA jaxlib (`pip install "jax[cuda12]"`); JAX then uses the GPU by default. Use
 large batches: the sweep along the grid is sequential, so a GPU is busy only when each step
 covers thousands of devices. On an A100-SXM4-40GB batch 16384 gives about 2800 curves/s in
-`benchmarks/run.py` and 2400 in `validation/bench.py` (whose batches hold 16384 distinct devices,
-where `run.py` repeats 2048), batch 4096 about 1000–1400.
+`benchmarks/run.py` and 2400 in `validation/bench.py`, batch 4096 about 1000–1400. Why the two
+scripts differ is open: not because `run.py` repeats 2048 devices where `bench.py` has 16384
+distinct ones (both pay 3.35 Newton steps per voltage, on an RTX 4070 Ti SUPER at about the
+same rate).
 
 **Data-centre cards only, for speed.** jaxdd needs FP64. The A100 and H100 run it at half their
 FP32 rate; consumer cards (GeForce, RTX) at 1/64. A RTX 4070 Ti SUPER reaches about 1060

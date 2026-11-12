@@ -1,5 +1,8 @@
 """jaxdd against SimSS, and the properties of its pieces."""
 
+import os
+import subprocess
+import sys
 from pathlib import Path
 
 import jax
@@ -281,11 +284,12 @@ def test_the_jacobian_by_edges_is_autodiff_of_the_rows(case: str, bern: str) -> 
         assert np.max(np.abs(r - g) / np.maximum(scale, 1e-300)) < 1e-11, name
 
 
+@pytest.mark.parametrize("transposed", [False, True])
 @pytest.mark.parametrize("n", [5, 70])
-def test_the_sweep_kernel_is_the_scan(n: int) -> None:
+def test_the_sweep_kernel_is_the_scan(n: int, transposed: bool) -> None:
     """`sweep.pallas_sweep` (the whole batch's sweep in one kernel) gives `_block_thomas`'s
-    solution to round-off, three right-hand sides, a batch that is not a whole number of tiles;
-    on a CPU in Pallas's interpreter."""
+    solution to round-off, three right-hand sides, a batch that is not a whole number of tiles,
+    in either layout of the blocks; on a CPU in Pallas's interpreter."""
     from jaxdd import solver as S
     from jaxdd.sweep import pallas_sweep
 
@@ -298,7 +302,7 @@ def test_the_sweep_kernel_is_the_scan(n: int) -> None:
     ref = np.asarray(jax.vmap(S._block_thomas)(A, B, C, d))
     gpu = jax.default_backend() == "gpu"
     got = np.asarray(pallas_sweep(*(jnp.asarray(x) for x in (A, B, C, d)), tile=32,
-                                  interpret=not gpu))  # fmt: skip
+                                  interpret=not gpu, transposed=transposed))  # fmt: skip
     assert np.max(np.abs(got - ref)) < 1e-12 * np.max(np.abs(ref))
 
 
@@ -321,6 +325,28 @@ def test_the_batch_is_the_same_with_either_sweep(monkeypatch) -> None:
     jax.clear_caches()
     assert np.array_equal(kernel[1], scan[1]) and np.array_equal(kernel[2], scan[2])
     assert np.max(np.abs(kernel[0] - scan[0])) < 1e-9 * np.max(np.abs(scan[0]))
+
+
+def test_the_kernels_imports_do_not_compile_the_solver_again() -> None:
+    """Importing Pallas registers states that enter every `jax.jit`'s cache key. Imported
+    during the solver's first trace, it made that trace's key stale: the second call of
+    `solve_batch` compiled again. In a fresh interpreter: after `jaxdd.batch`, what the kernel
+    imports leaves a function jitted before with its one entry."""
+    code = (
+        "import jax, jaxdd.batch\n"
+        "f = jax.jit(lambda x: x + 1.0)\n"
+        "f(1.0)\n"
+        "from jax.experimental import pallas\n"
+        "try:\n"
+        "    from jax.experimental.pallas import triton\n"
+        "except ImportError:\n"
+        "    pass\n"
+        "f(1.0)\n"
+        "assert f._cache_size() == 1, f._cache_size()\n"
+    )
+    env = {**os.environ, "JAX_PLATFORMS": "cpu"}
+    done = subprocess.run([sys.executable, "-c", code], env=env, capture_output=True, text=True)
+    assert done.returncode == 0, done.stderr[-2000:]
 
 
 def test_the_block_sweep_solves_the_block_tridiagonal_system() -> None:

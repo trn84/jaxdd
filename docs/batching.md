@@ -88,12 +88,17 @@ What helps, cheapest first:
    the whole batch pay `max_iter` at its voltages, in two it costs the batch `first_max_iter`.
    With the residual assembled row by row some devices did fail, and two passes paid: on the
    16 384 devices above (batch 4096, an RTX 4070 Ti SUPER) one pass took 143 s, two with limit
-   6 89 s. Assembled by intervals none fails, and the insurance costs: the second pass solves a
-   few dozen devices over every voltage, a small batch that keeps a GPU barely busy and still
-   takes a good part of a full one's time. On `validation/hard.py` (16 384 devices) one pass ran
-   at 1725 curves/s on an A100-SXM4-80GB, two at 1338; on the A100-SXM4-40GB 1425 against 1100
-   (with the scan as the sweep 1049 against 1007); on the RTX 4070 Ti SUPER about even. Hence one pass by default; two (limit 6: an ordinary
-   device takes 2–4 steps, sometimes 5) for batches where devices fail.
+   6 89 s. Assembled by intervals none fails, and what is left is a trade: the first pass
+   pays at most the limit at every voltage, the second solves a few dozen devices over every
+   voltage, a small batch that keeps a GPU barely busy. On `validation/hard.py` on an RTX 4070
+   Ti SUPER two passes ran 9 % slower than one at batch 4096 (536 against 589 curves/s) and
+   9 % faster at batch 16 384 (601 against 553), where one pass pays 6.4 steps per voltage; on
+   an A100-SXM4-40GB with the scan as the sweep 4 % slower (16 384 devices: 1007 against
+   1049). The A100's figures with the sweep kernel (1100 against 1425, and 1338 against 1725
+   on an A100-SXM4-80GB) held a second compilation of the solver in the two passes' time
+   ([solver.md](solver.md#the-block-thomas-sweep)); the same on the RTX 4070 Ti SUPER made
+   9 % slower look like 29 %. One pass is the default; two (limit 6: an ordinary device takes
+   2–4 steps, sometimes 5) for batches where devices fail, and where they measure faster.
 3. **Smaller batches.** The expected maximum over fewer lanes is lower. On an A100, batch 4096
    runs at about 88 % of the rate of 16384.
 

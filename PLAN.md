@@ -11,25 +11,40 @@ the handbook.
 The lockstep's tail is gone on the hardest grid known: on 16 384 devices of the 250 nm grid with
 ions no voltage takes more than 12 Newton steps and none fails ([docs/batching.md](docs/batching.md)),
 since the scan runs outwards from the pre-bias and the Jacobian is assembled by intervals
-([docs/solver.md](docs/solver.md)); `solve_batch` makes one pass by default again (two passes
-cost up to 30 % where nothing fails), and on an NVIDIA GPU the block sweep is one Pallas kernel
-instead of a scan's ~1450 kernel launches (`jaxdd.sweep`). On the RTX 4070 Ti SUPER those
-devices took 116 s with the Jacobian by rows (two passes, limit 25) and take 38 s now. On an
-A100-SXM4-40GB the benchmark runs at 2365 curves/s (batch 16 384), the hard workload
-(`validation/hard.py`) at 1425; a Newton step of 16 384 devices there is 20 ms: the assembly
-9.1, the block sweep 7.2, the current 2.7, the ion constraint 1.3 (`validation/breakdown.py`).
+([docs/solver.md](docs/solver.md)); `solve_batch` makes one pass by default again, and on an
+NVIDIA GPU the block sweep is one Pallas kernel instead of a scan's ~1450 kernel launches
+(`jaxdd.sweep`). On the RTX 4070 Ti SUPER those devices took 116 s with the Jacobian by rows
+(two passes, limit 25) and take 38 s now. On an A100-SXM4-40GB the benchmark runs at 2800
+curves/s (`benchmarks/run.py`, batch 16 384), the hard workload (`validation/hard.py`) at 1425;
+a Newton step of 16 384 devices there is 20 ms: the assembly 9.1, the block sweep 7.2, the
+current 2.7, the ion constraint 1.3 (`validation/breakdown.py`).
 
 Next:
 
+- The A100 again (`benchmarks/apptainer.sh` or `runpod.sh`, every step). Until Pallas was
+  imported with `jaxdd.sweep`, every process compiled the solver a second time inside its
+  second call ([docs/solver.md](docs/solver.md)), and three of the A100's figures were timed
+  with that inside: `bench.py` (2365 curves/s, where `run.py` gives 2800), batch 4096 in
+  `run.py` (1037, expected near 2000) and `hard.py`'s two passes (1100 against one pass's
+  1425; about even is expected, and on the RTX 4070 Ti SUPER two passes are 9 % faster than
+  one at batch 16 384: then decide the default, `first_max_iter`, again). The same run's `breakdown.py` times the kernel
+  on the solver's own layout, without its transposes (half of the sweep's time), against the
+  transposed one: 25 % faster on the RTX 4070 Ti SUPER at batch 4096, even at 16 384; if it
+  wins on the A100, `sweep.SWEEP_TRANSPOSED = False`.
 - A chunk of the large grid on the A100 (64 s before, on the 80 GB PCIe card).
-- Batch 4096 on the A100 ran slower with the sweep kernel in `benchmarks/run.py` (1037
-  curves/s, 1399 with the scan the day before), though `breakdown.py` times the kernel at 4096
-  four times faster than the scan. Unexplained; batch 16 384 is unaffected.
 - The assembly is now the largest part (9.1 of 20 ms on the A100). Each interval's fluxes
-  are computed once; what is left is memory traffic over the blocks.
+  and each transcendental are computed once (the compiled program has 18 kernels for it, none
+  repeating another's work); what is left is memory traffic: the blocks have 36 entries per
+  grid point of which 24 are structurally non-zero (`A` and `C` 5 of 9 each, the right-hand
+  sides 5 of 9), and the kernel reads all 36. A kernel that takes the 24, as separate arrays,
+  would spare a third of the blocks' writes and reads; it is a step towards the fused kernel
+  below and wants the same decision.
 - The sweep kernel uses Pallas's Triton backend, which JAX 0.12 marks deprecated (the scan
-  runs where it is gone, at 15–36 % less). Its successor, Mosaic GPU, targets Hopper; before
-  the backend goes, the kernel needs another way in (Mosaic GPU, `jax_triton`, or the XLA FFI).
+  runs where it is gone, at 15–36 % less). Its successor in Pallas, Mosaic GPU, names Ampere
+  among its targets in JAX 0.12 (with Hopper and Blackwell) and has loads, stores and loops, so
+  the A100 is not excluded; whether it takes this kernel (64-bit floats, loads straight from
+  global memory) is not tried. Before the backend goes: the kernel in Mosaic GPU on an A100
+  and a consumer card, else `jax_triton` or the XLA FFI.
 
 A fused kernel for the whole step stays the large lever (from the A100's bandwidth an estimated
 10⁴–3·10⁴ curves/s, 4–10× today's). It is not needed for the steady state; decide it with Stage C (section 4) and after

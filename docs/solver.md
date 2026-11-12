@@ -269,11 +269,37 @@ kernel slower than the scan. At batch 16 384:
 
 | | sweep, scan → kernel | Newton step (`breakdown.py`) | `bench.py` | `hard.py` |
 |---|---|---|---|---|
-| A100-SXM4-40GB | 21.3 → 7.2 ms | 34 → 20 ms | 2063 → 2365 curves/s | 1049 → 1425 curves/s |
-| RTX 4070 Ti SUPER | 30 → 17.5 ms | — | 840 → 910 curves/s | 444 → 520 curves/s |
+| A100-SXM4-40GB | 21.3 → 7.2 ms | 34 → 20 ms | 2063 → 2365 curves/s (*) | 1049 → 1425 curves/s |
+| RTX 4070 Ti SUPER | 28 → 16.2 ms | 67 → 55 ms | 906 → 997 curves/s | 444 → 520 curves/s |
+
+(*) with a second compilation in the kernel's time (below); `benchmarks/run.py` on the same
+card: 2075 → 2800.
 
 The A100 gains most, where the launches weigh most against its fast FP64 arithmetic. The kernel
 agrees with the scan to 1e-12 (tests).
+
+Half of the kernel's time is those transposes: on an RTX 4070 Ti SUPER at batch 4096 the
+kernel alone takes 2.2 ms, with its transposes 4.4. The kernel can read the blocks where the
+assembly wrote them instead, `(devices, NP, entries)`, with strided loads and no transposes
+(`sweep.SWEEP_TRANSPOSED = False`). On that card it is faster at batch 4096 (3.3 against
+4.4 ms) and 8192 (7.0 against 8.5) and no faster at 16 384 (16.6 against 16.2), where the
+strided loads cost what the transposes did; the whole solver gains 2–5 % (`bench.py` at
+batch 16 384: 1043 against 997 curves/s). The transposed layout stays the default until both
+are measured on an A100 (`validation/breakdown.py` times them side by side). Letting XLA
+write the kernel's layout straight from the fluxes (the barrier before the blocks are
+stacked, none at the kernel) is slower than either: 19.7 against 11.4 ms for assembly and
+sweep at batch 4096.
+
+Pallas is imported with `jaxdd.sweep`, not where the kernel is built. Its import registers two
+configuration states (`pallas_grid_context`, `pallas_dynamic_shapes_export`) that enter the
+cache key of every `jax.jit`, so whatever was compiled before the import is compiled once more
+at its next call. Imported during the solver's first trace, as it was at first, it made every
+process compile the solver twice, the second time inside its second call: a few seconds that a
+benchmark excluding only the first call counts as solving. On the RTX 4070 Ti SUPER that made
+`bench.py` 930 instead of 997 curves/s and two passes on `hard.py` 29 % slower than one where
+they are 9 %; it is why `bench.py` and batch 4096 of `benchmarks/run.py` were slow on the A100
+while batch 16 384 of `run.py`, timed after it, was not. A program that compiles functions of
+its own before it imports `jaxdd.batch` pays their second compilation for the same reason.
 
 The scan stays for one device (`solve_jv`), on a CPU and on ROCm; `JAXDD_SWEEP=scan` chooses
 it anywhere, `JAXDD_SWEEP=pallas` the kernel. The kernel uses Pallas's Triton backend, which

@@ -7,8 +7,9 @@ devices and timed after compilation: the residual, the Jacobian blocks and the i
 (autodiff of each row), the ions' constraint, the linear solve (sweep, three right-hand sides),
 and the current; the solver assembles the first three by edges (`_assemble`), and the
 autodiff of each row it replaced is timed beside it; on a GPU the sweep both as the scan and
-as the kernel (jaxdd.sweep) at three tiles. The part that dominates is the candidate
-for a kernel of its own (PLAN.md, section 1.2).
+as the kernel (jaxdd.sweep) at three tiles, and reading the blocks in the solver's layout
+(`transposed=False`). The part that dominates is the candidate for a kernel of its own
+(PLAN.md, section 1.2).
 """
 
 import functools
@@ -27,11 +28,7 @@ REPEATS = 5
 
 
 def timed(name, fn, *args):
-    # Twice before timing: the first call compiles, and a Pallas kernel's second call costs
-    # about half a second once more (Triton loads its module).
-    for _ in range(2):
-        out = fn(*args)
-        jax.block_until_ready(out)
+    jax.block_until_ready(fn(*args))  # compiles
     start = time.perf_counter()
     for _ in range(REPEATS):
         out = fn(*args)
@@ -98,6 +95,8 @@ def main(batch_size: int = 256) -> None:
                         jax.jit(functools.partial(pallas_sweep, tile=tile)), A, B, C, rhs)
             for tile in (64, 128, 256)
         }  # fmt: skip
+        timed(f"linear solve (kernel, {SWEEP_TILE}, solver's layout)",
+              jax.jit(functools.partial(pallas_sweep, transposed=False)), A, B, C, rhs)  # fmt: skip
         total += tiles[SWEEP_TILE] if sweep_kind() == "pallas" else scan
     else:
         total += scan

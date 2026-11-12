@@ -312,10 +312,10 @@ def test_the_mosaic_kernel_is_the_scan(transposed: bool) -> None:
     solution to round-off, a batch that is not a whole number of tiles. Only on an NVIDIA GPU
     (Mosaic GPU has no interpreter that runs this kernel on a CPU)."""
     from jaxdd import solver as S
-    from jaxdd.sweep import mosaic_sweep, sweep_kind
+    from jaxdd.sweep import kernel_available, mosaic_sweep
 
-    if jax.default_backend() != "gpu" or sweep_kind() != "pallas":
-        pytest.skip("Mosaic GPU runs on an NVIDIA GPU")
+    if not kernel_available("mosaic"):
+        pytest.skip("Mosaic GPU runs on an NVIDIA GPU, Ampere or newer")
     rng = np.random.default_rng(4)
     n, NP = 200, 12
     A = rng.normal(size=(n, NP, 3, 3))
@@ -333,11 +333,10 @@ def test_the_batch_is_the_same_with_either_sweep(monkeypatch, kind: str) -> None
     (`JAXDD_SWEEP`): the same curves to round-off, the same flags and Newton steps. Only where
     the kernels run (an NVIDIA GPU)."""
     from jaxdd.batch import prepare, solve_batch
-    from jaxdd.sweep import sweep_kind
+    from jaxdd.sweep import kernel_available
 
-    monkeypatch.delenv("JAXDD_SWEEP", raising=False)
-    if sweep_kind() != "pallas":
-        pytest.skip("the sweep kernel runs on an NVIDIA GPU")
+    if not kernel_available(kind):
+        pytest.skip(f"the {kind} kernel does not run here")
     cases = ["thin_l1_light", "frozen_1e17_x1_thin_light", "steady_1e17_thin_light"]
     batch = prepare([build_device(read_setup(DATA / c / "simulation_setup.txt")) for c in cases])
     V = np.round(np.arange(-0.2, 1.3 + 1e-9, 0.1), 6)

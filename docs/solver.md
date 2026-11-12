@@ -303,7 +303,8 @@ compilation for the same reason.
 
 The scan stays for one device (`solve_jv`), on a CPU and on ROCm; `JAXDD_SWEEP=scan` chooses
 it anywhere, `JAXDD_SWEEP=pallas` the kernel. The kernel uses Pallas's Triton backend, which
-JAX 0.12 marks deprecated; where it is gone, the scan runs.
+JAX 0.12 marks deprecated; where it is gone, the Mosaic GPU kernel below runs (on Ampere or
+newer), else the scan.
 
 The same kernel body also runs in Triton's successor, Pallas's Mosaic GPU backend
 (`mosaic_sweep`, `JAXDD_SWEEP=mosaic`; NVIDIA only). In JAX 0.12 it is entered through
@@ -313,8 +314,13 @@ the carry in registers as in Triton. It runs on an RTX 4070 Ti SUPER (sm_89), al
 names only Ampere, Hopper and Blackwell. A program is at least one warpgroup, 128 devices:
 tiles of 32 or 64 fail in its layout inference. At equal tiles it is faster than Triton there
 (5.3 against 5.9 ms at tile 128, batch 4096), but Triton's tile 64 is faster still (4.4 ms);
-at batch 16 384 the two are equal (11.6 ms with the transposes, isolated). `validation/breakdown.py`
-times both on the machine at hand.
+at batch 16 384 the two are equal (11.6 ms with the transposes, isolated). On the
+A100-SXM4-40GB Triton stays ahead: 2.69 against 3.10 ms at batch 4096 (Mosaic's tile 128,
+Triton's 64), 7.06 against 7.28 at 16 384, and the hard workload in two passes at 1547 against
+1513 curves/s. Mosaic reading the solver's layout is much slower there (11.8 ms at 16 384).
+Triton therefore stays the default while it exists; Mosaic is what `auto` takes when it is
+gone, at 2–3 % instead of the scan's 15–36 %. `validation/breakdown.py` times both on the
+machine at hand.
 
 Parallel cyclic reduction (log₂ NP fully parallel levels instead of a sequential sweep) and a
 hybrid of it with the sweep were built and measured: slower on every machine and batch size,

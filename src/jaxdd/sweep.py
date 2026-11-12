@@ -20,8 +20,9 @@ deprecated) and Mosaic GPU (`mosaic_sweep`, its successor; NVIDIA only, at least
 of 128 devices per program).
 
 `block_sweep` is the solver's sweep: for one device the scan; under `vmap`, on an NVIDIA GPU,
-the Triton kernel (`custom_vmap`), and the scan everywhere else (CPU, ROCm). `JAXDD_SWEEP`
-overrides the choice: `scan`, `pallas` (Triton) or `mosaic` (`auto` by default).
+the Triton kernel (`custom_vmap`), the Mosaic kernel where Triton is gone, and the scan
+everywhere else (CPU, ROCm). `JAXDD_SWEEP` overrides the choice: `scan`, `pallas` (Triton) or
+`mosaic` (`auto` by default).
 """
 
 from __future__ import annotations
@@ -48,6 +49,7 @@ __all__ = [
     "SWEEP_TILE",
     "SWEEP_TRANSPOSED",
     "block_sweep",
+    "kernel_available",
     "mosaic_sweep",
     "pallas_sweep",
     "sweep_kind",
@@ -67,25 +69,31 @@ _WARPS = {32: 1, 64: 2, 128: 4, 256: 8}
 
 
 def sweep_kind() -> str:
-    """`"pallas"`, `"mosaic"` or `"scan"`: `JAXDD_SWEEP` if set, else the Triton kernel on an
-    NVIDIA GPU."""
+    """`"pallas"`, `"mosaic"` or `"scan"`: `JAXDD_SWEEP` if set, else on an NVIDIA GPU the Triton
+    kernel, where Triton is gone the Mosaic kernel (2–3 % slower on an A100 at batch 16 384,
+    the scan 15–36 %), and the scan everywhere else."""
     choice = os.environ.get("JAXDD_SWEEP", "auto")
     if choice in ("scan", "pallas", "mosaic"):
         return choice
     if choice != "auto":
         raise ValueError(f"JAXDD_SWEEP = {choice!r}: auto, scan, pallas or mosaic")
+    return next((kind for kind in ("pallas", "mosaic") if kernel_available(kind)), "scan")
+
+
+def kernel_available(kind: str) -> bool:
+    """Whether the `"pallas"` (Triton) or `"mosaic"` kernel runs on the default device: an NVIDIA
+    GPU, its Pallas backend importable, for Mosaic GPU Ampere or newer."""
     device = jax.devices()[0]
-    cuda = device.platform == "gpu" and "cuda" in device.client.platform_version.lower()
-    return "pallas" if cuda and _triton_available() else "scan"
-
-
-def _triton_available() -> bool:
-    """Pallas's Triton backend, which JAX 0.12 marks deprecated: without it, the scan."""
+    if device.platform != "gpu" or "cuda" not in device.client.platform_version.lower():
+        return False
     try:
-        from jax.experimental.pallas import triton  # noqa: F401
+        if kind == "pallas":
+            from jax.experimental.pallas import triton  # noqa: F401
+        else:
+            from jax.experimental.pallas import mosaic_gpu  # noqa: F401
     except ImportError:
         return False
-    return True
+    return kind == "pallas" or float(getattr(device, "compute_capability", 0)) >= 8.0
 
 
 # Lists of (tile,) vectors: one per entry of a 3×3 block, or of 3×k right-hand sides. `at`

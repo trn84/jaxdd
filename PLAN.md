@@ -23,7 +23,7 @@ Next:
 
 - A chunk of the large grid on the A100 (64 s before, on the 80 GB PCIe card): the 16 384
   devices above saved as a batch file (`validation/chunk.py`, 9 MB), solved by
-  `STEPS=chunk CHUNK=<file> benchmarks/apptainer.sh`, with Triton and with `JAXDD_SWEEP=mosaic`.
+  `STEPS=chunk CHUNK=<file> benchmarks/apptainer.sh`.
   On the RTX 4070 Ti SUPER: 24.5 s after compilation (668 curves/s; 2.76 Newton steps per
   voltage needed, 4.59 paid, none unconverged).
 - The assembly is now the largest part (9.1 of 20 ms on the A100). Each interval's fluxes
@@ -33,12 +33,6 @@ Next:
   sides 5 of 9), and the kernel reads all 36. A kernel that takes the 24, as separate arrays,
   would spare a third of the blocks' writes and reads; it is a step towards the fused kernel
   below and wants the same decision.
-- The sweep kernel uses Pallas's Triton backend, which JAX 0.12 marks deprecated. The same
-  kernel runs in its successor, Mosaic GPU (`JAXDD_SWEEP=mosaic`, tests pass; on the RTX 4070 Ti
-  SUPER equal to Triton at batch 16 384, slower at 4096 since its programs take at least 128
-  devices; docs/solver.md). Next: `validation/breakdown.py` 4096 and 16 384 on the A100 (it
-  times both backends), and `validation/hard.py` with `JAXDD_SWEEP=mosaic`; if Mosaic is as
-  fast there, it becomes the default before Triton goes.
 
 A fused kernel for the whole step stays the large lever (from the A100's bandwidth an estimated
 10⁴–3·10⁴ curves/s, 4–10× today's). It is not needed for the steady state; decide it with Stage C (section 4) and after

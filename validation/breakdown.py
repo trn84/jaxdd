@@ -22,7 +22,14 @@ from bench import variants
 
 from jaxdd.batch import _bounds, _current, _initial, prepare
 from jaxdd.solver import BERNOULLI, _assemble, _block_thomas, _ion_constraints, _kernels
-from jaxdd.sweep import MOSAIC_TILE, SWEEP_TILE, mosaic_sweep, pallas_sweep, sweep_kind
+from jaxdd.sweep import (
+    MOSAIC_TILE,
+    SWEEP_TILE,
+    kernel_available,
+    mosaic_sweep,
+    pallas_sweep,
+    sweep_kind,
+)
 
 REPEATS = 5
 
@@ -89,7 +96,8 @@ def main(batch_size: int = 256) -> None:
     total += timed("residual, blocks, ion columns (edges)", jax.jit(jax.vmap(assembled)), batch)
     total += timed("ion constraint (jacrev)", jax.jit(jax.vmap(constraint)), batch)
     scan = timed("linear solve (block sweep, scan)", jax.jit(jax.vmap(_block_thomas)), A, B, C, rhs)
-    if jax.default_backend() == "gpu":
+    tiles, mosaic = {}, {}
+    if kernel_available("pallas"):
         tiles = {
             tile: timed(f"linear solve (sweep kernel, tile {tile})",
                         jax.jit(functools.partial(pallas_sweep, tile=tile)), A, B, C, rhs)
@@ -97,7 +105,7 @@ def main(batch_size: int = 256) -> None:
         }  # fmt: skip
         timed(f"linear solve (kernel, {SWEEP_TILE}, solver's layout)",
               jax.jit(functools.partial(pallas_sweep, transposed=False)), A, B, C, rhs)  # fmt: skip
-        mosaic = {}
+    if kernel_available("mosaic"):
         for tile in (128, 256):
             for transposed in (True, False):
                 layout = "" if transposed else ", solver's layout"
@@ -105,10 +113,8 @@ def main(batch_size: int = 256) -> None:
                     f"linear solve (Mosaic, tile {tile}{layout})",
                     jax.jit(functools.partial(mosaic_sweep, tile=tile, transposed=transposed)),
                     A, B, C, rhs)  # fmt: skip
-        kind = sweep_kind()
-        total += {"pallas": tiles[SWEEP_TILE], "mosaic": mosaic[MOSAIC_TILE, True]}.get(kind, scan)
-    else:
-        total += scan
+    used = {"pallas": tiles.get(SWEEP_TILE), "mosaic": mosaic.get((MOSAIC_TILE, True))}
+    total += used.get(sweep_kind()) or scan
     total += timed("current", jax.jit(jax.vmap(current)), batch)
     print(f"  {'sum of the parts (the sweep the solver uses)':38s} {total:9.2f} ms")
 

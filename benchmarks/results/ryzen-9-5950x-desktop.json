@@ -1,6 +1,6 @@
 {
  "label": "Ryzen 9 5950X desktop",
- "date": "2026-11-11",
+ "date": "2026-11-12",
  "machine": {
   "cpu": "AMD Ryzen 9 5950X 16-Core Processor",
   "logical_cores": 32,
@@ -9,7 +9,7 @@
   "gpu": "NVIDIA GeForce RTX 4070 Ti SUPER"
  },
  "versions": {
-  "jaxdd": "80434b0e28a9",
+  "jaxdd": "a58fc635f6fd",
   "jax": "0.12.0.1",
   "python": "3.13.11",
   "simss": "5.36"
@@ -27,9 +27,9 @@
    "gpu": "NVIDIA GeForce RTX 4070 Ti SUPER",
    "batch": 4096,
    "runs": 8192,
-   "seconds": 9.488232833999973,
-   "runs_per_s": 863.3852207594365,
-   "first_batch_s": 7.609780200999921,
+   "seconds": 10.391506500000105,
+   "runs_per_s": 788.336128163892,
+   "first_batch_s": 7.491976359999853,
    "converged": 1.0,
    "steps_needed": 2.760806224385246,
    "steps_paid": 3.3442622950819674,
@@ -41,9 +41,9 @@
    "gpu": "NVIDIA GeForce RTX 4070 Ti SUPER",
    "batch": 16384,
    "runs": 32768,
-   "seconds": 35.19593914699999,
-   "runs_per_s": 931.0164977596019,
-   "first_batch_s": 21.58050418000039,
+   "seconds": 30.87317737100011,
+   "runs_per_s": 1061.3743964940822,
+   "first_batch_s": 19.64379130899988,
    "converged": 1.0,
    "steps_needed": 2.760806224385246,
    "steps_paid": 3.3442622950819674,
@@ -55,9 +55,9 @@
    "procs": 32,
    "batch": 2,
    "runs": 4096,
-   "seconds": 6.025604657000258,
-   "runs_per_s": 679.7658049539417,
-   "per_process_runs_per_s": 24.078809323329526,
+   "seconds": 5.608568764999973,
+   "runs_per_s": 730.3110956864625,
+   "per_process_runs_per_s": 24.194019053036534,
    "converged": 1.0,
    "steps_needed": 2.754610655737705,
    "steps_paid": 3.2950819672131146,
@@ -68,8 +68,8 @@
    "device": "cpu",
    "procs": 32,
    "runs": 1024,
-   "seconds": 22.435509836000165,
-   "runs_per_s": 45.641931361723856,
+   "seconds": 22.100947501999826,
+   "runs_per_s": 46.33285518221978,
    "version": "5.36",
    "how": "docker jaxdd/simss:5.36",
    "failed_runs": 0,
@@ -80,8 +80,8 @@
   "devices": 48,
   "bernoulli": "simss",
   "tolerance": 0.001,
-  "median": 1.8950271020243229e-06,
-  "max": 1.5337546385228114e-05,
+  "median": 1.8950271014567443e-06,
+  "max": 1.533754637410003e-05,
   "beyond_tolerance": 0
  }
 }

@@ -12,25 +12,27 @@ The lockstep's tail is gone on the hardest grid known: on 16 384 devices of the 
 ions no voltage takes more than 12 Newton steps and none fails ([docs/batching.md](docs/batching.md)),
 since the scan runs outwards from the pre-bias and the Jacobian is assembled by intervals
 ([docs/solver.md](docs/solver.md)); `solve_batch` makes one pass by default again (two passes
-cost up to 29 % where nothing fails). On the RTX 4070 Ti SUPER those devices took 116 s with the
-Jacobian by rows (two passes, limit 25) and take 38 s now. On an A100-SXM4-40GB the benchmark
-runs at 2075 curves/s (batch 16 384); a Newton step of 16 384 devices there is 34 ms: the block
-sweep 21.2, the assembly 9.1, the current 2.4, the ion constraint 1.3
-(`validation/breakdown.py`).
+cost up to 30 % where nothing fails), and on an NVIDIA GPU the block sweep is one Pallas kernel
+instead of a scan's ~1450 kernel launches (`jaxdd.sweep`). On the RTX 4070 Ti SUPER those
+devices took 116 s with the Jacobian by rows (two passes, limit 25) and take 38 s now. On an
+A100-SXM4-40GB the benchmark runs at 2365 curves/s (batch 16 384), the hard workload
+(`validation/hard.py`) at 1425; a Newton step of 16 384 devices there is 20 ms: the assembly
+9.1, the block sweep 7.2, the current 2.7, the ion constraint 1.3 (`validation/breakdown.py`).
 
 Next:
 
 - A chunk of the large grid on the A100 (64 s before, on the 80 GB PCIe card).
-- The block sweep as one Pallas kernel (`jaxdd.sweep`, docs/solver.md), against the scan's
-  ~1450 kernel launches per sweep: on the RTX 4070 Ti SUPER the sweep 17.5 ms instead of 30 at
-  batch 16 384, the benchmark +8 %. To measure on the A100, where the launches weigh more
-  (`STEPS="breakdown bench hard" benchmarks/apptainer.sh`; on a pod `benchmarks/runpod.sh`,
-  whose `scan` step runs the scan on the same card), and to keep only if it pays there.
-  It uses Pallas's Triton backend, deprecated in JAX 0.12 (the scan runs where it is gone);
-  its successor, Mosaic GPU, targets Hopper.
+- Batch 4096 on the A100 ran slower with the sweep kernel in `benchmarks/run.py` (1037
+  curves/s, 1399 with the scan the day before), though `breakdown.py` times the kernel at 4096
+  four times faster than the scan. Unexplained; batch 16 384 is unaffected.
+- The assembly is now the largest part (9.1 of 20 ms on the A100). Each interval's fluxes
+  are computed once; what is left is memory traffic over the blocks.
+- The sweep kernel uses Pallas's Triton backend, which JAX 0.12 marks deprecated (the scan
+  runs where it is gone, at 15–36 % less). Its successor, Mosaic GPU, targets Hopper; before
+  the backend goes, the kernel needs another way in (Mosaic GPU, `jax_triton`, or the XLA FFI).
 
 A fused kernel for the whole step stays the large lever (from the A100's bandwidth an estimated
-10⁴–3·10⁴ curves/s, 5–15× today's). It is not needed for the steady state; decide it with Stage C (section 4) and after
+10⁴–3·10⁴ curves/s, 4–10× today's). It is not needed for the steady state; decide it with Stage C (section 4) and after
 M7 (section 2).
 
 ### 1.3 M8: the MI50 cards
@@ -143,9 +145,9 @@ gradients; each says how much speed it needs.
 
 | | Curves/s | Per hour | 1024 curves |
 |---|---|---|---|
-| A100 today (40 GB SXM4, batch 16 384) | ~2100 | 7.5 M | 0.49 s |
+| A100 today (40 GB SXM4, batch 16 384) | ~2800 | 10 M | 0.37 s |
 | A100 with a fused kernel (estimate, uncertain by 3×) | 10⁴–3·10⁴ | 36–110 M | 35–100 ms |
-| a 16-core desktop CPU today | ~680 | 2.4 M | 1.5 s |
+| a 16-core desktop CPU today | ~730 | 2.6 M | 1.4 s |
 | one CPU core today | ~58 | 210 k | 18 s |
 | a neural surrogate, evaluated | ~10⁶ | — | ~1 ms |
 
@@ -157,12 +159,12 @@ gradients; each says how much speed it needs.
    recipes, layer stacks with many parameters).
    Training must mask by the `converged` flag, and active learning steers towards the hard
    devices, which the lockstep makes slow. For a fixed dataset today's speed is enough: 10 M
-   curves in about 1.3 h on one A100.
+   curves in about 1 h on one A100.
 2. **Parameters from measurements, with uncertainty.** MCMC needs 10⁵–10⁶ simulations per cell,
-   0.8–8 min on one A100. Ensemble samplers and sequential Monte Carlo map onto the batch;
+   0.6–6 min on one A100. Ensemble samplers and sequential Monte Carlo map onto the batch;
    gradient-based samplers and optimisers need M7.
 3. **Sensitivity analysis and uncertainty propagation.** Sobol indices by Saltelli sampling
-   (N·(d+2) simulations: 1.8·10⁵ for N = 10⁴, d = 16, under 1.5 min) and Monte Carlo over process
+   (N·(d+2) simulations: 1.8·10⁵ for N = 10⁴, d = 16, about a minute) and Monte Carlo over process
    spread: independent devices, exactly the batch.
 4. **Inverse design.** Optimise a stack for efficiency or stability, by gradient (M7), from many
    starting points in parallel.

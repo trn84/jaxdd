@@ -6,9 +6,9 @@ benchmark devices of `validation/bench.py`; the README's figure has every machin
 
 | Machine | jaxdd | SimSS 5.36 on all cores of the same machine |
 |---|---|---|
-| A100-SXM4-40GB, batch 16384 | ~2100 | — |
-| RTX 4070 Ti SUPER, batch 16384 | ~930 | — |
-| Ryzen 9 5950X (16 cores), CPU | ~680 | ~46 |
+| A100-SXM4-40GB, batch 16384 | ~2800 | — |
+| RTX 4070 Ti SUPER, batch 16384 | ~1060 | — |
+| Ryzen 9 5950X (16 cores), CPU | ~730 | ~46 |
 | one CPU core | ~58 | ~0.5 (2 s per curve) |
 
 ## CPU: one small process per core
@@ -37,12 +37,13 @@ taskset -c 0 python my_sweep.py --part 0 &      # one per core, each pinned
 
 Install the CUDA jaxlib (`pip install "jax[cuda12]"`); JAX then uses the GPU by default. Use
 large batches: the sweep along the grid is sequential, so a GPU is busy only when each step
-covers thousands of devices. On an A100-SXM4-40GB, batch 4096 gives about 1400 curves/s and
-16384 about 2100.
+covers thousands of devices. On an A100-SXM4-40GB batch 16384 gives about 2800 curves/s in
+`benchmarks/run.py` and 2400 in `validation/bench.py` (whose batches hold 16384 distinct devices,
+where `run.py` repeats 2048), batch 4096 about 1000–1400.
 
 **Data-centre cards only, for speed.** jaxdd needs FP64. The A100 and H100 run it at half their
-FP32 rate; consumer cards (GeForce, RTX) at 1/64. A RTX 4070 Ti SUPER reaches about 930
-curves/s, little more than a 16-core desktop CPU (680) and less than half an A100. It is fine
+FP32 rate; consumer cards (GeForce, RTX) at 1/64. A RTX 4070 Ti SUPER reaches about 1060
+curves/s, little more than a 16-core desktop CPU (730) and well under half an A100. It is fine
 for development and for checking that everything runs on a GPU.
 
 ### A cloud A100
@@ -98,8 +99,9 @@ git clone https://github.com/trn84/jaxdd.git ~/jaxdd && cd ~/jaxdd
 benchmarks/apptainer.sh                          # STEPS="breakdown bench" for a part
 ```
 
-On an A100-SXM4-40GB it runs at 2075 curves/s in the container at batch 16384, all tests
-passing; a Newton step of 16384 devices there is 34 ms, 21 of it the block sweep.
+On an A100-SXM4-40GB it runs at 2800 curves/s in the container at batch 16384, all tests
+passing; a Newton step of 16384 devices there is 20 ms, 9 of it the assembly and 7 the block
+sweep's kernel.
 
 ## AMD Instinct MI50 (gfx906)
 

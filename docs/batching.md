@@ -91,8 +91,8 @@ What helps, cheapest first:
    6 89 s. Assembled by intervals none fails, and the insurance costs: the second pass solves a
    few dozen devices over every voltage, a small batch that keeps a GPU barely busy and still
    takes a good part of a full one's time. On `validation/hard.py` (16 384 devices) one pass ran
-   at 1725 curves/s on an A100-SXM4-80GB, two at 1338; on the A100-SXM4-40GB 1049 against 1005;
-   on the RTX 4070 Ti SUPER about even. Hence one pass by default; two (limit 6: an ordinary
+   at 1725 curves/s on an A100-SXM4-80GB, two at 1338; on the A100-SXM4-40GB 1425 against 1100
+   (with the scan as the sweep 1049 against 1007); on the RTX 4070 Ti SUPER about even. Hence one pass by default; two (limit 6: an ordinary
    device takes 2–4 steps, sometimes 5) for batches where devices fail.
 3. **Smaller batches.** The expected maximum over fewer lanes is lower. On an A100, batch 4096
    runs at about 88 % of the rate of 16384.

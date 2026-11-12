@@ -265,9 +265,15 @@ itself, its carry in registers. The kernel wants the devices on the last axis, s
 program's loads are contiguous: the blocks are transposed in and the solution out. An
 optimization barrier before the transposes is essential: without it XLA fused the blocks'
 whole assembly into each of the four transposes and computed it four times, which made the
-kernel slower than the scan. On an RTX 4070 Ti SUPER at batch 16 384 the sweep takes 17.5 ms
-instead of 30, assembly and sweep together 43.5 ms instead of 57, and `bench.py` runs at 910
-curves/s instead of 840. The kernel agrees with the scan to 1e-12 (tests).
+kernel slower than the scan. At batch 16 384:
+
+| | sweep, scan → kernel | Newton step (`breakdown.py`) | `bench.py` | `hard.py` |
+|---|---|---|---|---|
+| A100-SXM4-40GB | 21.3 → 7.2 ms | 34 → 20 ms | 2063 → 2365 curves/s | 1049 → 1425 curves/s |
+| RTX 4070 Ti SUPER | 30 → 17.5 ms | — | 840 → 910 curves/s | 444 → 520 curves/s |
+
+The A100 gains most, where the launches weigh most against its fast FP64 arithmetic. The kernel
+agrees with the scan to 1e-12 (tests).
 
 The scan stays for one device (`solve_jv`), on a CPU and on ROCm; `JAXDD_SWEEP=scan` chooses
 it anywhere, `JAXDD_SWEEP=pallas` the kernel. The kernel uses Pallas's Triton backend, which

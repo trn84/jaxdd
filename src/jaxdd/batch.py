@@ -168,31 +168,167 @@ def _poisson_solve(y, d, s, ion, Vint, max_iter):
     return y
 
 
+def _held(ion):
+    """1 for a species without a mobile region, whose normalisation is held, else 0."""
+    return jnp.where(jnp.stack([ion["a_total"], ion["c_total"]]) > 0, 0.0, 1.0)
+
+
+def _residual(y, logs, bounds, s, ion, Vt, g_frac, B):
+    """Newton's system at `(y, logs)`: the rows' residual (NP × 3) and the ions' constraints,
+    a held normalisation's row its own value (an identity row, as in `_system`)."""
+    full = jnp.concatenate([bounds[0][None], y, bounds[1][None]])
+    F = _assemble(full, s, Vt, g_frac, logs[0], logs[1], B)[0]
+    return F, _ion_constraints(full[:, 0], logs[0], logs[1], ion) + _held(ion) * logs
+
+
+def _system(y, logs, bounds, s, ion, Vt, g_frac, B):
+    """`_residual` and its Jacobian in `(y, logs)`: `(F, g, blocks)`, the blocks
+    `(A, B, C, U, W, D)` of the bordered system `[[T, U], [Wᵀ, D]]` — `T` block tridiagonal
+    (`A, B, C`), `U` the rows' derivatives in the normalisations, `W` the constraints' in the
+    potentials (column 0 of each point), `D` theirs in the normalisations."""
+    la, lc = logs[0], logs[1]
+    full = jnp.concatenate([bounds[0][None], y, bounds[1][None]])
+    F, A, Bb, C, U = _assemble(full, s, Vt, g_frac, la, lc, B)
+
+    def constraints(V_interior, logs_):
+        V_full = jnp.concatenate([bounds[0][:1], V_interior, bounds[1][:1]])
+        return _ion_constraints(V_full, logs_[0], logs_[1], ion)
+
+    g = constraints(full[1:-1, 0], logs)
+    # Two outputs of NP inputs: reverse mode, two passes (forward mode took NP passes and
+    # 90 % of a Newton step).
+    dg_dV, D = jax.jacrev(constraints, argnums=(0, 1))(full[1:-1, 0], logs)
+    D = D + jnp.diag(_held(ion))
+    W = jnp.zeros((y.shape[0], 3, 2)).at[:, 0, :].set(dg_dV.T)
+    return F, g, (A, Bb, C, U, W, D)
+
+
+def _bordered_solve(blocks, r, rg):
+    """`[[T, U], [Wᵀ, D]]·(x, z) = (r, rg)` (`_system`'s blocks): the block sweep on three
+    right-hand sides and a 2×2 Schur complement (Sherman–Morrison–Woodbury, docs/solver.md)."""
+    A, Bb, C, U, W, D = blocks
+    X = block_sweep(A, Bb, C, jnp.concatenate([r[..., None], U], axis=-1))
+    XF, XU = X[..., 0], X[..., 1:]
+    schur = D - jnp.einsum("irk,irl->kl", W, XU)
+    z = jnp.linalg.solve(schur, rg - jnp.einsum("irk,ir->k", W, XF))
+    return XF - XU @ z, z
+
+
+def _transposed(blocks):
+    """The blocks of the transposed system: block tridiagonal again, `Aᵢ ← Cᵢ₋₁ᵀ`, `Bᵢ ← Bᵢᵀ`,
+    `Cᵢ ← Aᵢ₊₁ᵀ`, and the border's `U` and `W` exchanged."""
+    A, Bb, C, U, W, D = blocks
+    zero = jnp.zeros_like(A[:1])
+    return (
+        jnp.concatenate([zero, jnp.swapaxes(C[:-1], -1, -2)]),
+        jnp.swapaxes(Bb, -1, -2),
+        jnp.concatenate([jnp.swapaxes(A[1:], -1, -2), zero]),
+        W,
+        U,
+        D.T,
+    )
+
+
+def _apply(blocks, x, z):
+    """`[[T, U], [Wᵀ, D]]·(x, z)`."""
+    A, Bb, C, U, W, D = blocks
+    pad = jnp.zeros_like(x[:1])
+    left, right = jnp.concatenate([pad, x[:-1]]), jnp.concatenate([x[1:], pad])
+    rows = (jnp.einsum("irc,ic->ir", A, left) + jnp.einsum("irc,ic->ir", Bb, x)
+            + jnp.einsum("irc,ic->ir", C, right) + U @ z)  # fmt: skip
+    return rows, jnp.einsum("irk,ir->k", W, x) + D @ z
+
+
 def _newton_solve(y, logs, d, s, ion, Vint, g_frac, B, tol, max_iter, strict=False):
-    """Newton at one voltage until converged (module docstring) or `max_iter`."""
+    """Newton at one voltage until converged (module docstring) or `max_iter`:
+    `(y, logs, J, converged, iterations)`. Differentiable in everything but the start: the
+    derivatives are those of the converged solution (`_converged_jvp`), not of the iterations."""
+    guess = jax.lax.stop_gradient((y, logs))
+    return _converged(B, max_iter, strict, guess, (d, s, ion, Vint, g_frac), tol)
+
+
+@functools.partial(jax.custom_jvp, nondiff_argnums=(0, 1, 2))
+def _converged(B, max_iter, strict, guess, params, tol):
+    """`_newton_solve` from `guess`, without derivatives of its own."""
+    d, s, ion, Vint, g_frac = params
+    return _newton_loop(*guess, d, s, ion, Vint, g_frac, B, tol, max_iter, strict)
+
+
+@_converged.defjvp
+def _converged_jvp(B, max_iter, strict, primals, tangents):
+    """Implicit differentiation (M7): at a root of `_residual`, `∂r/∂y·ẏ = −∂r/∂θ·θ̇`. One linear
+    solve with Newton's own Jacobian, whatever the iterations were; its transpose, for reverse
+    mode, the same sweep on the transposed blocks (`custom_linear_solve`). A voltage not
+    converged (or not finite) gets zero derivatives, so that it cannot spoil a gradient summed
+    over the curve."""
+    guess, params, tol = primals
+    out = _converged(B, max_iter, strict, guess, params, tol)
+    y, logs, _, done, it = out
+    valid = done & jnp.all(jnp.isfinite(y)) & jnp.all(jnp.isfinite(logs))
+    y_dot, logs_dot, J_dot = _tangent(B, valid, y, logs, params, tangents[1])
+    zero = functools.partial(np.zeros, dtype=jax.dtypes.float0)
+    return out, (y_dot, logs_dot, J_dot, zero(np.shape(done)), zero(np.shape(it)))
+
+
+@functools.partial(jax.checkpoint, static_argnums=(0,))
+def _tangent(B, valid, y, logs, params, params_dot):
+    """The converged solution's and current's tangents. Under `jax.checkpoint`, so that reverse
+    mode keeps the solution per voltage, not its Jacobian blocks and the residual's
+    linearisation: these are computed again in the backward pass."""
+    y = jnp.where(valid, y, 0.0)
+    logs = jnp.where(valid, logs, 0.0)
+
+    def residual(params):
+        d, s, ion, Vint, g_frac = params
+        return _residual(y, logs, _bounds(d, Vint), s, ion, d["Vt"], g_frac, B)
+
+    _, (r, rg) = jax.jvp(residual, (params,), (params_dot,))
+    d, s, ion, Vint, g_frac = params
+    _, _, blocks = _system(y, logs, _bounds(d, Vint), s, ion, d["Vt"], g_frac, B)
+    # An invalid voltage: the identity, whose solve of a zero right-hand side is zero even
+    # where its own blocks are not finite.
+    eye = jnp.eye(3)
+    identity = (0.0, eye, 0.0, 0.0, 0.0, jnp.eye(2))
+    blocks = tuple(jnp.where(valid, b, jnp.broadcast_to(i, b.shape))
+                   for b, i in zip(blocks, identity, strict=True))  # fmt: skip
+
+    # One flat right-hand side: JAX transposes a linear solve only where every part of it is
+    # linear in the tangents, and the constraints' part is a constant zero where no tangent
+    # reaches the ions.
+    def flat(f, blocks):
+        def g(v):
+            x, z = f(blocks, v[:-2].reshape(r.shape), v[-2:])
+            return jnp.concatenate([x.ravel(), z])
+
+        return g
+
+    sol = jax.lax.custom_linear_solve(
+        flat(_apply, blocks),
+        -jnp.concatenate([r.ravel(), rg]),
+        solve=lambda _, b: flat(_bordered_solve, blocks)(b),
+        transpose_solve=lambda _, b: flat(_bordered_solve, _transposed(blocks))(b),
+    )
+    y_dot, logs_dot = sol[:-2].reshape(r.shape), sol[-2:]
+    y_dot = jnp.where(valid, y_dot, 0.0)
+    logs_dot = jnp.where(valid, logs_dot, 0.0)
+
+    def current(y, params):
+        d, _, _, Vint, g_frac = params
+        bounds = _bounds(d, Vint)
+        return _current(d, jnp.concatenate([bounds[0][None], y, bounds[1][None]]), g_frac)
+
+    _, J_dot = jax.jvp(current, (y, params), (y_dot, params_dot))
+    return y_dot, logs_dot, jnp.where(valid, J_dot, 0.0)
+
+
+def _newton_loop(y, logs, d, s, ion, Vint, g_frac, B, tol, max_iter, strict):
+    """Newton's iterations of `_newton_solve`."""
     bounds = _bounds(d, Vint)
     Vt = d["Vt"]
 
     def step(y, logs):
-        la, lc = logs[0], logs[1]
-        full = jnp.concatenate([bounds[0][None], y, bounds[1][None]])
-        F, A, Bb, C, U = _assemble(full, s, Vt, g_frac, la, lc, B)
-
-        def constraints(V_interior, logs_):
-            V_full = jnp.concatenate([bounds[0][:1], V_interior, bounds[1][:1]])
-            return _ion_constraints(V_full, logs_[0], logs_[1], ion)
-
-        g = constraints(full[1:-1, 0], logs)
-        # Two outputs of NP inputs: reverse mode, two passes (forward mode took NP passes and
-        # 90 % of a Newton step).
-        dg_dV, D = jax.jacrev(constraints, argnums=(0, 1))(full[1:-1, 0], logs)
-        D = D + jnp.diag(jnp.where(jnp.stack([ion["a_total"], ion["c_total"]]) > 0, 0.0, 1.0))
-        W = jnp.zeros((y.shape[0], 3, 2)).at[:, 0, :].set(dg_dV.T)
-        X = block_sweep(A, Bb, C, jnp.concatenate([-F[..., None], U], axis=-1))
-        XF, XU = X[..., 0], X[..., 1:]
-        schur = D - jnp.einsum("irk,irl->kl", W, XU)
-        d_logs = jnp.linalg.solve(schur, -g - jnp.einsum("irk,ir->k", W, XF))
-        delta = XF - XU @ d_logs
+        F, g, blocks = _system(y, logs, bounds, s, ion, Vt, g_frac, B)
+        delta, d_logs = _bordered_solve(blocks, -F, -g)
         caps = step_caps(Vt)
         stepv = jnp.clip(delta, -caps, caps)
         d_logs = jnp.clip(d_logs, -ION_LOG_CAP, ION_LOG_CAP)
@@ -279,10 +415,12 @@ def _solve_one(d, voltages, B, tol, max_iter, start_iter, strict):
     start, and a low first cap does not fail the pre-bias, which a batch pays once)."""
     s, ion, Vt, g_frac = d["s"], d["ion"], d["Vt"], d["g_frac"]
     first = jnp.where(d["pre_cond"] > 0, d["V_pre"], voltages[0])
-    y = _initial(d, first)[1:-1]
-    y = _poisson_solve(y, d, s, ion, first, start_iter)
-    bounds = _bounds(d, first)
-    logs = _ion_logs(jnp.concatenate([bounds[0][:1], y[:, 0], bounds[1][:1]]), ion)
+    # The start: no derivatives (`_newton_solve` has them, of its converged solution; reverse
+    # mode has none through a while loop).
+    d0, s0, ion0, first0 = jax.lax.stop_gradient((d, s, ion, first))
+    y = _poisson_solve(_initial(d0, first0)[1:-1], d0, s0, ion0, first0, start_iter)
+    bounds = _bounds(d0, first0)
+    logs = _ion_logs(jnp.concatenate([bounds[0][:1], y[:, 0], bounds[1][:1]]), ion0)
     y, logs, _, pre_ok, _ = _newton_solve(
         y, logs, d, s, ion, first, g_frac, B, tol, start_iter, strict
     )
@@ -308,9 +446,10 @@ def _solve_one(d, voltages, B, tol, max_iter, start_iter, strict):
         # Only a converged, finite solution is carried on: one failed voltage costs that
         # voltage, not the rest of the scan.
         keep = ok & jnp.all(jnp.isfinite(y_new)) & jnp.all(jnp.isfinite(logs_new))
+        # The carry only starts the next voltage: without derivatives.
         carry = jax.tree_util.tree_map(
             lambda new, old: jnp.where(keep, new, old),
-            (y_new, logs_new, y, logs, Vint, V_last),
+            jax.lax.stop_gradient((y_new, logs_new, y, logs, Vint, V_last)),
             carry,
         )
         return carry, (J, ok, it)
@@ -322,7 +461,7 @@ def _solve_one(d, voltages, B, tol, max_iter, start_iter, strict):
     below = jnp.searchsorted(voltages, first)
     j = jnp.arange(n)
     order = jnp.where(j < n - below, below + j, n - 1 - j)
-    start = (y, logs, y, logs, first, first)
+    start = jax.lax.stop_gradient((y, logs, y, logs, first, first))
     _, (J, ok, its) = jax.lax.scan(scan, start, (voltages[order], j == n - below))
     J, ok, its = (jnp.zeros_like(a).at[order].set(a) for a in (J, ok, its))
     return J, ok & pre_ok, its

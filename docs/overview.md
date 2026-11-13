@@ -85,7 +85,7 @@ and offers a switch that reproduces SimSS's number. Each such case is in
 
 | Question | Choice | Why |
 |---|---|---|
-| Language | JAX (Python) | batching by `vmap`, the Jacobian by automatic differentiation, CPU and GPU from one code, gradients available later; Python, where most sweeps and fits are written |
+| Language | JAX (Python) | batching by `vmap`, the Jacobian by automatic differentiation, CPU and GPU from one code, gradients of the curves (by implicit differentiation); Python, where most sweeps and fits are written |
 | Unknowns | `(V, ln n, ln p)` per grid point | densities never go negative, the 20 orders of magnitude live in the logarithm; Scharfetter–Gummel stays in `n`, `p` |
 | Nonlinear solver | coupled Newton | few steps per voltage, robust at high injection; a Gummel scheme needs many more iterations and does not batch better |
 | Jacobian | by intervals: each Scharfetter–Gummel flux and its derivatives once (`B'` by `jax.jvp`), each point's 3×3 blocks from its two intervals; tested against `jax.jacfwd` of one point's residual | 4× faster than autodiff of each point, and no round-off floor where frozen ions leave a carrier-free bulk; never the dense Jacobian of the whole device |

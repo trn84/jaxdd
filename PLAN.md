@@ -32,8 +32,7 @@ Next:
 
 A fused kernel for the whole step stays the large lever (from the A100's bandwidth an estimated
 10⁴–3·10⁴ curves/s, 4–10× today's), as an optional mode beside the JAX solver (section 2.3).
-It is not needed for the steady state; decide it with Stage C (section 4) and after M7
-(section 2).
+It is not needed for the steady state; decide it with Stage C (section 4).
 
 ### 1.3 M8: the MI50 cards
 
@@ -63,17 +62,12 @@ about two A100s).
 |---|---|---|
 | **M4** | The grid in space (2.1) | 400 points or fewer meet the validation criteria on the hardest devices, or bucketing by grid size is justified |
 | **M6** | Adaptive parameter axes (2.2) | the refined axes meet a table's interpolation tolerance with fewer devices than hand-made ones |
-| **M7** | Gradients of the converged solution by implicit differentiation (`jax.custom_root` or a custom VJP: one transposed linear solve per voltage); `lax.while_loop` has no reverse mode. Forward mode (`jax.jvp`) through the Newton iterations works today (tests) | gradients against finite differences on the test devices; a fit of a measured curve |
+| **M7** | Gradients in physical inputs (2.4): the device's arrays from its layers' parameters in JAX. The curves are differentiable in the batch's arrays already, by implicit differentiation of the converged solution ([docs/solver.md](docs/solver.md#derivatives)) | the gradient in a layer's parameter (a mobility, a doping, an energy level, the ion density, a thickness) against finite differences; a fit of a measured curve |
 | — | Several GPUs in one process: the batch axis sharded (`NamedSharding` or `shard_map`, not `pmap`); the devices are independent, so no communication | the rate scales with the number of GPUs |
 
-M7 comes before a fused kernel of the whole Newton step (section 2.3), and fixes how gradients
-are taken: by implicit differentiation, the backward pass needs only the converged solution and
-the JAX residual (its Jacobian at the solution and its derivative by the parameters), never the
-iterations that found it. Built so, any forward solver is a black box to the gradients, and a
-fused kernel needs no adjoint of its own; differentiated through the iterations instead, it
-would. The transposed system of the backward pass is block tridiagonal again, its blocks
-rearranged (`Aᵢ ← Cᵢ₋₁ᵀ`, `Bᵢ ← Bᵢᵀ`, `Cᵢ ← Aᵢ₊₁ᵀ`), and the same sweep, kernel or scan,
-solves it.
+Gradients are taken by implicit differentiation of the converged solution: the backward pass
+needs only the solution and the JAX residual, never the iterations that found it, so any forward
+solver is a black box to them, and a fused kernel (section 2.3) needs no adjoint of its own.
 
 ### 2.1 M4: the grid in space
 
@@ -152,9 +146,32 @@ jaxdd is pure Python today; and little gain on consumer cards, whose FP64 rate (
 RTX 4070 Ti SUPER) becomes the limit once memory traffic is gone. On the A100, H100 and MI50
 FP64 is fast.
 
-Order: M7 by implicit differentiation; Stage B in JAX; then the kernel for the physics that has
+Order: Stage B in JAX; then the kernel for the physics that has
 settled. A first measurement before deciding: the Newton step of Stage A's physics without ions
 as one CUDA kernel on devices without ions, against the JAX step's time on the A100.
+
+### 2.4 M7: gradients in physical inputs
+
+`solve_batch` is differentiable in every array of `prepare`'s tree, but the arrays are built in
+NumPy (`device.build_device`, `batch._device_tree`), so a gradient in a layer's mobility or doping
+has to be assembled by hand from the arrays it shapes (the tutorial's example scales four). What
+is left:
+
+1. **The device in JAX from its layers' parameters.** `build_device` without the grid: per layer
+   a vector of parameters (`eps_r`, `E_c`, `E_v`, `N_c`, `N_D`, `N_A`, `mu_n`, `mu_p`, the
+   interface velocities, `k_direct`, the trap, the ion densities, `W_L`, `W_R`, `T`, `G_frac`),
+   spread to the points by the layer index (static per grid), and every derived array
+   (`_stencils`, `_ion_setup`, `_device_tree`) by the same formulas in `jnp`. NumPy's version stays
+   the reference: both give the same tree to round-off (a test).
+2. **Thicknesses.** The number of points per layer is an integer (`layer_points`), fixed for a
+   batch; within it the positions are smooth in the thicknesses (`make_grid`'s geometric spacing).
+   A gradient in a thickness at fixed counts; a count that would change is a new grid, not a
+   derivative.
+3. **The generation profile** (`_generation`, transfer-matrix or from a file) as a function of the
+   thicknesses: the transfer-matrix part in JAX, or the profile held, documented.
+4. **A fit.** Parameters of one device from a measured curve, by `jax.grad` and an optimiser
+   (optax or `jax.scipy.optimize`), with bounds by transformation (logarithms of densities and
+   mobilities); on a curve SimSS made from known parameters first, then on a measured one.
 
 ## 3 Proposal: a steric limit on ion accumulation
 
@@ -247,7 +264,7 @@ microseconds per evaluation are needed.
 | tables, a fixed training set (1) | yes | not needed |
 | on-the-fly training, active learning (1) | yes, with a replay buffer | makes it nearly free |
 | MCMC per cell (2) | yes for a few cells | helps for many cells |
-| gradients: HMC, fits, inverse design (2, 4) | after M7 | faster forward solves; the gradients stay M7's |
+| gradients: HMC, fits, inverse design (2, 4) | in the batch's arrays; in physical inputs after M7 | faster forward solves; the gradients stay M7's |
 | Sobol, Monte Carlo (3) | yes | not needed |
 | inside other simulations, transients (5, 6) | doubtful | most likely needed |
 | interactive (7) | yes, even on a CPU | not needed |
@@ -267,5 +284,5 @@ microseconds per evaluation are needed.
 
 | Decision | When | With |
 |---|---|---|
-| The fused kernel as an optional mode (2.3) | with Stage C's plan, after M7 | the applications' needs (section 5) and a first measurement of a Stage A kernel |
+| The fused kernel as an optional mode (2.3) | with Stage C's plan | the applications' needs (section 5) and a first measurement of a Stage A kernel |
 | The steric ion model and its `N_max` | when a source for `N_max` is found | its users: results with and without it differ at high ion density |

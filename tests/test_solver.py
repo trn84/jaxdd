@@ -395,3 +395,93 @@ def test_the_block_sweep_solves_the_block_tridiagonal_system() -> None:
     ref = np.linalg.solve(full, d.reshape(3 * n, 2))
     x = np.asarray(_block_thomas(*map(jnp.asarray, (A, B, C, d))))
     assert np.max(np.abs(x.reshape(3 * n, 2) - ref)) < 1e-12
+
+
+def _scaled(batch, a):
+    """The batch with five of its arrays moved by `a` (1 leaves it): a mobility, the generation,
+    the anions' total, the doping and the pre-bias."""
+    s = dict(batch["s"], mun_m=batch["s"]["mun_m"] * a[0], G=batch["s"]["G"] * a[1],
+             dop=batch["s"]["dop"] + 1e21 * (a[3] - 1))  # fmt: skip
+    ion = dict(batch["ion"], a_total=batch["ion"]["a_total"] * a[2])
+    return dict(batch, s=s, ion=ion, G=batch["G"] * a[1], V_pre=batch["V_pre"] + 0.1 * (a[4] - 1))
+
+
+def test_gradients_of_the_curves_are_finite_differences() -> None:
+    """M7: reverse mode (`jax.grad`) through `solve_batch`, by implicit differentiation of each
+    converged voltage, in five arrays of the batch and in the voltages; on devices without ions,
+    with free ions and with ions frozen after a pre-bias (the gradient through the frozen
+    profile). The gradient is forward mode's (`jax.jvp`, the same tangents, transposed) to
+    round-off, and central finite differences confirm both."""
+    from jaxdd.batch import prepare, solve_batch
+
+    cases = ["thin_l1_light", "frozen_1e17_x1_thin_light", "steady_1e17_thin_light"]
+    batch = prepare([build_device(read_setup(DATA / c / "simulation_setup.txt")) for c in cases])
+    V = np.round(np.arange(-0.2, 1.3 + 1e-9, 0.1), 6)
+    w = jnp.asarray(np.random.default_rng(0).normal(size=(len(cases), len(V))))
+
+    def loss(a, Vs):
+        J, ok, _ = solve_batch(_scaled(batch, a), Vs)
+        return jnp.sum(w * jnp.where(ok, J, 0.0))
+
+    a0, V0 = jnp.ones(5), jnp.asarray(V)
+    ga, gV = jax.grad(loss, argnums=(0, 1))(a0, V0)
+    rng = np.random.default_rng(1)
+    da, dV = jnp.asarray(rng.normal(size=5)), jnp.asarray(rng.normal(size=len(V)))
+    _, jv = jax.jvp(loss, (a0, V0), (da, dV))
+    by_grad = float(ga @ da + gV @ dV)
+    assert abs(by_grad - float(jv)) < 1e-9 * abs(float(jv))
+    h = 1e-6
+    fd = (float(loss(a0 + h * da, V0 + h * dV)) - float(loss(a0 - h * da, V0 - h * dV))) / (2 * h)
+    assert abs(by_grad - fd) < 1e-6 * abs(fd)
+
+
+def test_a_voltage_not_converged_has_zero_gradient() -> None:
+    """A voltage that misses `max_iter` contributes nothing to a gradient, and nothing that is
+    not finite: its tangents are zero (`thin_l1_light` needs 7 Newton steps at a voltage)."""
+    from jaxdd.batch import _solve_batch, prepare
+
+    batch = prepare([build_device(read_setup(DATA / "thin_l1_light" / "simulation_setup.txt"))])
+    V = jnp.asarray(np.round(np.arange(-0.2, 1.3 + 1e-9, 0.1), 6))
+
+    def curves(a):
+        return _solve_batch(_scaled(batch, a), V, 1e-10, 6, 60, "exact", False)
+
+    ok = np.asarray(curves(jnp.ones(5))[1])
+    assert ok.any() and not ok.all()
+    jac = np.asarray(jax.jacrev(lambda a: curves(a)[0])(jnp.ones(5)))
+    assert np.isfinite(jac).all()
+    assert np.all(jac[~ok] == 0.0) and np.any(jac[ok] != 0.0)
+
+
+def test_the_bordered_system_and_its_transpose_are_solved() -> None:
+    """Invariant: `_bordered_solve` solves the block-tridiagonal system bordered by the ions' two
+    rows and columns, and on `_transposed` blocks its transpose; `_apply` is its product. Against
+    the dense matrix."""
+    from jaxdd.batch import _apply, _bordered_solve, _transposed
+
+    rng = np.random.default_rng(2)
+    n = 11
+    A, C = rng.normal(size=(n, 3, 3)), rng.normal(size=(n, 3, 3))
+    B = rng.normal(size=(n, 3, 3)) + 8 * np.eye(3)
+    U, W = rng.normal(size=(n, 3, 2)), rng.normal(size=(n, 3, 2))
+    D = rng.normal(size=(2, 2)) + 30 * np.eye(2)
+    full = np.zeros((3 * n + 2, 3 * n + 2))
+    for i in range(n):
+        full[3 * i : 3 * i + 3, 3 * i : 3 * i + 3] = B[i]
+        if i > 0:
+            full[3 * i : 3 * i + 3, 3 * i - 3 : 3 * i] = A[i]
+        if i < n - 1:
+            full[3 * i : 3 * i + 3, 3 * i + 3 : 3 * i + 6] = C[i]
+    full[: 3 * n, 3 * n :] = U.reshape(3 * n, 2)
+    full[3 * n :, : 3 * n] = W.reshape(3 * n, 2).T
+    full[3 * n :, 3 * n :] = D
+    blocks = tuple(map(jnp.asarray, (A, B, C, U, W, D)))
+    r, rg = rng.normal(size=(n, 3)), rng.normal(size=2)
+    rhs = np.concatenate([r.ravel(), rg])
+    for matrix, b in ((full, blocks), (full.T, _transposed(blocks))):
+        x, z = _bordered_solve(b, jnp.asarray(r), jnp.asarray(rg))
+        sol = np.concatenate([np.asarray(x).ravel(), np.asarray(z)])
+        assert np.max(np.abs(sol - np.linalg.solve(matrix, rhs))) < 1e-12
+        out, lo = _apply(b, jnp.asarray(r), jnp.asarray(rg))
+        prod = np.concatenate([np.asarray(out).ravel(), np.asarray(lo)])
+        assert np.max(np.abs(prod - matrix @ rhs)) < 1e-12

@@ -85,20 +85,31 @@ compiling, but for the second pass, which compiles once per power of two of stra
 
 ### Inside JAX transformations
 
-`solve_batch` runs inside `jax.jit`, `jax.vmap` and `jax.jvp`, in one pass there (the second
-pass's shape depends on how many devices the first leaves). Forward-mode derivatives of the
-curves in any array of the batch, through the Newton iterations, come from `jax.jvp` or
-`jax.jacfwd`; they agree with finite differences (tests):
+`solve_batch` runs inside `jax.jit`, `jax.vmap`, `jax.jvp` and `jax.grad`, in one pass there
+(the second pass's shape depends on how many devices the first leaves). The curves are
+differentiable in every array of the batch and in the voltages, in forward and reverse mode. The
+derivatives are those of the converged solution, by implicit differentiation
+([solver.md](solver.md#derivatives)); they agree with finite differences (tests):
 
 ```python
 def curves(g):                                   # J(V) at a share g of the generation
     return solve_batch(dict(batch, g_frac=batch["g_frac"] * g), V)[0]
 
-J, dJ_dg = jax.jvp(curves, (1.0,), (1.0,))
+J, dJ_dg = jax.jvp(curves, (1.0,), (1.0,))      # forward mode
+
+
+def misfit(mu):                                   # a curve against a measured one
+    s = dict(batch["s"], mun_m=batch["s"]["mun_m"] * mu, mun_p=batch["s"]["mun_p"] * mu)
+    J, ok, _ = solve_batch(dict(batch, s=s, mu_n=batch["mu_n"] * mu), V)
+    return jnp.sum(jnp.where(ok, J - J_measured, 0.0) ** 2)
+
+grad = jax.grad(misfit)(1.0)                      # reverse mode
 ```
 
-Reverse mode (`jax.grad`) does not work yet: `lax.while_loop` has none. Gradients by implicit
-differentiation of the converged solution are planned ([PLAN.md](../PLAN.md), M7).
+A voltage not converged has zero derivatives. The arrays are those of `prepare`'s tree: a
+physical input enters through every array it shapes (above, the electron mobility through the
+stencils and the current's `mu_n`). Derivatives in a layer's thickness or in parameters of
+`build_device` are not there yet ([PLAN.md](../PLAN.md), M7).
 
 ### Reading the result
 

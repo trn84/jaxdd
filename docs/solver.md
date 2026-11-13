@@ -366,3 +366,57 @@ A voltage that reaches `max_iter` without any of these is returned as it is, **f
 `converged = False`. jaxdd never stops early silently, and it never drops a voltage. The next
 voltage starts from the last converged solution
 ([above](#the-sequence-of-solves-for-one-device)).
+
+## Derivatives
+
+`solve_batch` is differentiable in every array of the batch and in the voltages, in forward mode
+(`jax.jvp`, `jax.jacfwd`) and reverse mode (`jax.grad`, `jax.vjp`). The derivatives are those of
+the converged solution, by implicit differentiation, never of the Newton iterations that found it
+(`batch._converged_jvp`).
+
+At a converged voltage the residual vanishes, `r(y, l; θ) = 0`, with `y` the unknowns, `l` the
+ion normalisations and `θ` everything else (the device's arrays, the voltage). Differentiated:
+
+```
+| J   U | | ẏ |     | ∂r/∂θ · θ̇ |        the matrix of the Newton step (above),
+| Wᵀ  D | | l̇ | = − | ∂g/∂θ · θ̇ |        at the solution
+```
+
+One linear solve per voltage, with the blocks of the last Newton step, and one forward-mode pass
+through the residual for the right-hand side; the current's tangent follows from `ẏ`. A held
+normalisation (a species without a mobile region) has the identity row of the Newton step, and its
+residual row is its own value, so that the derivative stays that row.
+
+Reverse mode transposes the solve. The transposed system is block tridiagonal again, its blocks
+rearranged, `Aᵢ ← Cᵢ₋₁ᵀ`, `Bᵢ ← Bᵢᵀ`, `Cᵢ ← Aᵢ₊₁ᵀ`, and the border's `U` and `W` exchanged
+(`batch._transposed`): the same sweep solves it, the Pallas kernel as the scan.
+`lax.custom_linear_solve` carries both solves, so that JAX never has to transpose the kernel
+itself. Its right-hand side is one flat vector: JAX transposes a linear solve only where every
+part of it depends on the tangents, and the constraints' part does not where no tangent reaches
+the ions.
+
+What this means for a curve:
+
+- **Any solver, the same derivatives.** The iterations, their number, the shortcuts and the
+  start do not enter: a forward solver that converges to the same solution (the scan, the kernel,
+  a fused kernel later, [PLAN.md](../PLAN.md) 2.3) has the same gradients, and needs no adjoint of
+  its own. They are exact to the solution's own error (1e-10 in the step).
+- **The start has none.** The Poisson start, the scan's carry and its extrapolated starts are
+  behind `stop_gradient`: they choose where Newton begins, not where it ends. A while loop has no
+  reverse mode, and none is needed.
+- **Through the frozen ions.** With `fixIons` after a pre-bias, the frozen profile is the
+  pre-bias solution's: its derivative flows into every voltage of the scan, in the pre-bias
+  voltage and in everything the pre-bias solution depends on.
+- **A voltage not converged** (or not finite) has zero derivatives; its blocks are replaced by
+  the identity, so that not even a zero cotangent meets a non-finite number. A sum over a curve
+  then needs no masking for its gradient to be finite; masking by `converged` is still what
+  makes it meaningful.
+- **Memory.** The tangent is under `jax.checkpoint`: reverse mode keeps each voltage's solution
+  (NP × 3 and two numbers), not its blocks or the residual's linearisation, and computes those
+  again in the backward pass.
+
+Tested against central finite differences and between both modes, on devices without ions, with
+free ions and with frozen ones (`tests/test_solver.py`). The derivatives are in the batch's
+arrays (`prepare`'s tree), not yet in a layer's thickness or mobility: devices are built in NumPy
+(`device.py`), and the chain from physical inputs to those arrays is open ([PLAN.md](../PLAN.md),
+M7).

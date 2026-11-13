@@ -2,12 +2,16 @@
 (2025) at once, by gradients.
 
     .venv/bin/python validation/fit_measured.py [SAMPLE ...] [--start cold|paper]
+        [--device mirrored|anode]
 
 SAMPLE is `01Cl`, `02Cl` or `06Cl` (all three by default; `validation/data/heester2025/`). The
-device is `tests/data/pin_iface_light`: the paper's stack (Table S2), mirrored to put the cathode
-left, with interface traps at both interfaces, and the sample's band gap. The paper's model as
-far as it is stated; what it does not state is assumed: a uniform generation in the absorber
-(its scale fitted; the paper's is transfer-matrix optics), the interface traps donors at 4.7 eV
+device (`--device mirrored`) is `tests/data/pin_iface_light`: the paper's stack (Table S2),
+mirrored to put the cathode left, with interface traps at both interfaces, and the sample's band
+gap; `--device anode` is the cell in its own orientation (`pin_anode_left_light`), lit through
+ITO and the HTL with the transfer-matrix profile, the perovskite's n,k data a stand-in. The
+paper's model as far as it is stated; what it does not state is assumed: the generation (uniform
+or the stand-in's, its scale fitted; the paper's is transfer-matrix optics with its own n,k data),
+the interface traps donors at 4.7 eV
 with capture coefficients of 2e-14 m³/s (SIMsalabim's defaults), the transport layers' outer bands
 (HTL `E_c` 2.5 eV, ETL `E_v` 6.2 eV). No series resistance, as in the paper. The intensities are
 the measured short-circuit currents' ratios to the 1-sun curve's (0.126 where the files say 0.10,
@@ -35,10 +39,16 @@ from jaxdd.simss_input import read_setup
 
 ROOT = Path(__file__).resolve().parents[1]
 DATA = ROOT / "validation" / "data" / "heester2025"
-DEVICE = ROOT / "tests" / "data" / "pin_iface_light"
+#: The device: "mirrored", `tests/data/pin_iface_light` (the cathode left, a uniform generation),
+#: or "anode", `pin_anode_left_light` (the cell in its own orientation, lit through ITO and the
+#: HTL, the transfer-matrix profile with a stand-in perovskite's n,k data); and its layers' indices
+#: (ETL, absorber, HTL).
+DEVICES = {
+    "mirrored": (ROOT / "tests" / "data" / "pin_iface_light", (0, 1, 2)),
+    "anode": (ROOT / "tests" / "data" / "pin_anode_left_light", (2, 1, 0)),
+}
 FILES = ("1sun", "083sun", "053sun", "038sun", "01sun")
 GAP_eV = {"01Cl": 1.68, "02Cl": 1.66, "06Cl": 1.65}  # the paper's Fig. S2
-ETL, ABSORBER, HTL = 0, 1, 2  # the mirrored stack's layers
 
 #: The paper's best fits (Table S2 of its supplementary material), for comparison and as a start.
 PAPER = {
@@ -63,32 +73,38 @@ FREE = [
 ]  # fmt: skip
 
 
-def fit(sample: str, start: str = "cold") -> dict:
+def fit(sample: str, start: str = "cold", device: str = "mirrored") -> dict:
     curves = [np.loadtxt(DATA / f"{sample}_{f}_fwd_JV.dat", skiprows=1) for f in FILES]
     V = jnp.asarray(curves[0][:, 0])
     J_data = np.stack([c[:, 1] for c in curves])
     jsc = np.array([abs(np.interp(0.0, c[:, 0], c[:, 1])) for c in curves])
     suns, scale = jsc / jsc[0], jsc[0]
-    structure, base = device_parameters(read_setup(DEVICE / "simulation_setup.txt"))
+    path, (ETL, ABSORBER, HTL) = DEVICES[device]
+    structure, base = device_parameters(read_setup(path / "simulation_setup.txt"))
     base = {k: jnp.asarray(v) for k, v in base.items()}
     base["E_v"] = base["E_v"].at[ABSORBER].set(base["E_c"][ABSORBER] + GAP_eV[sample])
-    base["gen_G"] = base["gen_G"] * jsc[0] / 187.0  # the device's profile was made for 187 A/m²
+    if structure.gen_mode == "file":  # the mirrored device's profile was made for 187 A/m²
+        base["gen_G"] = base["gen_G"] * jsc[0] / 187.0
 
     def unpack(theta):
         pairs = zip(theta, FREE, strict=True)
         return {n: (jnp.exp(t) if log else t) for t, (n, log, _, _) in pairs}
 
     def params(v, g):
-        p = dict(base, G_frac=g, gen_G=base["gen_G"] * v["G"])
-        p["mu_n"] = jnp.stack([v["mu_etl"], v["mu_n"], v["mu_htl"]])
-        p["mu_p"] = jnp.stack([v["mu_etl"], v["mu_p"], v["mu_htl"]])
+        p = dict(base, G_frac=g * v["G"])
+        p["mu_n"] = p["mu_n"].at[ETL].set(v["mu_etl"]).at[ABSORBER].set(v["mu_n"])
+        p["mu_n"] = p["mu_n"].at[HTL].set(v["mu_htl"])
+        p["mu_p"] = p["mu_p"].at[ETL].set(v["mu_etl"]).at[ABSORBER].set(v["mu_p"])
+        p["mu_p"] = p["mu_p"].at[HTL].set(v["mu_htl"])
         p["N_t_bulk"] = p["N_t_bulk"].at[ABSORBER].set(v["N_t"])
         p["k_direct"] = p["k_direct"].at[ABSORBER].set(v["k"])
         p["E_v"] = p["E_v"].at[HTL].set(v["Ev_htl"])
         p["E_c"] = p["E_c"].at[ETL].set(v["Ec_etl"])
         p["N_anion"] = p["N_anion"].at[ABSORBER].set(v["N_an"])
         p["N_cation"] = p["N_cation"].at[ABSORBER].set(v["N_cat"])
-        p["N_t_int"] = jnp.stack([v["Nti_etl"], v["Nti_htl"], p["N_t_int"][HTL]])
+        # Each layer's N_t_int is at its right interface: the left one of the pair holds it.
+        p["N_t_int"] = p["N_t_int"].at[min(ETL, ABSORBER)].set(v["Nti_etl"])
+        p["N_t_int"] = p["N_t_int"].at[min(HTL, ABSORBER)].set(v["Nti_htl"])
         p["R_shunt"] = v["R_sh"]
         return p
 
@@ -125,14 +141,14 @@ def fit(sample: str, start: str = "cold") -> dict:
                         xtol=1e-10, ftol=1e-12, gtol=1e-12, max_nfev=400)  # fmt: skip
     t2 = time.perf_counter()
     return dict(sample=sample, start=start, out=out, suns=suns, scale=scale, theta0=theta0,
-                fitted={k: float(x) for k, x in unpack(out.x).items()},
+                fitted={k: float(x) for k, x in unpack(out.x).items()}, device=device,
                 seconds=(t1 - t0, t2 - t1), calls=dict(calls))  # fmt: skip
 
 
 def report(r: dict) -> None:
     out, scale = r["out"], r["scale"]
     per_curve = np.mean(np.abs(out.fun.reshape(5, -1)), axis=1) * scale
-    print(f"{r['sample']} from {r['start']}: compile {r['seconds'][0]:.1f} s, fit "
+    print(f"{r['sample']} ({r['device']}) from {r['start']}: compile {r['seconds'][0]:.1f} s, fit "
           f"{r['seconds'][1]:.1f} s ({r['calls']['r']} curves, {r['calls']['J']} Jacobians, "
           f"each for 5 intensities): {out.message}; intensities "
           f"{np.round(r['suns'], 3).tolist()}")  # fmt: skip
@@ -151,9 +167,10 @@ def main() -> None:
     args = argparse.ArgumentParser()
     args.add_argument("samples", nargs="*", default=list(GAP_eV))
     args.add_argument("--start", choices=("cold", "paper"), default="cold")
+    args.add_argument("--device", choices=tuple(DEVICES), default="mirrored")
     a = args.parse_args()
     for sample in a.samples:
-        report(fit(sample, a.start))
+        report(fit(sample, a.start, a.device))
 
 
 if __name__ == "__main__":

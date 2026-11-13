@@ -111,6 +111,11 @@ so that the solver is never the larger error in what is computed from it.
   that with these assumptions the curves settle about three to five combinations of the
   parameters, not the parameters one by one — the paper's own point. The 0.6 Cl sample, with the
   largest band step to the ETL in the paper's fit, is the one the assumptions do not reach.
+  With the cell in its own orientation and the transfer-matrix profile instead
+  (`--device anode`, a stand-in perovskite's n,k data), the misfits are 0.86, 0.75 and 2.4 %:
+  no better, and the fitted parameters move by up to a factor of 20 between the two assumptions
+  about the generation (0.2 Cl: the ETL interface's traps 1.1e14 against 2.4e13 m⁻²). What these
+  curves say about a single parameter depends on the unstated assumptions as much as on the data.
 
 When jaxdd and SimSS disagree, check SimSS first: its `errJ` at that voltage, its log for "No
 convergence", and a rerun at tight tolerances. The cases where SimSS was wrong so far are all in
@@ -156,7 +161,7 @@ as arguments. SimSS itself is built by [`simss/`](../simss/README.md).
 | `validation/shortcuts.py CASE_DIR …` | the batched solver with its shortcuts against `strict=True` |
 | `validation/bench.py [N] [batch]` | curves per second ([hardware.md](hardware.md)) |
 | `validation/breakdown.py [batch]` | one Newton step's time, part by part |
-| `validation/fit_measured.py [SAMPLE …] [--start cold\|paper]` | a fit to the measured curves of Heester et al. (2025), five intensities at once |
+| `validation/fit_measured.py [SAMPLE …] [--start cold\|paper] [--device mirrored\|anode]` | a fit to the measured curves of Heester et al. (2025), five intensities at once |
 | `validation/fit.py CASE_DIR [--start S] [--fix NAME …] [--noise σ]` | a fit by gradients to the case's SimSS curve, from a perturbed start; what the curve determines (singular values) |
 
 ## Running SimSS for a comparison

@@ -61,6 +61,9 @@ so that the solver is never the larger error in what is computed from it.
   4e-7 against SimSS at tolerances of 1e-9. At its default tolerances SimSS stopped early there
   by 1.2e-4, and from 1.0 V on it does not converge at either; jaxdd converges to 1.25 V. The
   traps move these curves by up to two thirds of their scale.
+- **Series and shunt resistance** (2026-11-13): 2e-4 and 0.3 Ω m² on the 1 nm stack, the
+  series resistance moving the voltage by 1.8 V at the top of the scan: `J_ext` within 2.2e-6 of
+  SimSS's scale, `V_ext` within 4 µV.
 - **Gradients** agree with central finite differences and between forward and reverse mode,
   in the batch's arrays, the voltages and the input's own parameters (mobility, thickness, band
   edge, ion density, temperature, work function), without ions, with free and with frozen ions

@@ -117,8 +117,10 @@ def test_unsupported_input_is_refused_by_name(tmp_path) -> None:
     for f in case.iterdir():
         (tmp_path / f.name).write_text(f.read_text())
     setup_file = tmp_path / "simulation_setup.txt"
-    setup_file.write_text(setup_file.read_text().replace("R_series = 0", "R_series = 1E-4", 1))
-    with pytest.raises(NotImplementedError, match="R_series"):
+    text = setup_file.read_text()
+    assert "S_n_L = -1 " in text
+    setup_file.write_text(text.replace("S_n_L = -1 ", "S_n_L = 100 ", 1))
+    with pytest.raises(NotImplementedError, match="S_n_L"):
         check_supported(read_setup(setup_file))
 
 
@@ -151,6 +153,27 @@ def test_jv_with_interface_traps_reproduces_simss(case: str, tol: float) -> None
     assert res.converged.all()
     scale = np.max(np.abs(ref["Jext"]))
     assert np.max(np.abs(res.J - ref["Jext"])) < tol * scale
+
+
+def test_series_and_shunt_resistance_are_simss_external_circuit() -> None:
+    """Stage B: SimSS's external circuit, `J_ext = J + V_int/R_shunt`, `V_ext = V_int +
+    J_ext·R_series`, with 2e-4 and 0.3 Ω m² (the series resistance moves the voltage by 1.8 V at
+    the top of the scan): both solvers' `J` and `V_ext` against SimSS's."""
+    from jaxdd.batch import external_voltages, prepare, solve_batch
+
+    setup = read_setup(DATA / "resist_light" / "simulation_setup.txt")
+    check_supported(setup)
+    dev = build_device(setup)
+    ref = np.genfromtxt(DATA / "resist_light" / "JV.dat", names=True)
+    scale = np.max(np.abs(ref["Jext"]))
+    single = solve_jv(dev, ref["Vint"], bernoulli_name="simss")
+    batch = prepare([dev])
+    J, ok, _ = solve_batch(batch, ref["Vint"], bernoulli_name="simss")
+    V_ext = np.asarray(external_voltages(batch, ref["Vint"], J))[0]
+    assert single.converged.all() and np.asarray(ok).all()
+    for got_J, got_V in ((single.J, single.V_ext), (np.asarray(J)[0], V_ext)):
+        assert np.max(np.abs(got_J - ref["Jext"])) < 1e-5 * scale
+        assert np.max(np.abs(got_V - ref["Vext"])) < 1e-4
 
 
 def test_a_batch_mixes_devices_with_and_without_interface_traps() -> None:
@@ -559,7 +582,7 @@ def test_the_bordered_system_and_its_transpose_are_solved() -> None:
 @pytest.mark.parametrize(
     "case",
     ["thin_l1_light", "frozen_1e17_x1_thin_light", "steady_1e17_thin_light",
-     "frozen_thick_htl_dark", "iface_ions_light", "pin_iface_light"],
+     "frozen_thick_htl_dark", "iface_ions_light", "pin_iface_light", "resist_light"],
 )  # fmt: skip
 def test_the_device_in_jax_is_numpys(case: str) -> None:
     """`batch.device_tree` (the device in `jax.numpy` from its structure and parameters) gives

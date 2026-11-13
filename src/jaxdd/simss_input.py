@@ -108,7 +108,7 @@ def setup_from_texts(files: Mapping[str, str], setup: str = "simulation_setup.tx
 
 
 #: Stage A (docs/overview.md, "Scope") and the modules of Stage B so far (interface traps, one
-#: level each): the values a supported input must have. Ions are
+#: level each; series and shunt resistance): the values a supported input must have. Ions are
 #: supported in one layer per region, steady (free at every voltage) or held after a pre-bias
 #: (`preCond`, `fixIons`, as SimSS with `simss/fixed_ions.patch`: Poisson leaves them). Anything
 #: else is refused by name, never approximated.
@@ -117,8 +117,6 @@ _SETUP_REQUIRED = {
     "S_p_L": -1.0,
     "S_n_R": -1.0,
     "S_p_R": -1.0,
-    "R_shunt": -1.0,
-    "R_series": 0.0,
     "Vdist": 1.0,
     "currDiffInt": 2.0,
 }
@@ -137,6 +135,8 @@ def check_supported(setup: Setup) -> None:
         for name, value in _SETUP_REQUIRED.items()
         if float(setup.raw.get(name, value)) != value
     ]
+    if float(setup.raw.get("R_series", 0)) < 0 or float(setup.raw.get("R_shunt", -1)) == 0:
+        problems.append("R_series < 0 or R_shunt = 0 (SimSS refuses both)")
     if setup.raw.get("genProfile", "none") in ("none", "calc"):
         problems.append(f"genProfile = {setup.raw.get('genProfile')} (supported: a file)")
     for k, layer in enumerate(setup.layers, start=1):

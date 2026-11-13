@@ -9,9 +9,9 @@ left, with interface traps at both interfaces, and the sample's band gap. The pa
 far as it is stated; what it does not state is assumed: a uniform generation in the absorber
 (its scale fitted; the paper's is transfer-matrix optics), the interface traps donors at 4.7 eV
 with capture coefficients of 2e-14 m³/s (SIMsalabim's defaults), the transport layers' outer bands
-(HTL `E_c` 2.5 eV, ETL `E_v` 6.2 eV). The shunt resistance is added outside the solver,
-`J + V/R_shunt` (no series resistance, as in the paper). The intensities are the measured short-
-circuit currents' ratios to the 1-sun curve's (0.126 where the files say 0.10, 0.357 for 0.38).
+(HTL `E_c` 2.5 eV, ETL `E_v` 6.2 eV). No series resistance, as in the paper. The intensities are
+the measured short-circuit currents' ratios to the 1-sun curve's (0.126 where the files say 0.10,
+0.357 for 0.38).
 
 Fitted: the paper's free parameters (Table I, its bounds) and the generation's scale, by
 `scipy.optimize.least_squares` with the Jacobian from `jax.jacfwd` through the converged
@@ -89,6 +89,7 @@ def fit(sample: str, start: str = "cold") -> dict:
         p["N_anion"] = p["N_anion"].at[ABSORBER].set(v["N_an"])
         p["N_cation"] = p["N_cation"].at[ABSORBER].set(v["N_cat"])
         p["N_t_int"] = jnp.stack([v["Nti_etl"], v["Nti_htl"], p["N_t_int"][HTL]])
+        p["R_shunt"] = v["R_sh"]
         return p
 
     @jax.jit
@@ -96,7 +97,6 @@ def fit(sample: str, start: str = "cold") -> dict:
         v = unpack(theta)
         trees = [device_tree(structure, params(v, g)) for g in suns]
         J, ok, _ = solve_batch(jax.tree_util.tree_map(lambda *x: jnp.stack(x), *trees), V)
-        J = J + V[None, :] / v["R_sh"]
         # A voltage not converged costs a whole scale (validation/fit.py).
         return jnp.where(ok, (J - J_data) / scale, 1.0).ravel()
 

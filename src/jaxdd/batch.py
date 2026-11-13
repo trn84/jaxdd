@@ -47,7 +47,7 @@ from jaxdd.solver import (
 )
 from jaxdd.sweep import block_sweep
 
-__all__ = ["device_tree", "prepare", "solve_batch"]
+__all__ = ["device_tree", "external_voltages", "prepare", "solve_batch"]
 
 #: The current settled: unchanged to this share of its scale (the generation's current plus
 #: its own size) over `STALL_STEPS` Newton steps; SimSS's own errJ is larger.
@@ -81,6 +81,8 @@ def _device_tree(dev: Device, xp=np) -> dict:
                 "Cp": dev.srh_Cp, "nt0": dev.srh_nt0, "pt0": dev.srh_pt0},
         "iface": iface,
         "J_scale": xp.maximum(generated, 1.0),
+        "R_series": dev.R_series,
+        "G_shunt": xp.where(dev.R_shunt > 0, 1 / xp.where(dev.R_shunt > 0, dev.R_shunt, 1), 0.0),
         "pre_cond": float(dev.pre_cond), "V_pre": dev.V_pre, "fix_ions": float(dev.fix_ions),
     }  # fmt: skip
 
@@ -499,7 +501,16 @@ def _solve_batch(batch, voltages, tol, max_iter, start_iter, bernoulli_name, str
     order = jnp.argsort(voltages)
     J, ok, its = jax.vmap(one, in_axes=(0, None))(batch, voltages[order])
     back = jnp.argsort(order)
-    return J[:, back], ok[:, back], its[:, back]
+    # The shunt, at the internal voltage as SimSS has it.
+    J = J[:, back] + batch["G_shunt"][:, None] * voltages[None, :]
+    return J, ok[:, back], its[:, back]
+
+
+def external_voltages(batch, voltages, J):
+    """The external voltage of each device at each voltage `solve_batch` solved at (the internal
+    one), from its curve `J`: `V_ext = V_int + J·R_series` (SimSS's); the voltages themselves
+    without a series resistance."""
+    return jnp.asarray(voltages)[None, :] + J * batch["R_series"][:, None]
 
 
 def _stragglers(ok):

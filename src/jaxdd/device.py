@@ -220,6 +220,10 @@ class Device:
     # layer on the edge's left (right), `iw` the inverse of the interface's width, `charge`
     # 1 for a charged type (donor or acceptor), `cwe` its charge when empty (1 a donor).
     interface: dict | None = None
+    # The external circuit (SimSS's: `J_ext = J + V_int/R_shunt`, `V_ext = V_int + J_ext·R_series`),
+    # Ω m²; `R_shunt` ≤ 0 none.
+    R_series: float = 0.0
+    R_shunt: float = -1.0
 
 
 @dataclass(frozen=True)
@@ -258,7 +262,8 @@ LAYER_PARAMETERS = (
 def device_parameters(setup: Setup, grid_split: str = "exact") -> tuple[Structure, dict]:
     """A SIMsalabim input (Stage A, `check_supported` first) as its `Structure` and its
     parameters: a dict of `LAYER_PARAMETERS`, each an array over the layers, and `T`, `W_L`,
-    `W_R`, `G_frac`, `V_pre` and the generation profile's file (`gen_x`, `gen_G`). `grid_split`
+    `W_R`, `G_frac`, `V_pre`, the generation profile's file (`gen_x`, `gen_G`) and the external
+    circuit's `R_series` and `R_shunt` (Ω m², `R_shunt` ≤ 0 none). `grid_split`
     as in `build_device`. Changing a parameter keeps the structure: a trap density set on a
     layer without traps, or an ion density on a layer without ions, does nothing; the points
     per layer stay those of the input's thicknesses."""
@@ -316,6 +321,8 @@ def device_parameters(setup: Setup, grid_split: str = "exact") -> tuple[Structur
     params.update(
         T=setup.f("T"), W_L=setup.f("W_L"), W_R=setup.f("W_R"), G_frac=setup.f("G_frac"),
         V_pre=setup.f("Vpre"), gen_x=table[:, 0].copy(), gen_G=table[:, 1].copy(),
+        R_series=float(setup.raw.get("R_series", "0")),
+        R_shunt=float(setup.raw.get("R_shunt", "-1")),
     )  # fmt: skip
     return structure, params
 
@@ -445,6 +452,7 @@ def device_arrays(structure: Structure, p: dict, xp=np) -> Device:
         anion_total=ions["anion"][1], cation_total=ions["cation"][1],
         anion_fixed=ions["anion"][2], cation_fixed=ions["cation"][2],
         pre_cond=st.pre_cond, V_pre=p["V_pre"], fix_ions=st.fix_ions, interface=interface,
+        R_series=p.get("R_series", 0.0), R_shunt=p.get("R_shunt", -1.0),
     )  # fmt: skip
 
 

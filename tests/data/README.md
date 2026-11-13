@@ -29,3 +29,6 @@ of C60-like ETL, 500 nm absorber with free ions, 10 nm of TaTm-like HTL, the par
 0.2 Cl sample of Heester et al., APL Energy 3, 036106 (2025), Table S2, with a uniform
 generation), 4.6e14 and 5e13 m⁻² of donor traps at its interfaces; SimSS 5.36 at
 `tolPois = tolDens = 1e-9`, which converges up to 0.975 V and no further.
+
+`resist_light/`: `thin_l1_light` with a series resistance of 2e-4 Ω m² and a shunt of 0.3 Ω m²
+(Stage B); SimSS 5.36.

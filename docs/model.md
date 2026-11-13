@@ -130,7 +130,18 @@ V[NP+1] = (W_L − W_R)/2 + V_int/2
 n, p at the contacts: from N_c and the distance of the work function to E_c, E_v
 ```
 
-Without series resistance, `V_int` is the applied voltage.
+The solver works at the internal voltage `V_int`. A series and a shunt resistance (`R_series`,
+`R_shunt`, Ω m²) are SimSS's external circuit around the solved curve, not part of the device's
+equations:
+
+```
+J_ext = J + V_int / R_shunt          (no shunt for R_shunt ≤ 0)
+V_ext = V_int + J_ext · R_series
+```
+
+The shunt sits at the internal voltage, as in SimSS 5.36. `solve_batch` returns `J_ext` at the
+voltages it was given, which are internal; `batch.external_voltages` gives `V_ext`. Without series
+resistance the two voltages are one.
 
 ## Ions (`Init_Ionic_Region`, `Calc_Ion_Distribution_Steady_State`)
 

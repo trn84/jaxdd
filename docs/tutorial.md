@@ -62,6 +62,10 @@ batch = prepare(devices)            # every array stacked along a new first axis
 J, converged, iterations = solve_batch(batch, V)     # each: devices × voltages
 ```
 
+The voltages are the internal ones. With a shunt resistance `J` includes its current; with a
+series resistance the external voltage of each point is `batch.external_voltages(batch, V, J)`
+(SimSS's external circuit, [model.md](model.md)).
+
 The devices of one batch may differ in everything but the number of grid points `NP` (and they
 share the voltages). `prepare` refuses a mix of grid sizes; group devices by `NP` and solve each
 group as its own batch.

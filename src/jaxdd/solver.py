@@ -98,10 +98,11 @@ BERNOULLI = {"exact": bernoulli, "simss": bernoulli_simss}
 
 @dataclass(frozen=True)
 class JVResult:
-    V: np.ndarray
-    J: np.ndarray  # A/m², SIMsalabim's sign: photocurrent negative
+    V: np.ndarray  # the internal voltage
+    J: np.ndarray  # A/m², SIMsalabim's sign: photocurrent negative; with the shunt's current
     converged: np.ndarray
     iterations: np.ndarray
+    V_ext: np.ndarray | None = None  # V + J·R_series
 
 
 def _stencils(dev: Device, xp=np) -> dict[str, jnp.ndarray]:
@@ -667,7 +668,11 @@ def solve_jv(dev: Device, voltages: np.ndarray, g_frac: float | None = None,
         # voltage, not the rest of the scan.
         if ok and np.isfinite(full).all() and np.isfinite(np.asarray(logs_new)).all():
             y, logs = y_new, logs_new
-        J.append(_current(dev, full[:, 0], np.exp(full[:, 1]), np.exp(full[:, 2]), g_frac))
+        J.append(
+            _current(dev, full[:, 0], np.exp(full[:, 1]), np.exp(full[:, 2]), g_frac)
+            + (float(Vint) / dev.R_shunt if dev.R_shunt > 0 else 0.0)
+        )
         conv.append(ok)
         its.append(it)
-    return JVResult(np.asarray(voltages), np.array(J), np.array(conv), np.array(its))
+    V, J = np.asarray(voltages, dtype=float), np.array(J)
+    return JVResult(V, J, np.array(conv), np.array(its), V + J * dev.R_series)

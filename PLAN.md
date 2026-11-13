@@ -163,9 +163,6 @@ intensities at once, to 0.55–2.7 % of the short-circuit current in minutes
   says what the curves settle, which `(JᵀJ)⁻¹` does not.
 - **Several starts at once**: the same device at many starting points in one batch (a batched
   Gauss–Newton in JAX instead of one `least_squares` per start); the best kept.
-- **Series and shunt resistance in jaxdd** (Stage B, section 4): the fit adds the shunt outside
-  the solver, `J + V/R_shunt`; a series resistance changes the voltage the device sees and
-  belongs in the solver.
 - **The generation profile computed** (Stage B): the measured fits assume a uniform generation;
   the paper's is transfer-matrix optics.
 
@@ -192,9 +189,9 @@ What jaxdd solves today ("Stage A") is in [docs/overview.md](docs/overview.md). 
 
 - **Stage B: SimSS's steady state in full.** One module at a time, each validated against SimSS
   on its own test devices before the next. Done: interface traps, one level each, neutral or
-  charged ([docs/model.md](docs/model.md)). Next: series and shunt resistance (a measured curve
-  needs them, section 2.4); charged bulk traps and several levels (trap files) in the bulk and at
-  interfaces; Schottky contacts and finite surface recombination;
+  charged; series and shunt resistance, SimSS's external circuit ([docs/model.md](docs/model.md)).
+  Next: the generation profile computed (below; a measured fit needs it, section 2.4); charged
+  bulk traps and several levels (trap files) in the bulk and at interfaces; Schottky contacts and finite surface recombination;
   the remaining recombination and mobility options; the generation profile computed
   (`genProfile = calc`: SimSS's transfer-matrix optics from the layers' n, k and the spectrum),
   in JAX, so that a thickness moves the optics too and its gradient is the physical one (today

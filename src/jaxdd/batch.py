@@ -34,9 +34,11 @@ from jaxdd.solver import (
     STALL_STEPS,
     STEP_CAPS,
     _assemble,
+    _interface_points,
     _ion_constraints,
     _ion_logs,
     _ion_setup,
+    _on_points,
     _poisson_jac,
     _poisson_val,
     _recombination,
@@ -98,6 +100,10 @@ def prepare(devices: list[Device]) -> dict:
     if len(sizes) != 1:
         raise ValueError(f"a batch needs one grid size, got NP + 2 in {sorted(sizes)}")
     trees = [_device_tree(d) for d in devices]
+    with_traps = [t["s"]["ti"] for t in trees if "ti" in t["s"]]
+    if with_traps:  # the others with none: zero on every edge
+        for t in trees:
+            t["s"].setdefault("ti", {k: np.zeros_like(v) for k, v in with_traps[0].items()})
     return jax.tree_util.tree_map(lambda *leaves: jnp.asarray(np.stack(leaves)), *trees)
 
 
@@ -123,11 +129,15 @@ def _current(d, full, g_frac):
     V, n, p = full[:, 0], jnp.exp(full[:, 1]), jnp.exp(full[:, 2])
     Vt, x, h, L = d["Vt"], d["x"], d["h"], d["L"]
     NP = x.shape[0] - 2
-    U = _recombination(n, p, d["rec"]) - d["G"] * g_frac
-    U = U.at[0].set(0.0).at[-1].set(0.0)
+    R = _recombination(n, p, d["rec"])
+    R_int = (jnp.zeros_like(R), jnp.zeros_like(R))
+    if "ti" in d["s"]:
+        R_int = _interface_points(n, p, d["s"]["ti"])[:2]
     dx = jnp.diff(x[: NP + 1])
 
-    def carrier(sn, Vg, dens, mu):
+    def carrier(sn, Vg, dens, mu, R_i):
+        U = R + R_i - d["G"] * g_frac
+        U = U.at[0].set(0.0).at[-1].set(0.0)
         ev = jnp.exp(sn * Vg[: NP + 1] / Vt)
         int_u = jnp.concatenate([jnp.zeros(1), jnp.cumsum(0.5 * dx * (U[:NP] + U[1 : NP + 1]))])
         single = jnp.sum(0.5 * dx * (ev[:-1] / mu[:NP] + ev[1:] / mu[1 : NP + 1]))
@@ -139,11 +149,13 @@ def _current(d, full, g_frac):
         J = Q * K + jnp.concatenate(
             [jnp.zeros(1), jnp.cumsum(sn * Q * L * h[1 : NP + 1] * U[1 : NP + 1])]
         )
-        # Across an interface SIMsalabim takes the current before it (no interface traps).
-        return jnp.where(d["iface"], jnp.roll(J, 1), J)
+        # Across an interface SIMsalabim takes the current before it plus the current through
+        # the interface traps.
+        through = sn * 0.5 * Q * L * h[: NP + 1] * (R_i[: NP + 1] + R_i[1:])
+        return jnp.where(d["iface"], jnp.roll(J, 1) + through, J)
 
-    Jn = carrier(-1.0, V + d["offset_n"], n, d["mu_n"])
-    Jp = carrier(1.0, V + d["offset_p"], p, d["mu_p"])
+    Jn = carrier(-1.0, V + d["offset_n"], n, d["mu_n"], R_int[0])
+    Jp = carrier(1.0, V + d["offset_p"], p, d["mu_p"], R_int[1])
     hh = h[: NP + 1]
     return jnp.sum(hh * (Jn + Jp)) / jnp.sum(hh)
 
@@ -159,7 +171,7 @@ def _poisson_solve(y, d, s, ion, Vint, max_iter):
         full = jnp.concatenate([bounds[0][None], y, bounds[1][None]])
         V = full[:, 0]
         la, lc = _ion_logs(V, ion)
-        args = (s, Vt, full[:-2], full[1:-1], full[2:], la, lc)
+        args = (_on_points(s), Vt, full[:-2], full[1:-1], full[2:], la, lc)
         F = _poisson_val(V[:-2], V[1:-1], V[2:], *args)
         lo, mid, up = _poisson_jac(V[:-2], V[1:-1], V[2:], *args)
         dV = jax.lax.linalg.tridiagonal_solve(

@@ -89,6 +89,32 @@ the second term (SRH through one neutral trap level `E_t` of density `N_t`) only
 with traps, `n_t0 = N_c·exp((E_c − E_t)/V_T)`, `p_t0 = N_c·exp((E_t − E_v)/V_T)`. Neither acts on
 the electrodes.
 
+### Interface traps (`Calc_Trap_Filling_Charge`, `Calc_Recombination_n/p`)
+
+A layer's `N_t_int` (m⁻²) is a trap level at `E_t_int` on its interface to the next layer: one
+level, neutral, donor or acceptor (`intTrapType` 0, 1, −1). The interface lies between the last
+point of the layer, `i`, and the first of the next, `i + 1`; its traps are spread over a width
+`w = ½·L·(½h[i+1] + h[i] + ½h[i−1])`. Their occupancy takes both points' densities, each side with
+the `n_t0`, `p_t0` of its own layer:
+
+```
+f = (C_n·(n_i + n_{i+1}) + C_p·(p_t0,i + p_t0,i+1))
+  / (C_n·(n_i + n_{i+1} + n_t0,i + n_t0,i+1) + C_p·(p_i + p_{i+1} + p_t0,i + p_t0,i+1))
+```
+
+and each point captures from its own densities, so the two carriers' rates differ point by point
+(their sums over the interface agree):
+
+```
+R_n,k = N_t·C_n·(n_k·(1 − f) − n_t0,k·f) / w        k = i, i + 1
+R_p,k = N_t·C_p·(p_k·f − p_t0,k·(1 − f)) / w
+```
+
+`R_n` enters the electrons' continuity equation, `R_p` the holes'. A charged level carries
+`(c − f)·½·N_t / w` at each of the two points into Poisson's equation, `c` = 1 for a donor (empty
+it is positive) and 0 for an acceptor. Both couple the two points of an interface, so the
+Jacobian stays block tridiagonal. The level must lie inside both layers' gaps.
+
 The generation profile is read from the file the setup names (`Init_Generation_Profile`): its
 x-axis is stretched to the device, it is interpolated linearly onto the grid, and it is zero in
 layers with `layerGen = 0`. The device's `G_frac` scales it; `G_frac = 0` is the dark.
@@ -141,8 +167,9 @@ J_n(x) = q·K_n + q·∫₀ˣ (R − G) dx'       (likewise for holes, with the 
 K_n from the contact densities and ∫ exp(−Vgn/V_T)/μ_n dx
 ```
 
-Across an interface the current is taken from the point before it (SIMsalabim's handling of
-interface traps, of which Stage A has none). The reported `J` is `J_n + J_p` averaged over the
+Each carrier's `R` includes its interface-trap capture. Across an interface the current is the
+one before it plus the current through the interface traps, `J[i] = J[i−1] ± ½·q·L·h[i]·(R[i] +
+R[i+1])` (SIMsalabim's; the points after it keep their values). The reported `J` is `J_n + J_p` averaged over the
 device, weighted by the grid spacing. In a converged steady state it is constant across the
 device; SimSS's `errJ` is its spread.
 

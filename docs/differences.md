@@ -129,6 +129,8 @@ Reproduced on purpose, because they are part of the discrete equations SimSS def
 - **The total length** is the sum of the layers, not the last grid point: SimSS equalises the
   spacing across each interface after building the grid, and `Σh` is then slightly off 1. The
   generation profile is stretched to the layers' sum, and every scale uses it.
-- **The current across an interface** is set to the one before it (the current through
-  interface traps, none in Stage A).
+- **The current across an interface** is set to the one before it plus the current through the
+  interface traps, and the points after it keep their values ([model.md](model.md)).
+- **Interface-trap capture** differs between the two carriers point by point: each point of an
+  interface captures from its own densities into traps whose occupancy both points set.
 - SimSS's constants (`q`, `k`, `ε₀` in five digits), not CODATA's.

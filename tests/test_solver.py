@@ -134,6 +134,75 @@ def test_jv_with_ions_reproduces_simss(case: str) -> None:
     assert np.max(np.abs(res.J - ref["Jext"])) < 2e-5 * scale
 
 
+@pytest.mark.parametrize(
+    ("case", "tol"),
+    [("iface_charged_light", 1e-5), ("iface_ions_light", 2e-5), ("pin_iface_light", 1e-5)],
+)
+def test_jv_with_interface_traps_reproduces_simss(case: str, tol: float) -> None:
+    """Stage B, interface traps: a donor and an acceptor level (3e14 m⁻² each) at the two
+    interfaces of the 1 nm stack, the same with free ions, and a p-i-n stack with 10 and 20 nm
+    transport layers and 5e13 and 4.6e14 m⁻² of donor traps (SimSS at tolerances of 1e-9; at its
+    defaults it stopped early there by 1.2e-4, and from 1.0 V on it does not converge at all). The
+    traps move these curves by up to two thirds of their scale."""
+    setup = read_setup(DATA / case / "simulation_setup.txt")
+    check_supported(setup)
+    ref = np.genfromtxt(DATA / case / "JV.dat", names=True)
+    res = solve_jv(build_device(setup), ref["Vint"], bernoulli_name="simss")
+    assert res.converged.all()
+    scale = np.max(np.abs(ref["Jext"]))
+    assert np.max(np.abs(res.J - ref["Jext"])) < tol * scale
+
+
+def test_a_batch_mixes_devices_with_and_without_interface_traps() -> None:
+    """`prepare` gives the devices without interface traps zero traps on every edge: each curve
+    of a mixed batch is the one-device solver's."""
+    from jaxdd.batch import prepare, solve_batch
+
+    cases = ["thin_l1_light", "iface_charged_light", "iface_ions_light"]
+    devices = [build_device(read_setup(DATA / c / "simulation_setup.txt")) for c in cases]
+    V = np.round(np.arange(-0.2, 1.3 + 1e-9, 0.1), 6)
+    J, ok, _ = solve_batch(prepare(devices), V, bernoulli_name="simss")
+    assert np.asarray(ok).all()
+    for k, dev in enumerate(devices):
+        single = solve_jv(dev, V, bernoulli_name="simss")
+        assert np.max(np.abs(np.asarray(J[k]) - single.J)) < 1e-6 * np.max(np.abs(single.J))
+
+
+@pytest.mark.parametrize("case", ["iface_charged_light", "iface_ions_light", "pin_iface_light"])
+def test_the_interface_traps_jacobian_is_autodiff(case: str) -> None:
+    """`_assemble`'s blocks with interface traps (their capture in both continuity equations,
+    their charge in Poisson's, both coupling the two points of an interface) are `jax.jacfwd`
+    of its residual in the whole state, which is block tridiagonal: at a perturbed state."""
+    from jaxdd import solver as S
+    from jaxdd.solver import _assemble, _ion_setup, _stencils, bernoulli
+
+    dev = build_device(read_setup(DATA / case / "simulation_setup.txt"))
+    s = jax.tree_util.tree_map(jnp.asarray, _stencils(dev))
+    y0 = S._initial(dev, 0.6)
+    NP = len(dev.x) - 2
+    noise = np.zeros_like(y0)
+    noise[1:-1] = np.random.default_rng(2).normal(0, 1, (NP, 3)) * np.array([dev.Vt, 1.0, 1.0])
+    full = jnp.asarray(y0 + noise)
+    ion = jax.tree_util.tree_map(jnp.asarray, _ion_setup(dev))
+    la, lc = S._ion_logs(full[:, 0], ion)
+
+    def residual(y):
+        return _assemble(full.at[1:-1].set(y), s, dev.Vt, dev.G_frac, la, lc, bernoulli)[0]
+
+    dense = np.asarray(jax.jacfwd(residual)(full[1:-1]))  # NP × 3 × NP × 3
+    _, A, B, C, _ = (np.asarray(a) for a in _assemble(full, s, dev.Vt, dev.G_frac, la, lc,
+                                                      bernoulli))  # fmt: skip
+    i = np.arange(NP)
+    rows = np.max(np.abs(dense), axis=(2, 3))[:, :, None]
+    for block, shift in ((B, 0), (A[1:], -1), (C[:-1], 1)):
+        k = i[max(0, -shift) : NP - max(0, shift)]
+        ref = dense[k, :, k + shift, :]
+        assert np.max(np.abs(block - ref) / rows[k]) < 1e-11
+    band = np.abs(i[:, None] - i[None, :]) <= 1
+    assert np.all(dense.transpose(0, 2, 1, 3)[~band] == 0.0)
+    assert dev.interface is not None and np.count_nonzero(dev.interface["Nt"]) >= 1
+
+
 def test_free_ions_keep_their_number() -> None:
     """Invariant: the steady state moves the ions, never creates them — the trapezoidal number
     in their layer is N·L at any bias."""
@@ -490,7 +559,7 @@ def test_the_bordered_system_and_its_transpose_are_solved() -> None:
 @pytest.mark.parametrize(
     "case",
     ["thin_l1_light", "frozen_1e17_x1_thin_light", "steady_1e17_thin_light",
-     "frozen_thick_htl_dark"],
+     "frozen_thick_htl_dark", "iface_ions_light", "pin_iface_light"],
 )  # fmt: skip
 def test_the_device_in_jax_is_numpys(case: str) -> None:
     """`batch.device_tree` (the device in `jax.numpy` from its structure and parameters) gives
@@ -570,3 +639,27 @@ def test_a_fit_recovers_the_parameters_of_a_simss_curve() -> None:
     assert err["N_t_bulk[1]"] < 1e-3 and err["mu_n[1]"] < 1e-3 and err["mu_p[1]"] < 1e-3
     assert err["W_L"] < 1e-4  # eV
     assert err["k_direct[1]"] < 0.1
+
+
+def test_the_gradient_in_the_interface_traps_is_finite_differences() -> None:
+    """The curve's derivative in both interfaces' trap densities, through `device_tree` and the
+    converged solution (forward mode), against central finite differences."""
+    from jaxdd.batch import device_tree, solve_batch
+    from jaxdd.device import device_parameters
+
+    structure, params = device_parameters(read_setup(DATA / "pin_iface_light" /
+                                                     "simulation_setup.txt"))  # fmt: skip
+    V = np.round(np.arange(-0.1, 0.95 + 1e-9, 0.05), 6)
+    w = jnp.asarray(np.random.default_rng(0).normal(size=len(V)))
+    direction = jnp.array([1.0, -0.6, 0.0])
+
+    def loss(a):
+        p = dict(params, N_t_int=params["N_t_int"] * jnp.exp(a * direction))
+        batch = jax.tree_util.tree_map(lambda v: v[None], device_tree(structure, p))
+        J, ok, _ = solve_batch(batch, V)
+        return jnp.sum(w * jnp.where(ok[0], J[0], 0.0))
+
+    _, by_jvp = jax.jvp(loss, (0.0,), (1.0,))
+    h = 1e-5
+    fd = (float(loss(h)) - float(loss(-h))) / (2 * h)
+    assert abs(float(by_jvp) - fd) < 1e-6 * abs(fd)

@@ -20,3 +20,12 @@ jaxdd's convergence floor, which once made the batched scan's extrapolated start
 short circuit on (docs/solver.md). SimSS
 5.36 with the patch above; its first two voltages are SimSS stopping early
 (docs/differences.md §1).
+
+`iface_charged_light/`: `thin_l1_light` with interface traps (Stage B), a donor level of 3e14
+m⁻² at the left interface and an acceptor level of 3e14 m⁻² at the right one (`E_t_int` 4.7 eV,
+`C_n_int = C_p_int` = 2e-14 m³/s); SimSS 5.36. `iface_ions_light/`: the same traps in
+`steady_1e17_thin_light`. `pin_iface_light/`: a p-i-n stack mirrored to put the cathode left (20 nm
+of C60-like ETL, 500 nm absorber with free ions, 10 nm of TaTm-like HTL, the parameters of the
+0.2 Cl sample of Heester et al., APL Energy 3, 036106 (2025), Table S2, with a uniform
+generation), 4.6e14 and 5e13 m⁻² of donor traps at its interfaces; SimSS 5.36 at
+`tolPois = tolDens = 1e-9`, which converges up to 0.975 V and no further.

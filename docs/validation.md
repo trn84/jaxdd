@@ -55,6 +55,12 @@ so that the solver is never the larger error in what is computed from it.
 - **The batched solver** matches the one-device solver to 1e-10, and its shortcuts change `J` by
   at most 1.2e-10 of the generation current ([solver.md](solver.md)).
 
+- **Interface traps** (2026-11-13): a donor and an acceptor level of 3e14 m⁻² at the two
+  interfaces of the 1 nm stack, within 1.5e-6 of SimSS's scale; the same with free ions, 5.4e-6;
+  a p-i-n stack with 10 and 20 nm transport layers and 5e13 and 4.6e14 m⁻² of donor traps,
+  4e-7 against SimSS at tolerances of 1e-9. At its default tolerances SimSS stopped early there
+  by 1.2e-4, and from 1.0 V on it does not converge at either; jaxdd converges to 1.25 V. The
+  traps move these curves by up to two thirds of their scale.
 - **Gradients** agree with central finite differences and between forward and reverse mode,
   in the batch's arrays, the voltages and the input's own parameters (mobility, thickness, band
   edge, ion density, temperature, work function), without ions, with free and with frozen ions

@@ -213,6 +213,13 @@ class Device:
     pre_cond: bool
     V_pre: float
     fix_ions: bool
+    # Interface traps (SIMsalabim's `N_t_int` of a layer: at its interface to the next), one
+    # level each, on the `NP + 1` edges: edge `e` lies between points `e` and `e + 1`, and an
+    # interface between the last point of a layer and the first of the next. None without any.
+    # `Nt` m⁻², `Cn`, `Cp` m³/s, `nt0_lo`/`pt0_lo` (`nt0_hi`/`pt0_hi`) SRH's densities of the
+    # layer on the edge's left (right), `iw` the inverse of the interface's width, `charge`
+    # 1 for a charged type (donor or acceptor), `cwe` its charge when empty (1 a donor).
+    interface: dict | None = None
 
 
 @dataclass(frozen=True)
@@ -236,12 +243,15 @@ class Structure:
     cation_fixed: np.ndarray
     pre_cond: bool
     fix_ions: bool
+    int_traps: np.ndarray = None  # per layer: traps at its interface to the next (not the last)
+    int_trap_type: np.ndarray = None  # per layer: -1 acceptor, 0 neutral, 1 donor
 
 
 #: A device's parameters per layer (`device_parameters`), as SIMsalabim names them.
 LAYER_PARAMETERS = (
     "L", "eps_r", "E_c", "E_v", "N_c", "N_D", "N_A", "mu_n", "mu_p", "nu_int_n", "nu_int_p",
     "k_direct", "N_t_bulk", "C_n_bulk", "C_p_bulk", "E_t_bulk", "N_anion", "N_cation",
+    "N_t_int", "E_t_int", "C_n_int", "C_p_int",
 )  # fmt: skip
 
 
@@ -270,13 +280,34 @@ def device_parameters(setup: Setup, grid_split: str = "exact") -> tuple[Structur
         cation_mobile=flags(lambda ly: ly.f("N_cation") != 0 and ly.f("mu_cation") != 0),
         cation_fixed=flags(lambda ly: ly.f("N_cation") != 0 and ly.f("mu_cation") == 0),
         pre_cond=bool(setup.i("preCond")), fix_ions=bool(setup.i("fixIons")),
+        int_traps=np.array([float(ly.raw.get("N_t_int", "0")) != 0 for ly in layers[:-1]]
+                           + [False]),
+        int_trap_type=np.array([int(float(ly.raw.get("intTrapType", "0"))) for ly in layers]),
     )  # fmt: skip
+    for j in np.flatnonzero(structure.int_traps):
+        lo, hi = layers[j], layers[j + 1]
+        E_t = lo.f("E_t_int")
+        if not max(lo.f("E_c"), hi.f("E_c")) < E_t < min(lo.f("E_v"), hi.f("E_v")):
+            raise ValueError(f"interface trap between layers {j + 1} and {j + 2} at {E_t} eV: "
+                             "not within the gaps of both")  # fmt: skip
+        if structure.int_trap_type[j] not in (-1, 0, 1):
+            raise ValueError(f"layer {j + 1}: intTrapType {structure.int_trap_type[j]}")
     for species in ("anion", "cation"):
         if getattr(structure, f"{species}_mobile").sum() > 1:
             raise NotImplementedError(f"mobile {species}s in more than one layer")
     table = np.loadtxt(io.StringIO(setup.text("genProfile")), skiprows=1)
     # Needed only on some layers: the interface velocities (not on the last), the trap's.
-    optional = {"nu_int_n", "nu_int_p", "C_n_bulk", "C_p_bulk", "E_t_bulk"}
+    optional = {
+        "nu_int_n",
+        "nu_int_p",
+        "C_n_bulk",
+        "C_p_bulk",
+        "E_t_bulk",
+        "N_t_int",
+        "E_t_int",
+        "C_n_int",
+        "C_p_int",
+    }
 
     def value(ly: Layer, name: str) -> float:
         return float(ly.raw.get(name, "0")) if name in optional else ly.f(name)
@@ -311,6 +342,37 @@ def _sum(values, xp=np):
         comp = comp + xp.where(abs(total) >= abs(v), (total - s) + v, (v - s) + total)
         total = s
     return total + comp
+
+
+def _interface(st: Structure, p: dict, h, total, Vt, xp=np) -> dict:
+    """`Device.interface` (SIMsalabim's `Init_Trapping` and `Calc_Trap_Filling_Charge`): each
+    layer's interface traps on the edge after its last point."""
+    j = np.flatnonzero(st.int_traps)  # layers with traps at their right interface
+    e = np.array(st.i1)[j]  # their edges
+    E_t = p["E_t_int"][j]
+
+    def nt0(k):
+        return p["N_c"][k] * xp.exp((p["E_c"][k] - E_t) / Vt)
+
+    def pt0(k):
+        return p["N_c"][k] * xp.exp((E_t - p["E_v"][k]) / Vt)
+
+    width = 0.5 * total * (0.5 * h[e + 1] + h[e] + 0.5 * h[e - 1])
+    kind = st.int_trap_type[j]
+    edges = xp.zeros(st.NP + 1)
+
+    def on_edges(values):
+        return _set(xp, edges, e, values)
+
+    return {
+        "Nt": on_edges(p["N_t_int"][j]), "Cn": on_edges(p["C_n_int"][j]),
+        "Cp": on_edges(p["C_p_int"][j]),
+        "nt0_lo": on_edges(nt0(j)), "pt0_lo": on_edges(pt0(j)),
+        "nt0_hi": on_edges(nt0(j + 1)), "pt0_hi": on_edges(pt0(j + 1)),
+        "iw": on_edges(1.0 / width),
+        "charge": on_edges(np.abs(kind).astype(float)),
+        "cwe": on_edges((kind == 1).astype(float)),
+    }  # fmt: skip
 
 
 def device_arrays(structure: Structure, p: dict, xp=np) -> Device:
@@ -359,6 +421,9 @@ def device_arrays(structure: Structure, p: dict, xp=np) -> Device:
 
     dos = Vt * xp.log(N_c / N_c[0])
     W_L, W_R = p["W_L"], p["W_R"]
+    interface = None
+    if st.int_traps is not None and st.int_traps.any():
+        interface = _interface(st, p, h, total, Vt, xp)
     return Device(
         x=x, h=h, L=total, T=T, Vt=Vt,
         eps=p["eps_r"][lid] * EPS_0, E_c=E_c, E_v=E_v, N_c=N_c, ni=ni,
@@ -379,7 +444,7 @@ def device_arrays(structure: Structure, p: dict, xp=np) -> Device:
         anion_mask=ions["anion"][0], cation_mask=ions["cation"][0],
         anion_total=ions["anion"][1], cation_total=ions["cation"][1],
         anion_fixed=ions["anion"][2], cation_fixed=ions["cation"][2],
-        pre_cond=st.pre_cond, V_pre=p["V_pre"], fix_ions=st.fix_ions,
+        pre_cond=st.pre_cond, V_pre=p["V_pre"], fix_ions=st.fix_ions, interface=interface,
     )  # fmt: skip
 
 

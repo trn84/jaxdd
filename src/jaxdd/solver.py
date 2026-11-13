@@ -118,7 +118,7 @@ def _stencils(dev: Device, xp=np) -> dict[str, jnp.ndarray]:
         h[i - 1] ** 2 * L**2
     )
     fac_u = 2 * eps[i] / (h[i] * (h[i] + h[i - 1]) * L**2)
-    return {
+    out = {
         "fac_l": fac_l, "fac_m": fac_m, "fac_u": fac_u,
         "hm": h[i - 1], "hp": h[i],
         "fac": 0.5 * L**2 * h[i] * h[i - 1] * (h[i] + h[i - 1]),
@@ -140,12 +140,78 @@ def _stencils(dev: Device, xp=np) -> dict[str, jnp.ndarray]:
         "sP": 1.0 / (Q * dev.N_c[i]),
         "sC": 1.0 / (xp.maximum(dev.mu_n[i], dev.mu_p[i]) * dev.Vt * dev.N_c[i] * h[i]),
     }  # fmt: skip
+    if dev.interface is not None:  # on the edges (`Device.interface`), only where there are any
+        out["ti"] = dict(dev.interface)
+    return out
 
 
 def _recombination(n, p, s):
     srh = s["Nt"] * s["Cn"] * s["Cp"] * (n * p - s["nt0"] * s["pt0"])
     srh = srh / jnp.where(s["Nt"] > 0, s["Cn"] * (n + s["nt0"]) + s["Cp"] * (p + s["pt0"]), 1.0)
     return s["kd"] * (n * p - s["ni2"]) + jnp.where(s["Nt"] > 0, srh, 0.0)
+
+
+def _interface_edges(nL, nR, pL, pR, ti):
+    """Interface traps on each edge (`Device.interface`) from the densities at its left (`L`) and
+    right (`R`) point: `(Rn_L, Rn_R, Rp_L, Rp_R, Q)`, each carrier's net capture at either point
+    (m⁻³ s⁻¹) and the traps' charge density at both (m⁻³, positive). SIMsalabim's
+    `Calc_Recombination_n/p` and `Calc_Trap_Filling_Charge`, steady state: the traps' occupancy
+    from both points' densities, each point capturing from its own; zero where there are none."""
+    Nt = ti["Nt"]
+    an, bp = ti["Cn"] * Nt, ti["Cp"] * Nt
+    a = an * (nL + nR)
+    b = bp * (pL + pR)
+    c = an * (ti["nt0_lo"] + ti["nt0_hi"])
+    d = bp * (ti["pt0_lo"] + ti["pt0_hi"])
+    traps = Nt > 0
+    inv = jnp.where(traps, 1.0 / jnp.where(traps, a + b + c + d, 1.0), 0.0)
+    full, empty = (a + d) * inv, (b + c) * inv  # occupied, empty share
+    iw = ti["iw"]
+    return (
+        iw * an * (nL * empty - ti["nt0_lo"] * full),
+        iw * an * (nR * empty - ti["nt0_hi"] * full),
+        iw * bp * (pL * full - ti["pt0_lo"] * empty),
+        iw * bp * (pR * full - ti["pt0_hi"] * empty),
+        ti["charge"] * (ti["cwe"] - full) * 0.5 * Nt * iw,
+    )
+
+
+def _interface_points(n, p, ti):
+    """`_interface_edges` on the points of the full grid (`NP + 2`): `(Rn, Rp, Q)`, each point the
+    sum of its two edges'."""
+    Rn_L, Rn_R, Rp_L, Rp_R, Q = _interface_edges(n[:-1], n[1:], p[:-1], p[1:], ti)
+
+    def points(lo, hi):  # point k is the right point of edge k − 1 and the left one of edge k
+        return jnp.concatenate([lo[:1], hi[:-1] + lo[1:], hi[-1:]])
+
+    return points(Rn_L, Rn_R), points(Rp_L, Rp_R), points(Q, Q)
+
+
+def _interface_terms(n, p, ti):
+    """The interface traps' `(Q, Rn, Rp)` on the interior points (3 × NP) and their derivatives
+    in `(ln n, ln p)` (3 × NP × 2) of the point itself, the next and the one before."""
+    args = (n[:-1], n[1:], p[:-1], p[1:])
+
+    def f(*a):
+        return jnp.stack(_interface_edges(*a, ti))
+
+    z = jnp.zeros_like(args[0])
+    value = f(*args)
+    d_nL, d_nR, d_pL, d_pR = (
+        jax.jvp(f, args, tuple(a if k == j else z for k, a in enumerate(args)))[1] for j in range(4)
+    )
+    lo, hi = (
+        np.array([4, 0, 2]),
+        np.array([4, 1, 3]),
+    )  # (Q, Rn, Rp) of an edge's left point, of its right point
+
+    def at_points(m):
+        return m[hi][:, :-1] + m[lo][:, 1:]
+
+    own = jnp.stack([d_nR[hi][:, :-1] + d_nL[lo][:, 1:], d_pR[hi][:, :-1] + d_pL[lo][:, 1:]], -1)
+    up = jnp.stack([d_nR[lo][:, 1:], d_pR[lo][:, 1:]], -1)
+    down = jnp.stack([d_nL[hi][:, :-1], d_pL[hi][:, :-1]], -1)
+    return at_points(value), own, up, down
 
 
 def _ion_densities(V, la, lc, s, Vt):
@@ -262,6 +328,18 @@ def _assemble(full, s, Vt, g_frac, la, lc, B=bernoulli):
         (hp * dFp1[:-1] - hm * dFp0[1:] + fac[:, None] * dnet) * sC,
     ], -2)  # fmt: skip
     C = jnp.stack([P_C * sP, hm * dFn1[1:] * sC, -hm * dFp1[1:] * sC], -2)
+    if "ti" in s:  # interface traps: their charge in Poisson, their capture in continuity
+        X, own, up, down = _interface_terms(n, p, s["ti"])
+        scale = jnp.stack([Q * s["sP"], -fac * s["sC"], -fac * s["sC"]], -1)  # rows (Q, Rn, Rp)
+        poisson = poisson + Q * X[0]
+        elec = elec - fac * X[1]
+        hole = hole - fac * X[2]
+
+        def block(d):  # 3 × NP × 2 → NP × 3 × 3, nothing in the potential's column
+            d = jnp.moveaxis(d, 0, 1) * scale[..., None]
+            return jnp.concatenate([jnp.zeros_like(d[..., :1]), d], -1)
+
+        A, Bb, C = A + block(down), Bb + block(own), C + block(up)
     F = jnp.stack([poisson * s["sP"], elec * s["sC"], hole * s["sC"]], -1)
     U = jnp.stack([
         jnp.stack([-Q * anion * s["sP"], zm, zm], -1),
@@ -409,6 +487,11 @@ def _poisson_row(left, mid, right, s, Vt, ref_left, ref_mid, ref_right, la, lc):
     return poisson * s["sP"]
 
 
+def _on_points(s):
+    """The stencils on the interior points: without the interface traps' edges."""
+    return {k: v for k, v in s.items() if k != "ti"}
+
+
 _P_AXES = (0, 0, 0, 0, None, 0, 0, 0, None, None)
 _poisson_jac = jax.vmap(jax.jacfwd(_poisson_row, argnums=(0, 1, 2)), in_axes=_P_AXES)
 _poisson_val = jax.vmap(_poisson_row, in_axes=_P_AXES)
@@ -433,7 +516,7 @@ def _poisson_step(y, bounds, s, ion, Vt):
     full = jnp.concatenate([bounds[0][None], y, bounds[1][None]])
     V = full[:, 0]
     la, lc = _ion_logs(V, ion)
-    args = (s, Vt, full[:-2], full[1:-1], full[2:], la, lc)
+    args = (_on_points(s), Vt, full[:-2], full[1:-1], full[2:], la, lc)
     F = _poisson_val(V[:-2], V[1:-1], V[2:], *args)
     lo, mid, up = _poisson_jac(V[:-2], V[1:-1], V[2:], *args)
     dV = jax.lax.linalg.tridiagonal_solve(lo.at[0].set(0.0), mid, up.at[-1].set(0.0), -F[:, None])[
@@ -453,10 +536,13 @@ def _current(dev: Device, V, n, p, g_frac) -> float:
     s_all.update(kd=dev.k_direct, ni2=dev.ni**2, Nt=dev.srh_Nt, Cn=dev.srh_Cn,
                  Cp=dev.srh_Cp, nt0=dev.srh_nt0, pt0=dev.srh_pt0)  # fmt: skip
     R = np.asarray(_recombination(n, p, s_all))
-    U = R - dev.G * g_frac
-    U[0] = U[-1] = 0.0
+    R_int = (np.zeros(NP + 2), np.zeros(NP + 2))
+    if dev.interface is not None:
+        R_int = tuple(np.asarray(r) for r in _interface_points(n, p, dev.interface)[:2])
 
-    def carrier(sn, Vg, dens, mu):
+    def carrier(sn, Vg, dens, mu, R_i):
+        U = R + R_i - dev.G * g_frac
+        U[0] = U[-1] = 0.0
         dx = np.diff(x[: NP + 1])
         ev = np.exp(sn * Vg[: NP + 1] / Vt)
         int_u = np.concatenate([[0.0], np.cumsum(0.5 * dx * (U[:NP] + U[1 : NP + 1]))])
@@ -469,14 +555,14 @@ def _current(dev: Device, V, n, p, g_frac) -> float:
         J = np.zeros(NP + 1)
         J[0] = Q * K
         J[1:] = Q * K + np.cumsum(sn * Q * L * h[1 : NP + 1] * U[1 : NP + 1])
-        # SIMsalabim then sets the current across each interface to the one before it (the
-        # current through interface traps, none here); the points after keep their values.
+        # SIMsalabim then sets the current across each interface to the one before it plus the
+        # current through the interface traps; the points after keep their values.
         for i in dev.i1[:-1]:
-            J[i] = J[i - 1]
+            J[i] = J[i - 1] + sn * 0.5 * Q * L * h[i] * (R_i[i] + R_i[i + 1])
         return J
 
-    Jn = carrier(-1, V + dev.offset_n, n, dev.mu_n)
-    Jp = carrier(1, V + dev.offset_p, p, dev.mu_p)
+    Jn = carrier(-1, V + dev.offset_n, n, dev.mu_n, R_int[0])
+    Jp = carrier(1, V + dev.offset_p, p, dev.mu_p, R_int[1])
     total = Jn + Jp
     return float(np.sum(h[: NP + 1] * total) / np.sum(h[: NP + 1]))
 
@@ -523,7 +609,7 @@ def solve_jv(dev: Device, voltages: np.ndarray, g_frac: float | None = None,
     they are then held for the scan (SIMsalabim's sequence, `fixIons` as patched in `simss/`).
     """
     g_frac = dev.G_frac if g_frac is None else g_frac
-    s = {k: jnp.asarray(v) for k, v in _stencils(dev).items()}
+    s = jax.tree_util.tree_map(jnp.asarray, _stencils(dev))
     ion = {k: jnp.asarray(v) if isinstance(v, np.ndarray) else v
            for k, v in _ion_setup(dev).items()}  # fmt: skip
     first = dev.V_pre if dev.pre_cond else float(voltages[0])

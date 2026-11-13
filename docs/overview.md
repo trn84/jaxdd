@@ -51,7 +51,7 @@ each with its own parameters.
 |---|---|
 | Layers | any number; per layer thickness, permittivity, band edges, effective density of states, mobilities, donor and acceptor doping |
 | Grid | SIMsalabim's: `NP` points, exponentially graded in each layer (`grad`) |
-| Interfaces | band offsets; thermionic transfer at a finite velocity (`nu_int_n`, `nu_int_p`) |
+| Interfaces | band offsets; thermionic transfer at a finite velocity (`nu_int_n`, `nu_int_p`); interface traps, one level per interface, neutral or charged (`N_t_int`, `E_t_int`, `intTrapType`; the first module of Stage B) |
 | Contacts | ohmic, at the work functions `W_L`, `W_R` (the left electrode the cathode, `leftElec = -1`) |
 | Recombination | direct (`k_direct`), bulk SRH through one neutral trap level per layer |
 | Generation | a profile from a file (`genProfile`), scaled by `G_frac` |
@@ -60,8 +60,8 @@ each with its own parameters.
 
 Everything else is **refused by name**, never approximated: `check_supported` raises
 `NotImplementedError` listing each parameter outside this scope (surface recombination at the
-contacts, series and shunt resistance, field-dependent mobility or generation, interface traps,
-charged traps, trap files, Langevin recombination, an ionic region across layers, `fixIons`
+contacts, series and shunt resistance, field-dependent mobility or generation, charged bulk
+traps, trap files, Langevin recombination, an ionic region across layers, `fixIons`
 without `preCond`, a calculated generation profile, `leftElec = 1`). What comes next in physics is
 in [PLAN.md](../PLAN.md).
 

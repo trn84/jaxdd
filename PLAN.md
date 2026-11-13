@@ -189,8 +189,10 @@ density; open). Not started.
 What jaxdd solves today ("Stage A") is in [docs/overview.md](docs/overview.md). After it:
 
 - **Stage B: SimSS's steady state in full.** One module at a time, each validated against SimSS
-  on its own test devices before the next: charged traps at several levels in the bulk and at
-  interfaces; Schottky contacts and finite surface recombination; series and shunt resistance;
+  on its own test devices before the next. Done: interface traps, one level each, neutral or
+  charged ([docs/model.md](docs/model.md)). Next: series and shunt resistance (a measured curve
+  needs them, section 2.4); charged bulk traps and several levels (trap files) in the bulk and at
+  interfaces; Schottky contacts and finite surface recombination;
   the remaining recombination and mobility options; the generation profile computed
   (`genProfile = calc`: SimSS's transfer-matrix optics from the layers' n, k and the spectrum),
   in JAX, so that a thickness moves the optics too and its gradient is the physical one (today

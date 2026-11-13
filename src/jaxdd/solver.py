@@ -104,8 +104,9 @@ class JVResult:
     iterations: np.ndarray
 
 
-def _stencils(dev: Device) -> dict[str, jnp.ndarray]:
-    """Every static quantity row i (1..NP) needs, as arrays over the interior points."""
+def _stencils(dev: Device, xp=np) -> dict[str, jnp.ndarray]:
+    """Every static quantity row i (1..NP) needs, as arrays over the interior points; in NumPy,
+    or in `jax.numpy` for a device built there (`device.device_arrays`)."""
     NP = len(dev.x) - 2
     i = np.arange(1, NP + 1)
     h, L = dev.h, dev.L
@@ -123,8 +124,8 @@ def _stencils(dev: Device) -> dict[str, jnp.ndarray]:
         "fac": 0.5 * L**2 * h[i] * h[i - 1] * (h[i] + h[i - 1]),
         "mun_m": dev.mu_n[i - 1], "mun_p": dev.mu_n[i],
         "mup_m": dev.mu_p[i - 1], "mup_p": dev.mu_p[i],
-        "offn": np.stack([dev.offset_n[i - 1], dev.offset_n[i], dev.offset_n[i + 1]], -1),
-        "offp": np.stack([dev.offset_p[i - 1], dev.offset_p[i], dev.offset_p[i + 1]], -1),
+        "offn": xp.stack([dev.offset_n[i - 1], dev.offset_n[i], dev.offset_n[i + 1]], -1),
+        "offp": xp.stack([dev.offset_p[i - 1], dev.offset_p[i], dev.offset_p[i + 1]], -1),
         "dop": dev.N_A[i] - dev.N_D[i],
         "kd": dev.k_direct[i], "ni2": dev.ni[i] ** 2,
         "Nt": dev.srh_Nt[i], "Cn": dev.srh_Cn[i], "Cp": dev.srh_Cp[i],
@@ -134,10 +135,10 @@ def _stencils(dev: Device) -> dict[str, jnp.ndarray]:
         # fixed densities (immobile, or frozen after a pre-bias).
         "a_mask": dev.anion_mask[i].astype(float), "c_mask": dev.cation_mask[i].astype(float),
         "a_fix": dev.anion_fixed[i], "c_fix": dev.cation_fixed[i],
-        "n_floor": np.full(NP, DENSITY_FLOOR * dev.N_c.max()),
+        "n_floor": xp.full(NP, DENSITY_FLOOR * xp.max(dev.N_c)),
         # Row scales: each equation over the size of its terms, for a well-conditioned solve.
         "sP": 1.0 / (Q * dev.N_c[i]),
-        "sC": 1.0 / (np.maximum(dev.mu_n[i], dev.mu_p[i]) * dev.Vt * dev.N_c[i] * h[i]),
+        "sC": 1.0 / (xp.maximum(dev.mu_n[i], dev.mu_p[i]) * dev.Vt * dev.N_c[i] * h[i]),
     }  # fmt: skip
 
 

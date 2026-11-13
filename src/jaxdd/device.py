@@ -2,7 +2,13 @@
 
 Follows SIMsalabim 5.36 (`Units/DDRoutines.pas`: `Make_Grid`, `Define_Layers`,
 `Update_Gen_Pot`, `Init_Generation_Profile`, `Init_Trapping`, `Calc_Elec_Mob`), so that both
-solve the same discrete equations. Plain NumPy: built once per device, then handed to JAX.
+solve the same discrete equations.
+
+A device is split in two (`device_parameters`): its **structure** — the grid's points per layer,
+which layers generate light, hold traps or mobile ions, the pre-bias sequence — and its
+**parameters**, the numbers (thicknesses, energies, densities, mobilities, …). One set of
+formulas (`device_arrays`) makes the arrays from both, in NumPy (`build_device`: once per device,
+then handed to JAX) or in `jax.numpy` (`batch.device_tree`: differentiable in the parameters).
 """
 
 from __future__ import annotations
@@ -15,9 +21,18 @@ from fractions import Fraction
 import numpy as np
 
 from jaxdd.constants import EPS_0, K_B, Q
-from jaxdd.simss_input import Setup
+from jaxdd.simss_input import Layer, Setup
 
-__all__ = ["GRID_SPLITS", "Device", "build_device", "layer_points", "make_grid"]
+__all__ = [
+    "GRID_SPLITS",
+    "Device",
+    "Structure",
+    "build_device",
+    "device_arrays",
+    "device_parameters",
+    "layer_points",
+    "make_grid",
+]
 
 #: SIMsalabim's `MinGridPointsPerLayer`.
 MIN_GRID_POINTS_PER_LAYER = 5
@@ -77,15 +92,58 @@ def layer_points(thicknesses: Sequence[str | float], NP: int, split: str = "exac
     return [max(MIN_GRID_POINTS_PER_LAYER, s.numerator // s.denominator) for s in shares]
 
 
-def _sub_grid(h: np.ndarray, istart: int, ifinish: int, grad: float, span: float, total: float):
-    """SIMsalabim's `Make_Sub_Grid`: an exponential grid, symmetric in the layer."""
-    h[istart : ifinish + 1] = 1.0
-    ending = round(0.5 * (ifinish - istart))
+def _sub_grid(m: int, grad: float) -> np.ndarray:
+    """SIMsalabim's `Make_Sub_Grid` before its scaling: an exponential grid of `m + 1` points,
+    symmetric in the layer."""
+    h = np.ones(m + 1)
+    ending = round(0.5 * m)
     for i in range(ending + 1):
-        h[i + istart] = np.exp(grad * (1.0 / ending - 1.0 / (i + 1)))
-        h[ifinish - i] = h[i + istart]
-    norm = h[istart : ifinish + 1].sum()
-    h[istart : ifinish + 1] *= span / (total * norm)
+        h[i] = np.exp(grad * (1.0 / ending - 1.0 / (i + 1)))
+        h[m - i] = h[i]
+    return h
+
+
+def _layout(thicknesses: Sequence[str | float], NP: int, grad: float, split: str):
+    """What `make_grid` takes from the thicknesses that is not smooth in them: the points per
+    layer, `i0`, `i1`, `lid`, and each point's unscaled spacing with its layer's sum."""
+    counts = layer_points(thicknesses, NP, split)
+    n_layers = len(counts)
+    raw = np.zeros(NP + 2)
+    norm = np.zeros(n_layers)
+    lid = np.zeros(NP + 2, dtype=int)
+    i0, i1 = [], []
+    istart = 0
+    for k in range(n_layers):
+        ifinish = istart + counts[k]
+        i0.append(istart)
+        i1.append(ifinish)
+        if k == n_layers - 1:
+            ifinish = NP + 1
+        raw[istart : ifinish + 1] = _sub_grid(ifinish - istart, grad)
+        norm[k] = raw[istart : ifinish + 1].sum()
+        lid[istart : ifinish + 1] = k
+        istart = ifinish + 1
+    i1[-1] = NP + 1
+    return i0, i1, lid, raw, norm
+
+
+def _set(xp, a, idx, value):
+    """`a` with `a[idx] = value`, in NumPy (a copy) or JAX."""
+    if xp is np:
+        a = a.copy()
+        a[idx] = value
+        return a
+    return a.at[idx].set(value)
+
+
+def _spacing(L, total, i0, lid, raw, norm, xp=np):
+    """`(x, h)` on a layout (`_layout`) for the thicknesses `L` (per layer) and their sum: each
+    layer's spacing scaled to its thickness, equalised across each interface (smooth in `L`)."""
+    h = raw * (L[lid] / (total * norm[lid]))
+    for j in i0[1:]:
+        h = _set(xp, h, slice(j - 2, j + 1), (h[j] + h[j - 1] + h[j - 2]) / 3.0)
+    x = xp.concatenate([xp.zeros(1), xp.cumsum(total * h[:-1])])
+    return x, h
 
 
 def make_grid(thicknesses: Sequence[str | float], NP: int, grad: float, split: str = "exact"):
@@ -97,31 +155,9 @@ def make_grid(thicknesses: Sequence[str | float], NP: int, grad: float, split: s
     `L` is the sum of the layers, and `x[NP+1]` is not quite it: equalising the spacing
     across each interface leaves `Σh` slightly off 1 (0.006 % on a 1/500/1 nm stack).
     SIMsalabim uses `L` wherever it scales, so does this."""
-    counts = layer_points(thicknesses, NP, split)
-    thicknesses = [float(L) for L in thicknesses]
-    total = sum(thicknesses)
-    n_layers = len(thicknesses)
-    h = np.zeros(NP + 2)
-    lid = np.zeros(NP + 2, dtype=int)
-    i0, i1 = [], []
-    istart, xstart = 0, 0.0
-    for k, L in enumerate(thicknesses):
-        ifinish = istart + counts[k]
-        i0.append(istart)
-        i1.append(ifinish)
-        if k == n_layers - 1:
-            ifinish = NP + 1
-        _sub_grid(h, istart, ifinish, grad, L, total)
-        lid[istart : ifinish + 1] = k
-        istart = ifinish + 1
-        xstart += L
-    i1[-1] = NP + 1
-    for k in range(n_layers - 1):
-        j = i0[k + 1]
-        h[j - 2 : j + 1] = (h[j] + h[j - 1] + h[j - 2]) / 3.0
-    x = np.zeros(NP + 2)
-    for i in range(1, NP + 2):
-        x[i] = x[i - 1] + total * h[i - 1]
+    i0, i1, lid, raw, norm = _layout(thicknesses, NP, grad, split)
+    L = np.array([float(L) for L in thicknesses])
+    x, h = _spacing(L, _sum(L), i0, lid, raw, norm)
     return x, h, i0, i1, lid
 
 
@@ -179,95 +215,154 @@ class Device:
     fix_ions: bool
 
 
-def _generation(setup: Setup, x: np.ndarray, lid: np.ndarray, layer_gen: np.ndarray,
-                total: float) -> np.ndarray:  # fmt: skip
-    """SIMsalabim's `Init_Generation_Profile`, `Use_gen_profile` 2: the file's profile, its
-    x-axis stretched to the device, interpolated linearly; zero where a layer does not
-    generate and on any point the interpolation loop does not reach."""
-    table = np.loadtxt(io.StringIO(setup.text("genProfile")), skiprows=1)
-    a, gr = table[:, 0].copy(), table[:, 1]
-    a *= total / a[-1]
-    g = np.zeros_like(x)
-    i = 0
-    NP = len(x) - 2
-    for j in range(len(a) - 1):
-        while x[i] < a[j + 1] and i < NP + 1:
-            if layer_gen[lid[i]]:
-                g[i] = gr[j] + (x[i] - a[j]) * (gr[j + 1] - gr[j]) / (a[j + 1] - a[j])
-            i += 1
-    return g
+@dataclass(frozen=True)
+class Structure:
+    """What a device's parameters do not change: the grid's layout (`_layout`: points per layer,
+    each point's layer and unscaled spacing), which layers generate light, hold traps, or hold
+    mobile or fixed ions, and the pre-bias sequence. Devices of one structure batch by `vmap`
+    over their parameters (`batch.device_tree`)."""
+
+    NP: int
+    i0: tuple[int, ...]
+    i1: tuple[int, ...]
+    lid: np.ndarray
+    raw: np.ndarray
+    norm: np.ndarray
+    layer_gen: np.ndarray  # per layer
+    traps: np.ndarray  # per layer: bulk traps
+    anion_mobile: np.ndarray  # per layer: N > 0 and μ > 0
+    anion_fixed: np.ndarray  # per layer: N > 0 and μ = 0
+    cation_mobile: np.ndarray
+    cation_fixed: np.ndarray
+    pre_cond: bool
+    fix_ions: bool
 
 
-def build_device(setup: Setup, grid_split: str = "exact") -> Device:
-    """The device of a SIMsalabim input (Stage A, `check_supported` first). `grid_split`
-    "simss" shares the grid points among the layers as SimSS's 10-byte reals do
-    (`layer_points`; docs/differences.md §5), for a comparison point by point."""
+#: A device's parameters per layer (`device_parameters`), as SIMsalabim names them.
+LAYER_PARAMETERS = (
+    "L", "eps_r", "E_c", "E_v", "N_c", "N_D", "N_A", "mu_n", "mu_p", "nu_int_n", "nu_int_p",
+    "k_direct", "N_t_bulk", "C_n_bulk", "C_p_bulk", "E_t_bulk", "N_anion", "N_cation",
+)  # fmt: skip
+
+
+def device_parameters(setup: Setup, grid_split: str = "exact") -> tuple[Structure, dict]:
+    """A SIMsalabim input (Stage A, `check_supported` first) as its `Structure` and its
+    parameters: a dict of `LAYER_PARAMETERS`, each an array over the layers, and `T`, `W_L`,
+    `W_R`, `G_frac`, `V_pre` and the generation profile's file (`gen_x`, `gen_G`). `grid_split`
+    as in `build_device`. Changing a parameter keeps the structure: a trap density set on a
+    layer without traps, or an ion density on a layer without ions, does nothing; the points
+    per layer stay those of the input's thicknesses."""
     layers = setup.layers
-    NP, grad = setup.i("NP"), setup.f("grad")
-    thicknesses = [ly.f("L") for ly in layers]
-    total = sum(thicknesses)
-    x, h, i0, i1, lid = make_grid([ly.raw["L"] for ly in layers], NP, grad, grid_split)
-    T = setup.f("T")
-    Vt = K_B * T / Q
-
-    def per_point(name: str) -> np.ndarray:
-        values = np.array([ly.f(name) for ly in layers])
-        return values[lid]
-
-    E_c, E_v, N_c = per_point("E_c"), per_point("E_v"), per_point("N_c")
-    ni = N_c * np.exp(-0.5 * (E_v - E_c) / Vt)
-    k_direct = per_point("k_direct")
-    k_direct[0] = k_direct[-1] = 0.0
-
-    def interleaved(name: str, nu_name: str) -> np.ndarray:
-        mu = per_point(name).copy()
-        for j in range(len(layers) - 1):
-            mu[i1[j]] = (total * h[i1[j]]) * layers[j].f(nu_name) / Vt
-        return mu
-
-    srh = {key: np.zeros(NP + 2) for key in ("Nt", "Cn", "Cp", "nt0", "pt0")}
-    for j, ly in enumerate(layers):
-        if ly.f("N_t_bulk") == 0:
-            continue
-        lo, hi = max(1, i0[j]), min(NP, i1[j])
-        E_t = ly.f("E_t_bulk")
-        srh["Nt"][lo : hi + 1] = ly.f("N_t_bulk")
-        srh["Cn"][lo : hi + 1] = ly.f("C_n_bulk")
-        srh["Cp"][lo : hi + 1] = ly.f("C_p_bulk")
-        srh["nt0"][lo : hi + 1] = ly.f("N_c") * np.exp((ly.f("E_c") - E_t) / Vt)
-        srh["pt0"][lo : hi + 1] = ly.f("N_c") * np.exp((E_t - ly.f("E_v")) / Vt)
-
-    layer_gen = np.array([ly.i("layerGen") for ly in layers], dtype=bool)
-    G = _generation(setup, x, lid, layer_gen, total)
-    G[0] = G[-1] = 0.0
-
-    ions = {}
-    for species, conc_name, mob_name in (("anion", "N_anion", "mu_anion"),
-                                         ("cation", "N_cation", "mu_cation")):  # fmt: skip
-        mask = np.zeros(NP + 2, dtype=bool)
-        fixed = np.zeros(NP + 2)
-        ion_total = 0.0
-        for j, ly in enumerate(layers):
-            conc, mob = ly.f(conc_name), ly.f(mob_name)
-            if conc == 0:
-                continue
-            if mob == 0:
-                fixed[i0[j] : i1[j] + 1] = conc
-                continue
-            if mask.any():
-                raise NotImplementedError(f"mobile {species}s in more than one layer")
-            mask[i0[j] : i1[j] + 1] = True
-            ion_total += ly.f("L") * conc
-        ions[species] = (mask, ion_total, fixed)
-
-    dos = Vt * np.log(N_c / N_c[0])
-    W_L, W_R = setup.f("W_L"), setup.f("W_R")
     if setup.i("leftElec") != -1:
         raise NotImplementedError("leftElec = 1 (the left electrode as anode) is not in Stage A")
+    NP, grad = setup.i("NP"), setup.f("grad")
+    i0, i1, lid, raw, norm = _layout([ly.raw["L"] for ly in layers], NP, grad, grid_split)
+
+    def flags(test):
+        return np.array([bool(test(ly)) for ly in layers])
+
+    structure = Structure(
+        NP=NP, i0=tuple(i0), i1=tuple(i1), lid=lid, raw=raw, norm=norm,
+        layer_gen=flags(lambda ly: ly.i("layerGen")),
+        traps=flags(lambda ly: ly.f("N_t_bulk") != 0),
+        anion_mobile=flags(lambda ly: ly.f("N_anion") != 0 and ly.f("mu_anion") != 0),
+        anion_fixed=flags(lambda ly: ly.f("N_anion") != 0 and ly.f("mu_anion") == 0),
+        cation_mobile=flags(lambda ly: ly.f("N_cation") != 0 and ly.f("mu_cation") != 0),
+        cation_fixed=flags(lambda ly: ly.f("N_cation") != 0 and ly.f("mu_cation") == 0),
+        pre_cond=bool(setup.i("preCond")), fix_ions=bool(setup.i("fixIons")),
+    )  # fmt: skip
+    for species in ("anion", "cation"):
+        if getattr(structure, f"{species}_mobile").sum() > 1:
+            raise NotImplementedError(f"mobile {species}s in more than one layer")
+    table = np.loadtxt(io.StringIO(setup.text("genProfile")), skiprows=1)
+    # Needed only on some layers: the interface velocities (not on the last), the trap's.
+    optional = {"nu_int_n", "nu_int_p", "C_n_bulk", "C_p_bulk", "E_t_bulk"}
+
+    def value(ly: Layer, name: str) -> float:
+        return float(ly.raw.get(name, "0")) if name in optional else ly.f(name)
+
+    params = {name: np.array([value(ly, name) for ly in layers]) for name in LAYER_PARAMETERS}
+    params.update(
+        T=setup.f("T"), W_L=setup.f("W_L"), W_R=setup.f("W_R"), G_frac=setup.f("G_frac"),
+        V_pre=setup.f("Vpre"), gen_x=table[:, 0].copy(), gen_G=table[:, 1].copy(),
+    )  # fmt: skip
+    return structure, params
+
+
+def _generation(gen_x, gen_G, x, lid, layer_gen, total, xp=np):
+    """SIMsalabim's `Init_Generation_Profile`, `Use_gen_profile` 2: the file's profile, its
+    x-axis stretched to the device, interpolated linearly; zero where a layer does not
+    generate and on any point the interpolation loop does not reach (at or beyond the
+    stretched axis's end; the electrodes are zeroed in `device_arrays`). Each point takes the
+    first interval whose end lies beyond it, as the loop does."""
+    a = gen_x * (total / gen_x[-1])
+    j = xp.searchsorted(a[1:], x, side="right")
+    jj = xp.minimum(j, len(a) - 2)
+    g = gen_G[jj] + (x - a[jj]) * (gen_G[jj + 1] - gen_G[jj]) / (a[jj + 1] - a[jj])
+    return xp.where((j < len(a) - 1) & layer_gen[lid], g, 0.0)
+
+
+def _sum(values, xp=np):
+    """`sum(values)` as Python (3.12 and later) sums floats, compensated (Neumaier), so that the
+    total thickness is the one `make_grid` takes, to the bit; in JAX too."""
+    total, comp = 0.0, 0.0
+    for v in values:
+        s = total + v
+        comp = comp + xp.where(abs(total) >= abs(v), (total - s) + v, (v - s) + total)
+        total = s
+    return total + comp
+
+
+def device_arrays(structure: Structure, p: dict, xp=np) -> Device:
+    """Every array of a device from its structure and parameters (`device_parameters`), in
+    NumPy (`xp=np`) or `jax.numpy`, by the same formulas: in JAX differentiable in `p`."""
+    st = structure
+    NP, lid, i0, i1 = st.NP, st.lid, st.i0, st.i1
+    total = _sum(p["L"], xp)
+    x, h = _spacing(p["L"], total, i0, lid, st.raw, st.norm, xp)
+    T = p["T"]
+    Vt = K_B * T / Q
+    interior = np.zeros(NP + 2, dtype=bool)
+    interior[1:-1] = True
+
+    E_c, E_v, N_c = p["E_c"][lid], p["E_v"][lid], p["N_c"][lid]
+    ni = N_c * xp.exp(-0.5 * (E_v - E_c) / Vt)
+    k_direct = xp.where(interior, p["k_direct"][lid], 0.0)
+
+    # Interface mobilities: on the last point of each layer but the last, the interval to the
+    # next layer, `L·h·ν_int/V_T`.
+    iface = np.zeros(NP + 2, dtype=bool)
+    iface[list(i1[:-1])] = True
+
+    def interleaved(name: str, nu_name: str):
+        return xp.where(iface, (total * h) * p[nu_name][lid] / Vt, p[name][lid])
+
+    trap = interior & st.traps[lid]
+    nt0 = p["N_c"] * xp.exp((p["E_c"] - p["E_t_bulk"]) / Vt)
+    pt0 = p["N_c"] * xp.exp((p["E_t_bulk"] - p["E_v"]) / Vt)
+    srh = {key: xp.where(trap, v[lid], 0.0) for key, v in (
+        ("Nt", p["N_t_bulk"]), ("Cn", p["C_n_bulk"]), ("Cp", p["C_p_bulk"]),
+        ("nt0", nt0), ("pt0", pt0))}  # fmt: skip
+
+    G = _generation(p["gen_x"], p["gen_G"], x, lid, st.layer_gen, total, xp)
+    G = xp.where(interior, G, 0.0)
+
+    ions = {}
+    for species in ("anion", "cation"):
+        conc = p[f"N_{species}"]
+        mobile, fixed = getattr(st, f"{species}_mobile"), getattr(st, f"{species}_fixed")
+        ions[species] = (
+            mobile[lid],
+            xp.sum(xp.where(mobile, p["L"] * conc, 0.0)),
+            xp.where(fixed[lid], conc[lid], 0.0),
+        )
+
+    dos = Vt * xp.log(N_c / N_c[0])
+    W_L, W_R = p["W_L"], p["W_R"]
     return Device(
         x=x, h=h, L=total, T=T, Vt=Vt,
-        eps=per_point("eps_r") * EPS_0, E_c=E_c, E_v=E_v, N_c=N_c, ni=ni,
-        N_D=per_point("N_D"), N_A=per_point("N_A"),
+        eps=p["eps_r"][lid] * EPS_0, E_c=E_c, E_v=E_v, N_c=N_c, ni=ni,
+        N_D=p["N_D"][lid], N_A=p["N_A"][lid],
         mu_n=interleaved("mu_n", "nu_int_n"), mu_p=interleaved("mu_p", "nu_int_p"),
         k_direct=k_direct,
         srh_Nt=srh["Nt"], srh_Cn=srh["Cn"], srh_Cp=srh["Cp"],
@@ -275,15 +370,21 @@ def build_device(setup: Setup, grid_split: str = "exact") -> Device:
         G=G,
         offset_n=E_c - E_c[0] + dos, offset_p=E_v - E_v[0] - dos,
         V0=0.5 * (-W_L + W_R), VL=0.5 * (W_L - W_R),
-        n_left=float(N_c[0] * np.exp(-(W_L - E_c[0]) / Vt)),
-        n_right=float(N_c[-1] * np.exp(-(W_R - E_c[-1]) / Vt)),
-        p_left=float(N_c[0] * np.exp((W_L - E_v[0]) / Vt)),
-        p_right=float(N_c[-1] * np.exp(-(E_v[-1] - W_R) / Vt)),
-        W_L=W_L, W_R=W_R, G_frac=setup.f("G_frac"),
+        n_left=N_c[0] * xp.exp(-(W_L - E_c[0]) / Vt),
+        n_right=N_c[-1] * xp.exp(-(W_R - E_c[-1]) / Vt),
+        p_left=N_c[0] * xp.exp((W_L - E_v[0]) / Vt),
+        p_right=N_c[-1] * xp.exp(-(E_v[-1] - W_R) / Vt),
+        W_L=W_L, W_R=W_R, G_frac=p["G_frac"],
         i0=tuple(i0), i1=tuple(i1),
         anion_mask=ions["anion"][0], cation_mask=ions["cation"][0],
         anion_total=ions["anion"][1], cation_total=ions["cation"][1],
         anion_fixed=ions["anion"][2], cation_fixed=ions["cation"][2],
-        pre_cond=bool(setup.i("preCond")), V_pre=setup.f("Vpre"),
-        fix_ions=bool(setup.i("fixIons")),
+        pre_cond=st.pre_cond, V_pre=p["V_pre"], fix_ions=st.fix_ions,
     )  # fmt: skip
+
+
+def build_device(setup: Setup, grid_split: str = "exact") -> Device:
+    """The device of a SIMsalabim input (Stage A, `check_supported` first), in NumPy. `grid_split`
+    "simss" shares the grid points among the layers as SimSS's 10-byte reals do
+    (`layer_points`; docs/differences.md §5), for a comparison point by point."""
+    return device_arrays(*device_parameters(setup, grid_split))

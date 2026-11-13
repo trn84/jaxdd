@@ -96,20 +96,40 @@ def curves(g):                                   # J(V) at a share g of the gene
     return solve_batch(dict(batch, g_frac=batch["g_frac"] * g), V)[0]
 
 J, dJ_dg = jax.jvp(curves, (1.0,), (1.0,))      # forward mode
-
-
-def misfit(mu):                                   # a curve against a measured one
-    s = dict(batch["s"], mun_m=batch["s"]["mun_m"] * mu, mun_p=batch["s"]["mun_p"] * mu)
-    J, ok, _ = solve_batch(dict(batch, s=s, mu_n=batch["mu_n"] * mu), V)
-    return jnp.sum(jnp.where(ok, J - J_measured, 0.0) ** 2)
-
-grad = jax.grad(misfit)(1.0)                      # reverse mode
 ```
 
-A voltage not converged has zero derivatives. The arrays are those of `prepare`'s tree: a
-physical input enters through every array it shapes (above, the electron mobility through the
-stencils and the current's `mu_n`). Derivatives in a layer's thickness or in parameters of
-`build_device` are not there yet ([PLAN.md](../PLAN.md), M7).
+A voltage not converged has zero derivatives.
+
+To differentiate in the input's own parameters — a layer's mobility, thickness, band edge, trap
+or ion density, the temperature, a work function — build the device in JAX from them.
+`device_parameters` splits an input into its **structure** (points per layer, which layers
+generate, hold traps or ions, the pre-bias sequence) and its **parameters** (a dict: each of
+`device.LAYER_PARAMETERS` an array over the layers, and `T`, `W_L`, `W_R`, `G_frac`, `V_pre`,
+the generation profile `gen_x`, `gen_G`); `device_tree` makes the batch's arrays from both, by
+`build_device`'s formulas in `jax.numpy`:
+
+```python
+from jaxdd.batch import device_tree
+from jaxdd.device import device_parameters
+
+structure, params = device_parameters(setup)
+
+def misfit(log_mu):                               # a curve against a measured one
+    mu_n = jnp.asarray(params["mu_n"]).at[1].set(jnp.exp(log_mu))   # the absorber's
+    p = dict(params, mu_n=mu_n)
+    batch = jax.tree_util.tree_map(lambda v: v[None], device_tree(structure, p))
+    J, ok, _ = solve_batch(batch, V)
+    return jnp.sum(jnp.where(ok, J[0] - J_measured, 0.0) ** 2)
+
+grad = jax.grad(misfit)(jnp.log(1e-3))            # reverse mode
+```
+
+Devices of one structure batch by `jax.vmap(functools.partial(device_tree, structure))` over
+stacked parameters, built on the GPU. A parameter change keeps the structure: the points per
+layer stay those of the input's thicknesses (a thickness moves the grid, not its counts), and a
+trap or ion density set on a layer that has none does nothing. The generation profile from a file
+is stretched to the device as SimSS does, so a thickness moves it with the grid; it is not
+recomputed optically.
 
 ### Reading the result
 

@@ -26,7 +26,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from jaxdd.constants import Q
-from jaxdd.device import Device
+from jaxdd.device import Device, Structure, device_arrays
 from jaxdd.solver import (
     BERNOULLI,
     ION_LOG_CAP,
@@ -45,7 +45,7 @@ from jaxdd.solver import (
 )
 from jaxdd.sweep import block_sweep
 
-__all__ = ["prepare", "solve_batch"]
+__all__ = ["device_tree", "prepare", "solve_batch"]
 
 #: The current settled: unchanged to this share of its scale (the generation's current plus
 #: its own size) over `STALL_STEPS` Newton steps; SimSS's own errJ is larger.
@@ -58,29 +58,38 @@ QUADRATIC_TOL = 1e-5
 QUADRATIC_RATIO = 1e-2
 
 
-def _device_tree(dev: Device) -> dict:
-    """One device as the arrays the pure solver reads."""
+def _device_tree(dev: Device, xp=np) -> dict:
+    """One device as the arrays the pure solver reads (`xp` as `device.device_arrays`)."""
     NP = len(dev.x) - 2
     iface = np.zeros(NP + 1, dtype=bool)
     for i in dev.i1[:-1]:
         iface[i] = True
-    generated = Q * dev.L * np.sum(dev.h[:-1] * dev.G[:-1]) / np.sum(dev.h[:-1])
+    generated = Q * dev.L * xp.sum(dev.h[:-1] * dev.G[:-1]) / xp.sum(dev.h[:-1])
     return {
-        "s": _stencils(dev),
+        "s": _stencils(dev, xp),
         "ion": _ion_setup(dev),
         "Vt": dev.Vt, "g_frac": dev.G_frac, "L": dev.L,
         "x": dev.x, "h": dev.h, "N_c": dev.N_c, "ni": dev.ni, "E_c": dev.E_c,
         "V0": dev.V0, "VL": dev.VL, "W_L": dev.W_L, "W_R": dev.W_R,
-        "ln_n_left": np.log(dev.n_left), "ln_n_right": np.log(dev.n_right),
-        "ln_p_left": np.log(dev.p_left), "ln_p_right": np.log(dev.p_right),
+        "ln_n_left": xp.log(dev.n_left), "ln_n_right": xp.log(dev.n_right),
+        "ln_p_left": xp.log(dev.p_left), "ln_p_right": xp.log(dev.p_right),
         "offset_n": dev.offset_n, "offset_p": dev.offset_p,
         "mu_n": dev.mu_n, "mu_p": dev.mu_p, "G": dev.G,
         "rec": {"kd": dev.k_direct, "ni2": dev.ni**2, "Nt": dev.srh_Nt, "Cn": dev.srh_Cn,
                 "Cp": dev.srh_Cp, "nt0": dev.srh_nt0, "pt0": dev.srh_pt0},
         "iface": iface,
-        "J_scale": max(generated, 1.0),
+        "J_scale": xp.maximum(generated, 1.0),
         "pre_cond": float(dev.pre_cond), "V_pre": dev.V_pre, "fix_ions": float(dev.fix_ions),
     }  # fmt: skip
+
+
+def device_tree(structure: Structure, params: dict) -> dict:
+    """One device of `prepare`'s batch, in `jax.numpy` from its structure and parameters
+    (`device.device_parameters`): differentiable in `params`, and batched by `vmap` over them
+    for devices of one structure, e.g.
+    `jax.vmap(functools.partial(device_tree, structure))(stacked_params)`."""
+    tree = _device_tree(device_arrays(structure, params, jnp), jnp)
+    return jax.tree_util.tree_map(jnp.asarray, tree)
 
 
 def prepare(devices: list[Device]) -> dict:

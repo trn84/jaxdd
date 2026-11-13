@@ -16,6 +16,9 @@ to the total length: `h[i] = (x[i+1] − x[i]) / L`.
 `L` is the sum of the layer thicknesses. The equalisation at the interfaces leaves `Σh`
 slightly off 1 (0.006 % on a 1/500/1 nm stack); SIMsalabim scales everything by `L` regardless,
 and so does jaxdd. `device.make_grid` builds it; `build_device` then fills every array on it.
+The points per layer are fixed by the thicknesses of the input; within them the spacing is
+smooth in the thicknesses, so a device built in JAX (`batch.device_tree`) is differentiable in
+them ([solver.md](solver.md#derivatives)).
 
 A layer's share of the points, `FLOOR((NP − n_thin·5)·L/(Ltot − L_thin))`, is taken in exact
 arithmetic from the input's decimal values (`device.layer_points`). Where it is a whole number,

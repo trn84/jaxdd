@@ -100,7 +100,7 @@ and offers a switch that reproduces SimSS's number. Each such case is in
 | Path | What |
 |---|---|
 | `src/jaxdd/simss_input.py` | reading SIMsalabim's input files, from a directory (`read_setup`) or from texts (`setup_from_texts`); `check_supported` |
-| `src/jaxdd/device.py` | SIMsalabim's grid and every static array of one device (`build_device`) |
+| `src/jaxdd/device.py` | SIMsalabim's grid and every static array of one device: its structure and parameters (`device_parameters`), the arrays from them in NumPy (`build_device`) or JAX (`device_arrays`) |
 | `src/jaxdd/solver.py` | the discrete equations, the Newton step, the block sweep; `solve_jv` for one device |
 | `src/jaxdd/batch.py` | the same solver as one pure function, `vmap`ped: `prepare`, `solve_batch` |
 | `src/jaxdd/sweep.py` | the batch's block sweep in one GPU kernel (Pallas), and the switch between it and the scan |

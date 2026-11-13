@@ -485,3 +485,71 @@ def test_the_bordered_system_and_its_transpose_are_solved() -> None:
         out, lo = _apply(b, jnp.asarray(r), jnp.asarray(rg))
         prod = np.concatenate([np.asarray(out).ravel(), np.asarray(lo)])
         assert np.max(np.abs(prod - matrix @ rhs)) < 1e-12
+
+
+@pytest.mark.parametrize(
+    "case",
+    ["thin_l1_light", "frozen_1e17_x1_thin_light", "steady_1e17_thin_light",
+     "frozen_thick_htl_dark"],
+)  # fmt: skip
+def test_the_device_in_jax_is_numpys(case: str) -> None:
+    """`batch.device_tree` (the device in `jax.numpy` from its structure and parameters) gives
+    `prepare`'s tree of `build_device`'s device, every array to round-off, booleans exactly; and
+    `vmap` over the parameters gives the stacked trees."""
+    import functools
+
+    from jaxdd.batch import device_tree, prepare
+    from jaxdd.device import device_parameters
+
+    setup = read_setup(DATA / case / "simulation_setup.txt")
+    structure, params = device_parameters(setup)
+    ref = prepare([build_device(setup)])
+    got = device_tree(structure, params)
+    for (path, r), g in zip(jax.tree_util.tree_flatten_with_path(ref)[0],
+                            jax.tree_util.tree_leaves(got), strict=True):  # fmt: skip
+        r, g = np.asarray(r)[0], np.asarray(g)
+        assert r.dtype == g.dtype and r.shape == g.shape, jax.tree_util.keystr(path)
+        assert np.allclose(g, r, rtol=1e-13, atol=0), jax.tree_util.keystr(path)
+
+    twice = jax.tree_util.tree_map(lambda v: jnp.stack([jnp.asarray(v), 1.01 * jnp.asarray(v)]),
+                                   params)  # fmt: skip
+    batched = jax.vmap(functools.partial(device_tree, structure))(twice)
+    second = device_tree(structure, jax.tree_util.tree_map(lambda v: v[1], twice))
+    for b, s in zip(jax.tree_util.tree_leaves(batched), jax.tree_util.tree_leaves(second),
+                    strict=True):  # fmt: skip
+        assert np.allclose(np.asarray(b)[1], np.asarray(s), rtol=1e-13, atol=0)
+
+
+def test_gradients_in_physical_parameters_are_finite_differences() -> None:
+    """M7: the gradient of the curves in a layer's parameters, through `device_tree` and
+    `solve_batch`: the absorber's electron mobility and thickness (the grid moves, its points per
+    layer stay), a transport layer's band edge, the ion density, the temperature and a work
+    function; against central finite differences along a random direction."""
+    from jaxdd.batch import device_tree, solve_batch
+    from jaxdd.device import device_parameters
+
+    cases = ["thin_l1_light", "frozen_1e17_x1_thin_light", "steady_1e17_thin_light"]
+    parts = [device_parameters(read_setup(DATA / c / "simulation_setup.txt")) for c in cases]
+    V = np.round(np.arange(-0.2, 1.3 + 1e-9, 0.1), 6)
+    w = jnp.asarray(np.random.default_rng(0).normal(size=(len(cases), len(V))))
+    absorber = jnp.array([0.0, 1.0, 0.0])
+
+    def loss(a):
+        trees = []
+        for structure, p in parts:
+            q = dict(p, mu_n=p["mu_n"] * (1 + absorber * (a[0] - 1)),
+                     L=p["L"] * (1 + absorber * (a[1] - 1)),
+                     E_c=p["E_c"] + jnp.array([0.05, 0.0, 0.0]) * (a[2] - 1),
+                     N_anion=p["N_anion"] * a[3], T=p["T"] * a[4],
+                     W_L=p["W_L"] + 0.05 * (a[5] - 1))  # fmt: skip
+            trees.append(device_tree(structure, q))
+        batch = jax.tree_util.tree_map(lambda *leaves: jnp.stack(leaves), *trees)
+        J, ok, _ = solve_batch(batch, V)
+        return jnp.sum(w * jnp.where(ok, J, 0.0))
+
+    a0 = jnp.ones(6)
+    direction = jnp.asarray(np.random.default_rng(1).normal(size=6))
+    by_grad = float(jax.grad(loss)(a0) @ direction)
+    h = 1e-6
+    fd = (float(loss(a0 + h * direction)) - float(loss(a0 - h * direction))) / (2 * h)
+    assert abs(by_grad - fd) < 1e-6 * abs(fd)

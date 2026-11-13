@@ -416,7 +416,14 @@ What this means for a curve:
   again in the backward pass.
 
 Tested against central finite differences and between both modes, on devices without ions, with
-free ions and with frozen ones (`tests/test_solver.py`). The derivatives are in the batch's
-arrays (`prepare`'s tree), not yet in a layer's thickness or mobility: devices are built in NumPy
-(`device.py`), and the chain from physical inputs to those arrays is open ([PLAN.md](../PLAN.md),
-M7).
+free ions and with frozen ones (`tests/test_solver.py`).
+
+The derivatives are in the batch's arrays. To have them in the input's own parameters, the
+device is built in JAX: `device.device_parameters` splits an input into its structure and its
+parameters, and `batch.device_tree` runs `build_device`'s formulas (`device.device_arrays`,
+`solver._stencils`, `batch._device_tree`, each written once for NumPy and `jax.numpy`) on them.
+NumPy's `build_device` is unchanged to the bit; the JAX tree equals it to round-off (tests). What
+stays fixed is what is not smooth: the points per layer (a thickness scales its layer's spacing
+and moves the grid, at the same counts), and which layers have traps, ions or generation. The
+generation profile from a file is stretched to the device as SimSS does, so its derivative in a
+thickness is that of the stretch, not of the optics.

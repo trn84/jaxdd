@@ -62,7 +62,7 @@ about two A100s).
 |---|---|---|
 | **M4** | The grid in space (2.1) | 400 points or fewer meet the validation criteria on the hardest devices, or bucketing by grid size is justified |
 | **M6** | Adaptive parameter axes (2.2) | the refined axes meet a table's interpolation tolerance with fewer devices than hand-made ones |
-| **M7** | Gradients in physical inputs (2.4): the device's arrays from its layers' parameters in JAX. The curves are differentiable in the batch's arrays already, by implicit differentiation of the converged solution ([docs/solver.md](docs/solver.md#derivatives)) | the gradient in a layer's parameter (a mobility, a doping, an energy level, the ion density, a thickness) against finite differences; a fit of a measured curve |
+| **M7** | A fit of a measured curve by gradients (2.4); the curves are differentiable in the input's parameters ([docs/solver.md](docs/solver.md#derivatives)) | a SimSS curve's parameters recovered from a perturbed start; a measured curve fitted |
 | — | Several GPUs in one process: the batch axis sharded (`NamedSharding` or `shard_map`, not `pmap`); the devices are independent, so no communication | the rate scales with the number of GPUs |
 
 Gradients are taken by implicit differentiation of the converged solution: the backward pass
@@ -150,28 +150,19 @@ Order: Stage B in JAX; then the kernel for the physics that has
 settled. A first measurement before deciding: the Newton step of Stage A's physics without ions
 as one CUDA kernel on devices without ions, against the JAX step's time on the A100.
 
-### 2.4 M7: gradients in physical inputs
+### 2.4 M7: a fit
 
-`solve_batch` is differentiable in every array of `prepare`'s tree, but the arrays are built in
-NumPy (`device.build_device`, `batch._device_tree`), so a gradient in a layer's mobility or doping
-has to be assembled by hand from the arrays it shapes (the tutorial's example scales four). What
-is left:
+The curves are differentiable in the input's own parameters (a layer's mobility, thickness, band
+edge, trap and ion density, the temperature, the work functions): the device built in JAX
+(`batch.device_tree`), the converged solution differentiated implicitly
+([docs/solver.md](docs/solver.md#derivatives)). What is left is to use it:
 
-1. **The device in JAX from its layers' parameters.** `build_device` without the grid: per layer
-   a vector of parameters (`eps_r`, `E_c`, `E_v`, `N_c`, `N_D`, `N_A`, `mu_n`, `mu_p`, the
-   interface velocities, `k_direct`, the trap, the ion densities, `W_L`, `W_R`, `T`, `G_frac`),
-   spread to the points by the layer index (static per grid), and every derived array
-   (`_stencils`, `_ion_setup`, `_device_tree`) by the same formulas in `jnp`. NumPy's version stays
-   the reference: both give the same tree to round-off (a test).
-2. **Thicknesses.** The number of points per layer is an integer (`layer_points`), fixed for a
-   batch; within it the positions are smooth in the thicknesses (`make_grid`'s geometric spacing).
-   A gradient in a thickness at fixed counts; a count that would change is a new grid, not a
-   derivative.
-3. **The generation profile** (`_generation`, transfer-matrix or from a file) as a function of the
-   thicknesses: the transfer-matrix part in JAX, or the profile held, documented.
-4. **A fit.** Parameters of one device from a measured curve, by `jax.grad` and an optimiser
-   (optax or `jax.scipy.optimize`), with bounds by transformation (logarithms of densities and
-   mobilities); on a curve SimSS made from known parameters first, then on a measured one.
+- **A fit.** Parameters of one device from a measured curve, by `jax.grad` and an optimiser
+  (optax or `jax.scipy.optimize`), with bounds by transformation (logarithms of densities and
+  mobilities); on a curve SimSS made from known parameters first (the test cases' `JV.dat`), then
+  on a measured one. What it shows: which parameters a curve determines and which it does not
+  (the Hessian's or the Jacobian's small singular values), and how a voltage that does not
+  converge during a fit is handled (its zero gradient leaves it out of the step).
 
 ## 3 Proposal: a steric limit on ion accumulation
 
@@ -264,7 +255,7 @@ microseconds per evaluation are needed.
 | tables, a fixed training set (1) | yes | not needed |
 | on-the-fly training, active learning (1) | yes, with a replay buffer | makes it nearly free |
 | MCMC per cell (2) | yes for a few cells | helps for many cells |
-| gradients: HMC, fits, inverse design (2, 4) | in the batch's arrays; in physical inputs after M7 | faster forward solves; the gradients stay M7's |
+| gradients: HMC, fits, inverse design (2, 4) | yes (M7: a fit still to show) | faster forward solves; the gradients stay M7's |
 | Sobol, Monte Carlo (3) | yes | not needed |
 | inside other simulations, transients (5, 6) | doubtful | most likely needed |
 | interactive (7) | yes, even on a CPU | not needed |

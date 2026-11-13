@@ -81,6 +81,26 @@ so that the solver is never the larger error in what is computed from it.
   the direct recombination hardly; a fit of real data wants several light intensities or a dark
   curve, several starts, and its uncertainty by sampling rather than by linearisation.
 
+- **A fit to measured curves** (`validation/fit_measured.py`, 2026-11-13): the five light
+  intensities of each of the three samples of Heester et al. (2025; `validation/data/heester2025`)
+  at once, the paper's free parameters within its bounds plus the generation's scale, from the
+  middle of the bounds. The device is the paper's stack with interface traps; what the paper does
+  not state is assumed (uniform generation instead of its optics, the interface traps' energy,
+  capture coefficients and type, the transport layers' outer bands), and the intensities are the
+  measured short-circuit currents' ratios (0.126 where the files say 0.10, 0.357 for 0.38). The
+  misfit, rms over the 1-sun short-circuit current: 0.77 % (0.1 Cl), 0.55 % (0.2 Cl), 2.7 %
+  (0.6 Cl; 2.4 % from the paper's values), against a spread of about 2 % between pixels of one
+  sample; the 0.2 Cl sample's curves are matched within 0.2–0.7 A/m² on average at 187 A/m².
+  Cold and warm starts end in the same fit for 0.1 and 0.2 Cl. On the RTX 4070 Ti SUPER a fit is
+  2–10 minutes, 100–400 evaluations of the five curves and as many Jacobians (the paper's
+  Bayesian optimisation ran about 25 000 simulations per sample). What the curves determine: the
+  Jacobian's singular values spread over seven to nine decades, three to seven of the fourteen
+  parameters end at a bound, and `k_direct` ends within a factor of three of its lower bound in
+  all six fits (two starts per sample), so
+  that with these assumptions the curves settle about three to five combinations of the
+  parameters, not the parameters one by one — the paper's own point. The 0.6 Cl sample, with the
+  largest band step to the ETL in the paper's fit, is the one the assumptions do not reach.
+
 When jaxdd and SimSS disagree, check SimSS first: its `errJ` at that voltage, its log for "No
 convergence", and a rerun at tight tolerances. The cases where SimSS was wrong so far are all in
 [differences.md](differences.md).
@@ -125,6 +145,7 @@ as arguments. SimSS itself is built by [`simss/`](../simss/README.md).
 | `validation/shortcuts.py CASE_DIR …` | the batched solver with its shortcuts against `strict=True` |
 | `validation/bench.py [N] [batch]` | curves per second ([hardware.md](hardware.md)) |
 | `validation/breakdown.py [batch]` | one Newton step's time, part by part |
+| `validation/fit_measured.py [SAMPLE …] [--start cold\|paper]` | a fit to the measured curves of Heester et al. (2025), five intensities at once |
 | `validation/fit.py CASE_DIR [--start S] [--fix NAME …] [--noise σ]` | a fit by gradients to the case's SimSS curve, from a perturbed start; what the curve determines (singular values) |
 
 ## Running SimSS for a comparison

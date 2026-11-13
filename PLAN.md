@@ -188,8 +188,11 @@ What jaxdd solves today ("Stage A") is in [docs/overview.md](docs/overview.md). 
 - **Stage B: SimSS's steady state in full.** One module at a time, each validated against SimSS
   on its own test devices before the next: charged traps at several levels in the bulk and at
   interfaces; Schottky contacts and finite surface recombination; series and shunt resistance;
-  the remaining recombination and mobility options. At the end, a SimSS input runs on jaxdd or is
-  refused with the missing feature named.
+  the remaining recombination and mobility options; the generation profile computed
+  (`genProfile = calc`: SimSS's transfer-matrix optics from the layers' n, k and the spectrum),
+  in JAX, so that a thickness moves the optics too and its gradient is the physical one (today
+  a profile from a file is only stretched, as SimSS does: [docs/solver.md](docs/solver.md#derivatives)).
+  At the end, a SimSS input runs on jaxdd or is refused with the missing feature named.
 - **Stage C: transients (ZimT).** Time-dependent drift-diffusion with mobile ions: scan-rate
   hysteresis, transient photocurrent and photovoltage, impedance. Its own plan when Stage B is
   done. This is where a fused kernel is most likely needed (section 1.2).
@@ -226,7 +229,8 @@ gradients; each says how much speed it needs.
    (N·(d+2) simulations: 1.8·10⁵ for N = 10⁴, d = 16, about a minute) and Monte Carlo over process
    spread: independent devices, exactly the batch.
 4. **Inverse design.** Optimise a stack for efficiency or stability, by gradient (M7), from many
-   starting points in parallel.
+   starting points in parallel. Its thicknesses need the computed optics (Stage B); with a profile
+   from a file only the electrical parameters are worth optimising.
 5. **Drift-diffusion inside a larger simulation.** One solve per simulated measurement, for
    example in a digital twin of a laboratory that ages and measures many cells; mostly
    transient (Stage C).

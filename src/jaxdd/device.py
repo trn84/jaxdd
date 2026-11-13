@@ -13,6 +13,7 @@ then handed to JAX) or in `jax.numpy` (`batch.device_tree`: differentiable in th
 
 from __future__ import annotations
 
+import dataclasses
 import io
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -21,6 +22,8 @@ from fractions import Fraction
 import numpy as np
 
 from jaxdd.constants import EPS_0, K_B, Q
+from jaxdd.optics import generation as optics_generation
+from jaxdd.optics import optical_data
 from jaxdd.simss_input import Layer, Setup
 
 __all__ = [
@@ -249,13 +252,17 @@ class Structure:
     fix_ions: bool
     int_traps: np.ndarray = None  # per layer: traps at its interface to the next (not the last)
     int_trap_type: np.ndarray = None  # per layer: -1 acceptor, 0 neutral, 1 donor
+    #: The generation: "file" (a profile, `gen_x`, `gen_G`), "none" (uniform, each layer's
+    #: `G_ehp`) or "calc" (the transfer-matrix method, `optics.optical_data`).
+    gen_mode: str = "file"
+    optics: dict | None = None
 
 
 #: A device's parameters per layer (`device_parameters`), as SIMsalabim names them.
 LAYER_PARAMETERS = (
     "L", "eps_r", "E_c", "E_v", "N_c", "N_D", "N_A", "mu_n", "mu_p", "nu_int_n", "nu_int_p",
     "k_direct", "N_t_bulk", "C_n_bulk", "C_p_bulk", "E_t_bulk", "N_anion", "N_cation",
-    "N_t_int", "E_t_int", "C_n_int", "C_p_int",
+    "N_t_int", "E_t_int", "C_n_int", "C_p_int", "G_ehp",
 )  # fmt: skip
 
 
@@ -300,7 +307,12 @@ def device_parameters(setup: Setup, grid_split: str = "exact") -> tuple[Structur
     for species in ("anion", "cation"):
         if getattr(structure, f"{species}_mobile").sum() > 1:
             raise NotImplementedError(f"mobile {species}s in more than one layer")
-    table = np.loadtxt(io.StringIO(setup.text("genProfile")), skiprows=1)
+    mode = {"none": "none", "calc": "calc"}.get(setup.raw.get("genProfile", "none").lower(), "file")
+    structure = dataclasses.replace(
+        structure, gen_mode=mode, optics=optical_data(setup, layers) if mode == "calc" else None
+    )
+    table = (np.loadtxt(io.StringIO(setup.text("genProfile")), skiprows=1) if mode == "file"
+             else np.zeros((2, 2)))  # fmt: skip
     # Needed only on some layers: the interface velocities (not on the last), the trap's.
     optional = {
         "nu_int_n",
@@ -312,6 +324,7 @@ def device_parameters(setup: Setup, grid_split: str = "exact") -> tuple[Structur
         "E_t_int",
         "C_n_int",
         "C_p_int",
+        "G_ehp",
     }
 
     def value(ly: Layer, name: str) -> float:
@@ -413,7 +426,13 @@ def device_arrays(structure: Structure, p: dict, xp=np) -> Device:
         ("Nt", p["N_t_bulk"]), ("Cn", p["C_n_bulk"]), ("Cp", p["C_p_bulk"]),
         ("nt0", nt0), ("pt0", pt0))}  # fmt: skip
 
-    G = _generation(p["gen_x"], p["gen_G"], x, lid, st.layer_gen, total, xp)
+    if st.gen_mode == "calc":
+        G = optics_generation(st.optics, x, lid, [p["L"][k] for k in range(len(st.layer_gen))],
+                              st.layer_gen, xp)  # fmt: skip
+    elif st.gen_mode == "none":
+        G = p["G_ehp"][lid]  # SIMsalabim's: each layer's own, whatever its `layerGen`
+    else:
+        G = _generation(p["gen_x"], p["gen_G"], x, lid, st.layer_gen, total, xp)
     G = xp.where(interior, G, 0.0)
 
     ions = {}

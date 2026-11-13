@@ -176,6 +176,51 @@ def test_series_and_shunt_resistance_are_simss_external_circuit() -> None:
         assert np.max(np.abs(got_V - ref["Vext"])) < 1e-4
 
 
+@pytest.mark.parametrize("case", ["calc_light", "pin_calc_light"])
+def test_the_transfer_matrix_profile_is_simss(case: str) -> None:
+    """Stage B: the generation profile by the transfer-matrix method (`genProfile = calc`) on
+    SimSS's grid is SimSS's to round-off (its variable file, `G_simss.dat`): glass, ITO, the
+    layers, gold or silver, AM1.5G from 350 to 800 nm; the 1 nm stack, and 20/500/10 nm."""
+    dev = build_device(read_setup(DATA / case / "simulation_setup.txt"))
+    ref = np.loadtxt(DATA / case / "G_simss.dat", skiprows=1)
+    assert np.max(np.abs(dev.x - ref[:, 0])) < 1e-15
+    assert np.max(np.abs(dev.G[1:-1] - ref[1:-1, 1])) < 1e-10 * np.max(ref[:, 1])
+
+
+@pytest.mark.parametrize("case", ["calc_light", "pin_calc_light", "none_light"])
+def test_jv_with_computed_or_uniform_generation_reproduces_simss(case: str) -> None:
+    """The curves with the transfer-matrix profile, and with a uniform one (`genProfile = none`,
+    each layer's `G_ehp`), against SimSS's."""
+    setup = read_setup(DATA / case / "simulation_setup.txt")
+    check_supported(setup)
+    ref = np.genfromtxt(DATA / case / "JV.dat", names=True)
+    res = solve_jv(build_device(setup), ref["Vint"], bernoulli_name="simss")
+    assert res.converged.all()
+    assert np.max(np.abs(res.J - ref["Jext"])) < 1e-5 * np.max(np.abs(ref["Jext"]))
+
+
+def test_the_gradient_through_the_optics_is_finite_differences() -> None:
+    """The absorber's thickness moves the grid and the optics (interference in the 20/500/10 nm
+    stack): the derivative of the short-circuit current, through `device_tree`, against central
+    finite differences."""
+    from jaxdd.batch import device_tree, solve_batch
+    from jaxdd.device import device_parameters
+
+    structure, params = device_parameters(read_setup(DATA / "pin_calc_light" /
+                                                     "simulation_setup.txt"))  # fmt: skip
+    V = jnp.array([0.0, 0.5])
+
+    def jsc(scale):
+        p = dict(params, L=params["L"] * jnp.array([1.0, scale, 1.0]))
+        batch = jax.tree_util.tree_map(lambda v: v[None], device_tree(structure, p))
+        return solve_batch(batch, V)[0][0, 0]
+
+    _, by_jvp = jax.jvp(jsc, (1.0,), (1.0,))
+    h = 1e-5
+    fd = (float(jsc(1 + h)) - float(jsc(1 - h))) / (2 * h)
+    assert abs(float(by_jvp) - fd) < 1e-5 * abs(fd)
+
+
 def test_a_batch_mixes_devices_with_and_without_interface_traps() -> None:
     """`prepare` gives the devices without interface traps zero traps on every edge: each curve
     of a mixed batch is the one-device solver's."""
@@ -582,7 +627,8 @@ def test_the_bordered_system_and_its_transpose_are_solved() -> None:
 @pytest.mark.parametrize(
     "case",
     ["thin_l1_light", "frozen_1e17_x1_thin_light", "steady_1e17_thin_light",
-     "frozen_thick_htl_dark", "iface_ions_light", "pin_iface_light", "resist_light"],
+     "frozen_thick_htl_dark", "iface_ions_light", "pin_iface_light", "resist_light",
+     "calc_light", "none_light"],
 )  # fmt: skip
 def test_the_device_in_jax_is_numpys(case: str) -> None:
     """`batch.device_tree` (the device in `jax.numpy` from its structure and parameters) gives

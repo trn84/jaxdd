@@ -115,9 +115,21 @@ R_p,k = N_t·C_p·(p_k·f − p_t0,k·(1 − f)) / w
 it is positive) and 0 for an acceptor. Both couple the two points of an interface, so the
 Jacobian stays block tridiagonal. The level must lie inside both layers' gaps.
 
-The generation profile is read from the file the setup names (`Init_Generation_Profile`): its
-x-axis is stretched to the device, it is interpolated linearly onto the grid, and it is zero in
-layers with `layerGen = 0`. The device's `G_frac` scales it; `G_frac = 0` is the dark.
+The generation profile (`Init_Generation_Profile`) comes in one of three ways, and the device's
+`G_frac` scales it; `G_frac = 0` is the dark. It is zero on the electrodes.
+
+- **From a file** (`genProfile` names it): its x-axis is stretched to the device, it is
+  interpolated linearly onto the grid, and it is zero in layers with `layerGen = 0`.
+- **Uniform** (`genProfile = none`): each layer's `G_ehp`, whatever its `layerGen` (SIMsalabim's).
+- **By the transfer-matrix method** (`genProfile = calc`, `optics.py`, SIMsalabim's
+  `TransferMatrix`): light from a substrate (`nkSubstrate`, its front reflection counted
+  incoherently) through a transparent electrode (`L_TCO`, `nkTCO`; none for `L_TCO = 0`), the
+  layers (`nkLayer` each) and a back electrode (`L_BE`, `nkBE`). On wavelengths from `lambda_min`
+  to `lambda_max` in steps of 1 nm, the optical field at each grid point follows from 2×2
+  interface and layer matrices (Pettersson et al., J. Appl. Phys. 86, 487 (1999)), and
+  `G(x) = Σ_λ Δλ·α·n·AM(λ)·|E(x, λ)|²·λ/(h·c)` with `α = 4π·k/λ` and the spectrum `AM`
+  (`spectrum`); zero in layers with `layerGen = 0`. In JAX (`batch.device_tree`) it is
+  differentiable in the layers' thicknesses, which move the optics as well as the grid.
 
 ## Contacts and the applied voltage
 

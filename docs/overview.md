@@ -54,7 +54,7 @@ each with its own parameters.
 | Interfaces | band offsets; thermionic transfer at a finite velocity (`nu_int_n`, `nu_int_p`); interface traps, one level per interface, neutral or charged (`N_t_int`, `E_t_int`, `intTrapType`; the first module of Stage B) |
 | Contacts | ohmic, at the work functions `W_L`, `W_R` (the left electrode the cathode, `leftElec = -1`); series and shunt resistance as SimSS's external circuit (Stage B) |
 | Recombination | direct (`k_direct`), bulk SRH through one neutral trap level per layer |
-| Generation | a profile from a file (`genProfile`), scaled by `G_frac` |
+| Generation | a profile from a file, uniform per layer (`genProfile = none`), or by the transfer-matrix method from n,k data and a spectrum (`calc`, Stage B); scaled by `G_frac` |
 | Ions | anions and cations, each mobile in one layer: free at every voltage, or settled at a pre-bias and frozen (`preCond`, `fixIons`, as SimSS with [`simss/fixed_ions.patch`](../simss/README.md)); immobile ions as fixed charge |
 | Output | `J(V)` and a `converged` flag per device and voltage; the number of Newton steps |
 
@@ -62,7 +62,7 @@ Everything else is **refused by name**, never approximated: `check_supported` ra
 `NotImplementedError` listing each parameter outside this scope (surface recombination at the
 contacts, field-dependent mobility or generation, charged bulk
 traps, trap files, Langevin recombination, an ionic region across layers, `fixIons`
-without `preCond`, a calculated generation profile, `leftElec = 1`). What comes next in physics is
+without `preCond`, `leftElec = 1`). What comes next in physics is
 in [PLAN.md](../PLAN.md).
 
 ## Where jaxdd follows SIMsalabim, and where it does not

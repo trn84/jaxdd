@@ -32,3 +32,11 @@ generation), 4.6e14 and 5e13 m⁻² of donor traps at its interfaces; SimSS 5.36
 
 `resist_light/`: `thin_l1_light` with a series resistance of 2e-4 Ω m² and a shunt of 0.3 Ω m²
 (Stage B); SimSS 5.36.
+
+`calc_light/` and `pin_calc_light/`: `thin_l1_light` and `pin_iface_light` with the generation
+profile by the transfer-matrix method (`genProfile = calc`, 350–800 nm): glass, 110 or 150 nm of
+ITO, the layers (PCBM/MAPI/PTAA and C60/MAPI/TaTm n,k data) and 100 nm of gold or silver. The n,k
+files and AM1.5G are SIMsalabim's (`Data/`, their sources in its `Biblio_info_to_cite.txt`).
+`G_simss.dat` is SimSS's profile on its grid (from its variable file); SimSS 5.36.
+`none_light/`: `thin_l1_light` with a uniform generation of 1.5e28 m⁻³ s⁻¹ in the absorber
+(`genProfile = none`); SimSS 5.36.

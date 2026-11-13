@@ -122,6 +122,16 @@ platform's `long double`); it gave SimSS's points on all eight stacks checked ag
 `Var.dat` (its `lid` column), among them SIMsalabim's own `Tests/test_13`, and agrees with x87
 arithmetic on 24 000 random stacks.
 
+## 6 Interpolating n,k data and the spectrum
+
+SIMsalabim's linear interpolation of n,k data and of the spectrum onto the wavelengths
+(`InterExtraPolation`, order 1) takes the two data points to the left of the interval that holds
+the wavelength, so a wavelength strictly between two data points is extrapolated from the
+interval before. On data at whole nanometres, which every file SIMsalabim ships is, each
+wavelength hits a data point and the result is exact either way. jaxdd interpolates within the
+bracketing interval (and extrapolates linearly beyond either end, as SimSS does); on data off the
+1 nm grid the two differ.
+
 ## Not differences
 
 Reproduced on purpose, because they are part of the discrete equations SimSS defines:

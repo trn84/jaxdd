@@ -163,8 +163,10 @@ intensities at once, to 0.55–2.7 % of the short-circuit current in minutes
   says what the curves settle, which `(JᵀJ)⁻¹` does not.
 - **Several starts at once**: the same device at many starting points in one batch (a batched
   Gauss–Newton in JAX instead of one `least_squares` per start); the best kept.
-- **The generation profile computed** (Stage B): the measured fits assume a uniform generation;
-  the paper's is transfer-matrix optics.
+- **The optics for the measured cell**: the measured fits assume a uniform generation; the
+  transfer-matrix profile is there, but the cell is lit through its anode, which wants
+  `leftElec = 1` (Stage B, section 4) instead of the mirrored stack, and the paper's perovskite
+  n,k data (Werner et al., ACS Energy Lett. 3, 742 (2018)) are not among SIMsalabim's files.
 
 ## 3 Proposal: a steric limit on ion accumulation
 
@@ -189,13 +191,12 @@ What jaxdd solves today ("Stage A") is in [docs/overview.md](docs/overview.md). 
 
 - **Stage B: SimSS's steady state in full.** One module at a time, each validated against SimSS
   on its own test devices before the next. Done: interface traps, one level each, neutral or
-  charged; series and shunt resistance, SimSS's external circuit ([docs/model.md](docs/model.md)).
-  Next: the generation profile computed (below; a measured fit needs it, section 2.4); charged
-  bulk traps and several levels (trap files) in the bulk and at interfaces; Schottky contacts and finite surface recombination;
-  the remaining recombination and mobility options; the generation profile computed
-  (`genProfile = calc`: SimSS's transfer-matrix optics from the layers' n, k and the spectrum),
-  in JAX, so that a thickness moves the optics too and its gradient is the physical one (today
-  a profile from a file is only stretched, as SimSS does: [docs/solver.md](docs/solver.md#derivatives)).
+  charged; series and shunt resistance, SimSS's external circuit; the generation profile by the
+  transfer-matrix method, differentiable in the thicknesses, and uniform
+  ([docs/model.md](docs/model.md)). Next: the left electrode as the anode (`leftElec = 1`), which a
+  p-i-n cell lit through its anode needs with the computed optics (section 2.4); charged bulk traps
+  and several levels (trap files) in the bulk and at interfaces; Schottky contacts and finite
+  surface recombination; the remaining recombination and mobility options.
   At the end, a SimSS input runs on jaxdd or is refused with the missing feature named.
 - **Stage C: transients (ZimT).** Time-dependent drift-diffusion with mobile ions: scan-rate
   hysteresis, transient photocurrent and photovoltage, impedance. Its own plan when Stage B is

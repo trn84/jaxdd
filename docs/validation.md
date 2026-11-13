@@ -64,6 +64,10 @@ so that the solver is never the larger error in what is computed from it.
 - **Series and shunt resistance** (2026-11-13): 2e-4 and 0.3 Ω m² on the 1 nm stack, the
   series resistance moving the voltage by 1.8 V at the top of the scan: `J_ext` within 2.2e-6 of
   SimSS's scale, `V_ext` within 4 µV.
+- **The transfer-matrix profile** (2026-11-13): on the 1 nm stack between glass, 110 nm ITO
+  and gold, and on a 20/500/10 nm stack between glass, 150 nm ITO and silver, the profile on the
+  grid is SimSS's within 4e-12 and the curves within 2e-7 and 6e-7 of SimSS's scale; a uniform
+  profile (`genProfile = none`) within 2.4e-6.
 - **Gradients** agree with central finite differences and between forward and reverse mode,
   in the batch's arrays, the voltages and the input's own parameters (mobility, thickness, band
   edge, ion density, temperature, work function), without ions, with free and with frozen ions

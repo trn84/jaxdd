@@ -76,11 +76,17 @@ class Setup:
 
     def text(self, name: str) -> str:
         """The text of the file the parameter `name` names."""
-        file = self.raw[name]
+        return self.read(self.raw[name], name)
+
+    def read(self, file: str, name: str | None = None) -> str:
+        """The text of a file the input names (a generation profile, n,k data, a spectrum): from
+        `files` if given there, else relative to `directory`. `name`, the parameter that names it,
+        for the error."""
         if self.files is not None and file in self.files:
             return self.files[file]
         if self.directory is None:
-            raise FileNotFoundError(f"{name} = {file}: not among the setup's files")
+            what = f"{name} = {file}" if name else file
+            raise FileNotFoundError(f"{what}: not among the setup's files")
         return (self.directory / file).read_text()
 
 
@@ -137,8 +143,6 @@ def check_supported(setup: Setup) -> None:
     ]
     if float(setup.raw.get("R_series", 0)) < 0 or float(setup.raw.get("R_shunt", -1)) == 0:
         problems.append("R_series < 0 or R_shunt = 0 (SimSS refuses both)")
-    if setup.raw.get("genProfile", "none") in ("none", "calc"):
-        problems.append(f"genProfile = {setup.raw.get('genProfile')} (supported: a file)")
     for k, layer in enumerate(setup.layers, start=1):
         problems += [
             f"layer {k}: {name} = {layer.raw.get(name)} (supported: {value:g})"

@@ -55,6 +55,26 @@ so that the solver is never the larger error in what is computed from it.
 - **The batched solver** matches the one-device solver to 1e-10, and its shortcuts change `J` by
   at most 1.2e-10 of the generation current ([solver.md](solver.md)).
 
+- **Gradients** agree with central finite differences and between forward and reverse mode,
+  in the batch's arrays, the voltages and the input's own parameters (mobility, thickness, band
+  edge, ion density, temperature, work function), without ions, with free and with frozen ions
+  (tests; [solver.md](solver.md#derivatives)).
+- **A fit** (`validation/fit.py`, 2026-11-13): the absorber's trap density, direct
+  recombination and both mobilities and the left work function, started 1.4–1.7× (and 0.025 eV)
+  off, fitted to SimSS's curve of `thin_l1_light` by least squares with the Jacobian from
+  `jax.jacfwd`: 25 curves and 19 Jacobians, 17 s on the RTX 4070 Ti SUPER. The trap density comes
+  back to 4e-5, the mobilities to 3e-4, the work function to 2e-6 eV, `k_direct` to 4 %: the
+  curve barely determines it (its singular value is 2.5e-6 of the largest), and the misfit there
+  (2.1e-7 of the scale) is already below the one at the true parameters (3.2e-7, jaxdd against
+  SimSS). With the ions of `frozen_1e17_x1_thin_light` fitted too, the ion density comes back to
+  7e-4, the rest as well. What a single light curve does not settle: from twice as far off (3×,
+  0.05 eV) the fit stops in another minimum, 2.8e-4 of the scale off (about 0.07 A/m²), with
+  `k_direct` 38× too high and the electron mobility 2.9×; and with noise of 1e-3 of the scale
+  `k_direct` runs to its bound and the others land 20–160 % off, 5–10 times their linearised
+  standard errors. A curve determines the trap-assisted recombination and the transport well,
+  the direct recombination hardly; a fit of real data wants several light intensities or a dark
+  curve, several starts, and its uncertainty by sampling rather than by linearisation.
+
 When jaxdd and SimSS disagree, check SimSS first: its `errJ` at that voltage, its log for "No
 convergence", and a rerun at tight tolerances. The cases where SimSS was wrong so far are all in
 [differences.md](differences.md).
@@ -99,6 +119,7 @@ as arguments. SimSS itself is built by [`simss/`](../simss/README.md).
 | `validation/shortcuts.py CASE_DIR …` | the batched solver with its shortcuts against `strict=True` |
 | `validation/bench.py [N] [batch]` | curves per second ([hardware.md](hardware.md)) |
 | `validation/breakdown.py [batch]` | one Newton step's time, part by part |
+| `validation/fit.py CASE_DIR [--start S] [--fix NAME …] [--noise σ]` | a fit by gradients to the case's SimSS curve, from a perturbed start; what the curve determines (singular values) |
 
 ## Running SimSS for a comparison
 

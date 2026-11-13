@@ -553,3 +553,20 @@ def test_gradients_in_physical_parameters_are_finite_differences() -> None:
     h = 1e-6
     fd = (float(loss(a0 + h * direction)) - float(loss(a0 - h * direction))) / (2 * h)
     assert abs(by_grad - fd) < 1e-6 * abs(fd)
+
+
+def test_a_fit_recovers_the_parameters_of_a_simss_curve() -> None:
+    """M7: from a start 1.4–1.7× off, `validation/fit.py` (least squares, its Jacobian by
+    `jax.jacfwd` through the converged solution) recovers the absorber's trap density and
+    mobilities and the left work function from SimSS's curve; the direct recombination, which
+    this curve barely determines (its singular value is 2.5e-6 of the largest), to 10 %."""
+    pytest.importorskip("scipy")
+    sys.path.insert(0, str(Path(__file__).parents[1] / "validation"))
+    from fit import fit
+
+    f = fit(DATA / "thin_l1_light", start=0.5)
+    err = dict(zip(f.names, np.abs(f.errors()), strict=True))
+    assert f.out.success and not f.out.active_mask.any()
+    assert err["N_t_bulk[1]"] < 1e-3 and err["mu_n[1]"] < 1e-3 and err["mu_p[1]"] < 1e-3
+    assert err["W_L"] < 1e-4  # eV
+    assert err["k_direct[1]"] < 0.1

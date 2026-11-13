@@ -62,7 +62,7 @@ about two A100s).
 |---|---|---|
 | **M4** | The grid in space (2.1) | 400 points or fewer meet the validation criteria on the hardest devices, or bucketing by grid size is justified |
 | **M6** | Adaptive parameter axes (2.2) | the refined axes meet a table's interpolation tolerance with fewer devices than hand-made ones |
-| **M7** | A fit of a measured curve by gradients (2.4); the curves are differentiable in the input's parameters ([docs/solver.md](docs/solver.md#derivatives)) | a SimSS curve's parameters recovered from a perturbed start; a measured curve fitted |
+| **M7** | A measured curve fitted (2.4); a SimSS curve's parameters are recovered by gradients (`validation/fit.py`) | a measured curve fitted, its parameters' uncertainty by sampling |
 | — | Several GPUs in one process: the batch axis sharded (`NamedSharding` or `shard_map`, not `pmap`); the devices are independent, so no communication | the rate scales with the number of GPUs |
 
 Gradients are taken by implicit differentiation of the converged solution: the backward pass
@@ -150,19 +150,22 @@ Order: Stage B in JAX; then the kernel for the physics that has
 settled. A first measurement before deciding: the Newton step of Stage A's physics without ions
 as one CUDA kernel on devices without ions, against the JAX step's time on the A100.
 
-### 2.4 M7: a fit
+### 2.4 M7: a measured curve
 
-The curves are differentiable in the input's own parameters (a layer's mobility, thickness, band
-edge, trap and ion density, the temperature, the work functions): the device built in JAX
-(`batch.device_tree`), the converged solution differentiated implicitly
-([docs/solver.md](docs/solver.md#derivatives)). What is left is to use it:
+The curves are differentiable in the input's own parameters, and a fit recovers a SimSS curve's
+parameters from a start up to 1.7× off (`validation/fit.py`, [docs/validation.md](docs/validation.md)).
+It also showed what one light curve leaves open: the direct recombination is barely determined,
+from 3× off the fit stops in another minimum, and with noise of 1e-3 the linearised standard
+errors are 5–10 times too small. Left:
 
-- **A fit.** Parameters of one device from a measured curve, by `jax.grad` and an optimiser
-  (optax or `jax.scipy.optimize`), with bounds by transformation (logarithms of densities and
-  mobilities); on a curve SimSS made from known parameters first (the test cases' `JV.dat`), then
-  on a measured one. What it shows: which parameters a curve determines and which it does not
-  (the Hessian's or the Jacobian's small singular values), and how a voltage that does not
-  converge during a fit is handled (its zero gradient leaves it out of the step).
+- **A measured curve**, with the cell's stack and what is known of it (it needs data).
+- **Several curves in one fit**: light intensities and a dark curve, one device each in the
+  batch, sharing their parameters; the singular values say whether they settle the
+  recombination.
+- **Several starts at once**: a batch of the same device at many starting points, one
+  `least_squares` per start, or a batched Gauss–Newton in JAX; the best is kept.
+- **The uncertainty by sampling** (section 5, 2): an ensemble sampler over the batch, or HMC by
+  the gradients, instead of `(JᵀJ)⁻¹`.
 
 ## 3 Proposal: a steric limit on ion accumulation
 
@@ -259,7 +262,7 @@ microseconds per evaluation are needed.
 | tables, a fixed training set (1) | yes | not needed |
 | on-the-fly training, active learning (1) | yes, with a replay buffer | makes it nearly free |
 | MCMC per cell (2) | yes for a few cells | helps for many cells |
-| gradients: HMC, fits, inverse design (2, 4) | yes (M7: a fit still to show) | faster forward solves; the gradients stay M7's |
+| gradients: HMC, fits, inverse design (2, 4) | yes (a fit: [docs/validation.md](docs/validation.md)) | faster forward solves; the gradients stay M7's |
 | Sobol, Monte Carlo (3) | yes | not needed |
 | inside other simulations, transients (5, 6) | doubtful | most likely needed |
 | interactive (7) | yes, even on a CPU | not needed |

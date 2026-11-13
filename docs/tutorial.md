@@ -119,10 +119,16 @@ def misfit(log_mu):                               # a curve against a measured o
     p = dict(params, mu_n=mu_n)
     batch = jax.tree_util.tree_map(lambda v: v[None], device_tree(structure, p))
     J, ok, _ = solve_batch(batch, V)
-    return jnp.sum(jnp.where(ok, J[0] - J_measured, 0.0) ** 2)
+    return jnp.sum(jnp.where(ok[0], J[0] - J_measured, scale) ** 2)   # see below
 
 grad = jax.grad(misfit)(jnp.log(1e-3))            # reverse mode
 ```
+
+In a fit, do not leave out a voltage that did not converge: a zero residual there rewards the
+optimiser for leaving the region where the solver converges, and it will (a recombination
+coefficient run to infinity, every voltage unconverged, the misfit zero). Give it a residual of
+the curve's scale instead; `validation/fit.py` is a whole fit (least squares, the Jacobian by
+`jax.jacfwd`), and [validation.md](validation.md) shows what one curve determines.
 
 Devices of one structure batch by `jax.vmap(functools.partial(device_tree, structure))` over
 stacked parameters, built on the GPU. A parameter change keeps the structure: the points per

@@ -12,7 +12,7 @@ license = { text = "LGPL-3.0-only" }
 dependencies = ["jax>=0.4.30", "numpy>=2.0"]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0", "ruff>=0.5"]
+dev = ["pytest>=8.0", "ruff>=0.5", "scipy>=1.11"]  # scipy: validation/fit.py
 #: benchmarks/plot.py
 bench = ["matplotlib>=3.8"]
 

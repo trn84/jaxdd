@@ -565,13 +565,15 @@ def _current(dev: Device, V, n, p, g_frac) -> float:
     Jn = carrier(-1, V + dev.offset_n, n, dev.mu_n, R_int[0])
     Jp = carrier(1, V + dev.offset_p, p, dev.mu_p, R_int[1])
     total = Jn + Jp
-    return float(np.sum(h[: NP + 1] * total) / np.sum(h[: NP + 1]))
+    # With the anode on the left SIMsalabim turns every current's sign.
+    return -dev.left_elec * float(np.sum(h[: NP + 1] * total) / np.sum(h[: NP + 1]))
 
 
 def _initial(dev: Device, Vint: float):
     """SIMsalabim's `Init_Pot_Dens_Ions_Traps`: linear potential, linear Fermi level."""
     x, L = dev.x, dev.L
-    V = dev.V0 - 0.5 * Vint + x * (dev.VL - dev.V0 + Vint) / L
+    e = dev.left_elec  # −1: the left electrode the cathode, 1 the anode
+    V = dev.V0 + 0.5 * e * Vint + x * (dev.VL - dev.V0 - e * Vint) / L
     EF = dev.W_L - x * (dev.W_L - dev.W_R) / L
     n = dev.N_c * np.exp(-(EF - dev.E_c) / dev.Vt)
     p = dev.ni**2 / n
@@ -623,8 +625,8 @@ def solve_jv(dev: Device, voltages: np.ndarray, g_frac: float | None = None,
 
     def bounds_at(Vint):
         return jnp.array([
-            [dev.V0 - 0.5 * Vint, np.log(dev.n_left), np.log(dev.p_left)],
-            [dev.VL + 0.5 * Vint, np.log(dev.n_right), np.log(dev.p_right)],
+            [dev.V0 + 0.5 * dev.left_elec * Vint, np.log(dev.n_left), np.log(dev.p_left)],
+            [dev.VL - 0.5 * dev.left_elec * Vint, np.log(dev.n_right), np.log(dev.p_right)],
         ])  # fmt: skip
 
     def settle(y, logs, s, ion, Vint):

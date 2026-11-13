@@ -227,6 +227,7 @@ class Device:
     # Ω m²; `R_shunt` ≤ 0 none.
     R_series: float = 0.0
     R_shunt: float = -1.0
+    left_elec: int = -1  # SIMsalabim's `leftElec`: −1 the left electrode the cathode, 1 the anode
 
 
 @dataclass(frozen=True)
@@ -256,6 +257,7 @@ class Structure:
     #: `G_ehp`) or "calc" (the transfer-matrix method, `optics.optical_data`).
     gen_mode: str = "file"
     optics: dict | None = None
+    left_elec: int = -1
 
 
 #: A device's parameters per layer (`device_parameters`), as SIMsalabim names them.
@@ -275,8 +277,8 @@ def device_parameters(setup: Setup, grid_split: str = "exact") -> tuple[Structur
     layer without traps, or an ion density on a layer without ions, does nothing; the points
     per layer stay those of the input's thicknesses."""
     layers = setup.layers
-    if setup.i("leftElec") != -1:
-        raise NotImplementedError("leftElec = 1 (the left electrode as anode) is not in Stage A")
+    if setup.i("leftElec") not in (-1, 1):
+        raise ValueError("leftElec must be -1 (the left electrode the cathode) or 1 (the anode)")
     NP, grad = setup.i("NP"), setup.f("grad")
     i0, i1, lid, raw, norm = _layout([ly.raw["L"] for ly in layers], NP, grad, grid_split)
 
@@ -295,6 +297,7 @@ def device_parameters(setup: Setup, grid_split: str = "exact") -> tuple[Structur
         int_traps=np.array([float(ly.raw.get("N_t_int", "0")) != 0 for ly in layers[:-1]]
                            + [False]),
         int_trap_type=np.array([int(float(ly.raw.get("intTrapType", "0"))) for ly in layers]),
+        left_elec=setup.i("leftElec"),
     )  # fmt: skip
     for j in np.flatnonzero(structure.int_traps):
         lo, hi = layers[j], layers[j + 1]
@@ -471,7 +474,7 @@ def device_arrays(structure: Structure, p: dict, xp=np) -> Device:
         anion_total=ions["anion"][1], cation_total=ions["cation"][1],
         anion_fixed=ions["anion"][2], cation_fixed=ions["cation"][2],
         pre_cond=st.pre_cond, V_pre=p["V_pre"], fix_ions=st.fix_ions, interface=interface,
-        R_series=p.get("R_series", 0.0), R_shunt=p.get("R_shunt", -1.0),
+        R_series=p.get("R_series", 0.0), R_shunt=p.get("R_shunt", -1.0), left_elec=st.left_elec,
     )  # fmt: skip
 
 

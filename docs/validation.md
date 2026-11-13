@@ -68,6 +68,10 @@ so that the solver is never the larger error in what is computed from it.
   and gold, and on a 20/500/10 nm stack between glass, 150 nm ITO and silver, the profile on the
   grid is SimSS's within 4e-12 and the curves within 2e-7 and 6e-7 of SimSS's scale; a uniform
   profile (`genProfile = none`) within 2.4e-6.
+- **The left electrode as the anode** (`leftElec = 1`, 2026-11-13): a p-i-n cell in its own
+  orientation (glass, 150 nm ITO, 10 nm TaTm, 500 nm perovskite with free ions, 20 nm C60,
+  100 nm Ag), interface traps at both interfaces, the transfer-matrix profile and a shunt: within
+  6.9e-6 of SimSS's scale at its tolerances of 1e-9, the short-circuit current to ten digits.
 - **Gradients** agree with central finite differences and between forward and reverse mode,
   in the batch's arrays, the voltages and the input's own parameters (mobility, thickness, band
   edge, ion density, temperature, work function), without ions, with free and with frozen ions

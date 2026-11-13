@@ -199,6 +199,25 @@ def test_jv_with_computed_or_uniform_generation_reproduces_simss(case: str) -> N
     assert np.max(np.abs(res.J - ref["Jext"])) < 1e-5 * np.max(np.abs(ref["Jext"]))
 
 
+def test_the_left_electrode_as_the_anode_reproduces_simss() -> None:
+    """Stage B, `leftElec = 1`: a p-i-n cell in its own orientation, lit through glass, ITO and
+    its 10 nm HTL, with interface traps, free ions, the transfer-matrix profile and a shunt; both
+    solvers against SimSS at tolerances of 1e-9 (the voltages at the contacts and the currents'
+    signs SIMsalabim's)."""
+    from jaxdd.batch import prepare, solve_batch
+
+    setup = read_setup(DATA / "pin_anode_left_light" / "simulation_setup.txt")
+    check_supported(setup)
+    dev = build_device(setup)
+    ref = np.genfromtxt(DATA / "pin_anode_left_light" / "JV.dat", names=True)
+    scale = np.max(np.abs(ref["Jext"]))
+    single = solve_jv(dev, ref["Vint"], bernoulli_name="simss")
+    J, ok, _ = solve_batch(prepare([dev]), ref["Vint"], bernoulli_name="simss")
+    assert single.converged.all() and np.asarray(ok).all()
+    assert np.max(np.abs(single.J - ref["Jext"])) < 2e-5 * scale
+    assert np.max(np.abs(np.asarray(J)[0] - ref["Jext"])) < 2e-5 * scale
+
+
 def test_the_gradient_through_the_optics_is_finite_differences() -> None:
     """The absorber's thickness moves the grid and the optics (interference in the 20/500/10 nm
     stack): the derivative of the short-circuit current, through `device_tree`, against central
@@ -628,7 +647,7 @@ def test_the_bordered_system_and_its_transpose_are_solved() -> None:
     "case",
     ["thin_l1_light", "frozen_1e17_x1_thin_light", "steady_1e17_thin_light",
      "frozen_thick_htl_dark", "iface_ions_light", "pin_iface_light", "resist_light",
-     "calc_light", "none_light"],
+     "calc_light", "none_light", "pin_anode_left_light"],
 )  # fmt: skip
 def test_the_device_in_jax_is_numpys(case: str) -> None:
     """`batch.device_tree` (the device in `jax.numpy` from its structure and parameters) gives

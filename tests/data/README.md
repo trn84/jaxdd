@@ -40,3 +40,9 @@ files and AM1.5G are SIMsalabim's (`Data/`, their sources in its `Biblio_info_to
 `G_simss.dat` is SimSS's profile on its grid (from its variable file); SimSS 5.36.
 `none_light/`: `thin_l1_light` with a uniform generation of 1.5e28 m⁻³ s⁻¹ in the absorber
 (`genProfile = none`); SimSS 5.36.
+
+`pin_anode_left_light/`: the stack of `pin_iface_light` in its own orientation, the anode on the
+left (`leftElec = 1`, glass / 150 nm ITO / TaTm / perovskite / C60 / 100 nm Ag), lit through the
+anode with the transfer-matrix profile (the perovskite's n,k data SIMsalabim's `nk_peroTripleCat`,
+a stand-in), 5e13 and 4.6e14 m⁻² of donor traps at its interfaces, free ions and a shunt of
+1.32 Ω m²; SimSS 5.36 at `tolPois = tolDens = 1e-9`.

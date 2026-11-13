@@ -137,10 +137,14 @@ The contacts are ohmic. The work functions set the boundary values of the potent
 densities there; the applied voltage is split evenly between the two ends:
 
 ```
-V[0]    = (W_R − W_L)/2 − V_int/2
-V[NP+1] = (W_L − W_R)/2 + V_int/2
+V[0]    = (W_R − W_L)/2 + leftElec·V_int/2
+V[NP+1] = (W_L − W_R)/2 − leftElec·V_int/2
 n, p at the contacts: from N_c and the distance of the work function to E_c, E_v
 ```
+
+`leftElec` is −1 when the left electrode is the cathode and 1 when it is the anode (a p-i-n cell
+in its own orientation, lit through its anode); with the anode on the left every current's sign is
+turned (SIMsalabim's), so that a photocurrent is negative either way.
 
 The solver works at the internal voltage `V_int`. A series and a shunt resistance (`R_series`,
 `R_shunt`, Ω m²) are SimSS's external circuit around the solved curve, not part of the device's

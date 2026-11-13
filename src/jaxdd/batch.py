@@ -82,6 +82,7 @@ def _device_tree(dev: Device, xp=np) -> dict:
         "iface": iface,
         "J_scale": xp.maximum(generated, 1.0),
         "R_series": dev.R_series,
+        "left_elec": float(dev.left_elec),
         "G_shunt": xp.where(dev.R_shunt > 0, 1 / xp.where(dev.R_shunt > 0, dev.R_shunt, 1), 0.0),
         "pre_cond": float(dev.pre_cond), "V_pre": dev.V_pre, "fix_ions": float(dev.fix_ions),
     }  # fmt: skip
@@ -111,15 +112,16 @@ def prepare(devices: list[Device]) -> dict:
 
 def _bounds(d, Vint):
     return jnp.array([
-        [d["V0"] - 0.5 * Vint, d["ln_n_left"], d["ln_p_left"]],
-        [d["VL"] + 0.5 * Vint, d["ln_n_right"], d["ln_p_right"]],
+        [d["V0"] + 0.5 * d["left_elec"] * Vint, d["ln_n_left"], d["ln_p_left"]],
+        [d["VL"] - 0.5 * d["left_elec"] * Vint, d["ln_n_right"], d["ln_p_right"]],
     ])  # fmt: skip
 
 
 def _initial(d, Vint):
     """SIMsalabim's `Init_Pot_Dens_Ions_Traps`: linear potential, linear Fermi level."""
     x = d["x"]
-    V = d["V0"] - 0.5 * Vint + x * (d["VL"] - d["V0"] + Vint) / d["L"]
+    e = d["left_elec"]  # −1: the left electrode the cathode, 1 the anode
+    V = d["V0"] + 0.5 * e * Vint + x * (d["VL"] - d["V0"] - e * Vint) / d["L"]
     EF = d["W_L"] - x * (d["W_L"] - d["W_R"]) / d["L"]
     ln_n = jnp.log(d["N_c"]) - (EF - d["E_c"]) / d["Vt"]
     ln_p = 2 * jnp.log(d["ni"]) - ln_n
@@ -159,7 +161,8 @@ def _current(d, full, g_frac):
     Jn = carrier(-1.0, V + d["offset_n"], n, d["mu_n"], R_int[0])
     Jp = carrier(1.0, V + d["offset_p"], p, d["mu_p"], R_int[1])
     hh = h[: NP + 1]
-    return jnp.sum(hh * (Jn + Jp)) / jnp.sum(hh)
+    # With the anode on the left SIMsalabim turns every current's sign.
+    return -d["left_elec"] * (jnp.sum(hh * (Jn + Jp)) / jnp.sum(hh))
 
 
 def _poisson_solve(y, d, s, ion, Vint, max_iter):

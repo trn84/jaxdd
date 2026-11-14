@@ -11,7 +11,8 @@ The image has two binaries:
 
 - `simss`: the release, unchanged. Used for every device except the one below.
 - `simss_fixed_ions`: the release with [`fixed_ions.patch`](fixed_ions.patch), for devices with
-  ions settled at a pre-bias and then frozen (`preCond = 1`, `fixIons = 1`). In SimSS 5.36,
+  ions held: settled at a pre-bias and then frozen (`preCond = 1`, `fixIons = 1`), or held from
+  the start where SimSS puts them, each layer's own density (`fixIons = 1` alone). In SimSS 5.36,
   `fixIons` holds the ions in the continuity step, but `Solve_Poisson` still rescales them with
   every potential update, so the "frozen" ions drift with each iteration and the curve depends
   on the voltage step. The patch makes `Solve_Poisson` leave them alone while they are fixed.

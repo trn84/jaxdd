@@ -148,6 +148,101 @@ def test_the_differential_current_reproduces_simss() -> None:
         assert np.max(np.abs(got - ref["Jext"])) < tol * np.max(np.abs(ref["Jext"]))
 
 
+def test_ions_held_from_the_start_reproduce_simss() -> None:
+    """`fixIons` without `preCond`: the ions held where SIMsalabim starts them, each layer's own
+    density (8e22 anions and 1e23 cations per m³ in the absorber, a net charge), as fixed
+    ions; both solvers against SimSS with `simss/fixed_ions.patch` at tolerances of 1e-9."""
+    from jaxdd.batch import prepare, solve_batch
+
+    setup = read_setup(DATA / "held_thin_light" / "simulation_setup.txt")
+    check_supported(setup)
+    assert setup.i("fixIons") and not setup.i("preCond")
+    dev = build_device(setup)
+    assert not dev.anion_mask.any() and not dev.cation_mask.any()
+    assert dev.anion_fixed.max() == 8e22 and dev.cation_fixed.max() == 1e23
+    ref = np.genfromtxt(DATA / "held_thin_light" / "JV.dat", names=True)
+    scale = np.max(np.abs(ref["Jext"]))
+    single = solve_jv(dev, ref["Vint"], bernoulli_name="simss")
+    J, ok, _ = solve_batch(prepare([dev]), ref["Vint"], bernoulli_name="simss")
+    assert single.converged.all() and np.asarray(ok).all()
+    assert np.max(np.abs(single.J - ref["Jext"])) < 1e-9 * scale
+    assert np.max(np.abs(np.asarray(J)[0] - ref["Jext"])) < 1e-9 * scale
+
+
+@pytest.mark.parametrize(
+    ("case", "layers", "tol"),
+    [("region_etl_light", (0, 1), 1e-6), ("region_htl_frozen_light", (1, 2), 2e-5)],
+)
+def test_ions_in_a_region_across_layers_reproduce_simss(case, layers, tol) -> None:
+    """Mobile ions in a region of two layers (`ionsMayEnter` in both, SIMsalabim's
+    `Init_Ionic_Region`), one Boltzmann profile across the interface normalised to both layers'
+    ions: free ions entering the 20 nm ETL from the absorber, and ions entering the 10 nm HTL,
+    settled at a pre-bias and frozen (SimSS with `simss/fixed_ions.patch`); both solvers
+    against SimSS at tolerances of 1e-9, where it converged."""
+    from jaxdd.batch import prepare, solve_batch
+    from jaxdd.simss_input import ion_regions
+
+    setup = read_setup(DATA / case / "simulation_setup.txt")
+    check_supported(setup)
+    assert ion_regions(setup, "anion") == [(*layers, True)]
+    dev = build_device(setup)
+    assert dev.anion_total == pytest.approx(setup.layers[1].f("L") * setup.layers[1].f("N_anion"))
+    ref = np.genfromtxt(DATA / case / "JV.dat", names=True)
+    scale = np.max(np.abs(ref["Jext"]))
+    single = solve_jv(dev, ref["Vint"], bernoulli_name="simss")
+    J, ok, _ = solve_batch(prepare([dev]), ref["Vint"], bernoulli_name="simss")
+    assert single.converged.all() and np.asarray(ok).all()
+    assert np.max(np.abs(single.J - ref["Jext"])) < tol * scale
+    assert np.max(np.abs(np.asarray(J)[0] - ref["Jext"])) < tol * scale
+
+
+def test_ionic_regions_as_simss_finds_them(tmp_path) -> None:
+    """`ion_regions` as SIMsalabim's `Init_Ionic_Region`, and what is refused: two mobile regions
+    of a species, and SimSS 5.36's two quirks with regions of several layers (docs/
+    differences.md §10); mobile ions in a layer they may not enter are SimSS's input error."""
+    from jaxdd.simss_input import ion_region_problems, ion_regions
+
+    case = DATA / "pin_iface_light"
+    files = {f.name: f.read_text() for f in case.iterdir() if f.suffix == ".txt"}
+
+    def setup(**layers):
+        new = dict(files)
+        for name, values in layers.items():
+            lines = []
+            for line in files[name].splitlines():
+                key = line.split("=", 1)[0].strip()
+                lines.append(f"{key} = {values[key]} * edited" if key in values else line)
+            new[name] = "\n".join(lines)
+        return setup_from_texts(new)
+
+    l1, l3 = "L1_parameters.txt", "L3_parameters.txt"
+    enter = {"ionsMayEnter": 1, "mu_anion": 1e-12, "mu_cation": 1e-12}
+    assert ion_regions(setup(), "anion") == [(1, 1, True)]
+    assert ion_regions(setup(**{l1: enter}), "anion") == [(0, 1, True)]
+    assert ion_regions(setup(**{l1: enter, l3: enter}), "cation") == [(0, 2, True)]
+    assert ion_region_problems(setup(**{l1: enter, l3: enter})) == []
+    # the HTL lets them in but they do not move there: SimSS holds the whole region
+    last = setup(**{l3: {"ionsMayEnter": 1}})
+    assert ion_regions(last, "anion") == [(1, 2, False)]
+    assert any("mobility 0 in its last layer" in p for p in ion_region_problems(last))
+    # immobile anions in the ETL before the absorber's: SimSS starts the next region there
+    start = setup(**{l1: {"N_anion": 3e21}})
+    assert ion_regions(start, "anion") == [(0, 0, False), (0, 1, True)]
+    assert any("takes in layer 1" in p for p in ion_region_problems(start))
+    # mobile anions in the ETL and in the HTL, the absorber between closed to them: two regions
+    closed = {"ionsMayEnter": 0, "mu_anion": 0, "N_anion": 0, "mu_cation": 0, "N_cation": 0}
+    own = {**enter, "N_anion": 1e21}
+    two = setup(**{l1: own, "L2_parameters.txt": closed, l3: own})
+    assert ion_regions(two, "anion") == [(0, 0, True), (2, 2, True)]
+    assert any("more than one ionic region" in p for p in ion_region_problems(two))
+    with pytest.raises(NotImplementedError, match="mobility 0"):
+        check_supported(last)
+    with pytest.raises(NotImplementedError, match="takes in layer 1"):
+        build_device(start)
+    with pytest.raises(ValueError, match="ionsMayEnter"):
+        ion_regions(setup(**{l1: {"N_anion": 1e21, "mu_anion": 1e-12}}), "anion")
+
+
 def test_voltages_are_simss_own() -> None:
     """`simss_voltages` gives the voltages of every reference run, in SimSS's order (where
     SimSS stopped converging, its `JV.dat` is the beginning of them)."""
@@ -1150,7 +1245,8 @@ def test_the_bordered_system_and_its_transpose_are_solved() -> None:
      "frozen_thick_htl_dark", "iface_ions_light", "pin_iface_light", "resist_light",
      "calc_light", "none_light", "pin_anode_left_light", "bulk_acceptor_light",
      "trapfiles_light", "surface_light", "langevin_light", "fieldmob_light",
-     "langevin_field_light", "braun_light", "diff_iface_light"],
+     "langevin_field_light", "braun_light", "diff_iface_light", "held_thin_light",
+     "region_etl_light", "region_htl_frozen_light"],
 )  # fmt: skip
 def test_the_device_in_jax_is_numpys(case: str) -> None:
     """`batch.device_tree` (the device in `jax.numpy` from its structure and parameters) gives

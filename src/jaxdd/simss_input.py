@@ -22,6 +22,8 @@ __all__ = [
     "Layer",
     "Setup",
     "check_supported",
+    "ion_region_problems",
+    "ion_regions",
     "parse_parameters",
     "read_parameter_file",
     "read_setup",
@@ -136,6 +138,34 @@ def simss_voltages(setup: Setup) -> np.ndarray:
     return V[::-1].copy() if vscan == -1 else V
 
 
+def ion_regions(setup: Setup, species: str) -> list[tuple[int, int, bool]]:
+    """SIMsalabim's ionic regions of `species` ("anion" or "cation", `Init_Ionic_Region`):
+    `(first, last, mobile)`, layer indices from 0. A region is a run of adjacent layers each with
+    `ionsMayEnter` (or one layer of immobile ions), holding some ions; it ends at a layer whose
+    ions do not move or before a layer they may not enter, and is mobile if the mobility of its
+    last layer is not zero. As in SimSS 5.36, a region found does not reset the start: one that
+    follows directly begins where the one before began. SimSS's check: a layer with mobile ions
+    must let them enter (`ValueError`)."""
+    regions, start, total = [], None, 0.0
+    layers = setup.layers
+    for j, ly in enumerate(layers):
+        mob, conc = ly.f(f"mu_{species}"), ly.f(f"N_{species}")
+        if mob * conc > 0 and not ly.i("ionsMayEnter"):
+            raise ValueError(f"layer {j + 1}: If a layer contains mobile ions, then ionsMayEnter "
+                             "(of that layer) must be 1.")  # fmt: skip
+        if ly.i("ionsMayEnter") or (mob == 0 and conc > 0):
+            total += ly.f("L") * conc
+            start = j if start is None else start
+        else:
+            start, total = None, 0.0
+            continue
+        if j == len(layers) - 1 or not layers[j + 1].i("ionsMayEnter") or mob == 0:
+            if total != 0:
+                regions.append((start, j, mob > 0))
+            total = 0.0
+    return regions
+
+
 def _layers(raw: dict[str, str], read) -> tuple[Layer, ...]:
     layers = []
     k = 1
@@ -164,10 +194,33 @@ def setup_from_texts(files: Mapping[str, str], setup: str = "simulation_setup.tx
 #: resistance; the generation profile; the left electrode as the anode; finite surface
 #: recombination at the contacts and 'sfb' work functions; Langevin recombination; the
 #: field-dependent mobility and generation; either form of the current, `currDiffInt` 1 or
-#: 2). Ions are supported in one layer per region, steady (free at every voltage) or held
-#: after a pre-bias (`preCond`, `fixIons`, as SimSS with `simss/fixed_ions.patch`: Poisson
-#: leaves them). The voltages are the caller's (`simss_voltages` gives SimSS's, for either
-#: `Vdist`). Anything else is refused by name, never approximated.
+#: 2). Mobile ions in one region per species, of one layer or several (`ion_regions`), steady
+#: (free at every voltage) or held after a pre-bias (`preCond`, `fixIons`, as SimSS with
+#: `simss/fixed_ions.patch`: Poisson leaves them) or from the start (`fixIons` alone). The
+#: voltages are the caller's (`simss_voltages` gives SimSS's, for either `Vdist`). Anything
+#: else is refused by name, never approximated.
+def ion_region_problems(setup: Setup) -> list[str]:
+    """What jaxdd does not take of the ionic regions (`ion_regions`): more than one mobile
+    region of a species, and SimSS 5.36's two quirks with regions of several layers, which it
+    would solve differently from what the input says (docs/differences.md §10)."""
+    problems = []
+    for species in ("anion", "cation"):
+        regions = ion_regions(setup, species)
+        if sum(mobile for _, _, mobile in regions) > 1:
+            problems.append(f"mobile {species}s in more than one ionic region")
+        for first, last, mobile in regions:
+            if first == last:
+                continue
+            span = [setup.layers[k] for k in range(first, last + 1)]
+            where = f"{species}s: SimSS's region of layers {first + 1}–{last + 1}"
+            closed = [first + 1 + k for k, ly in enumerate(span) if not ly.i("ionsMayEnter")]
+            if closed:
+                problems.append(f"{where} takes in layer {closed[0]}, which they may not enter")
+            if not mobile and any(ly.f(f"mu_{species}") * ly.f(f"N_{species}") > 0 for ly in span):
+                problems.append(f"{where} has mobility 0 in its last layer, so it holds them all")
+    return problems
+
+
 def check_supported(setup: Setup) -> None:
     """Raise `NotImplementedError` naming every parameter outside what jaxdd supports."""
     problems = []
@@ -175,12 +228,6 @@ def check_supported(setup: Setup) -> None:
         problems.append(f"currDiffInt = {setup.raw['currDiffInt']} (SimSS has 1 and 2)")
     if float(setup.raw.get("R_series", 0)) < 0 or float(setup.raw.get("R_shunt", -1)) == 0:
         problems.append("R_series < 0 or R_shunt = 0 (SimSS refuses both)")
-    for k, layer in enumerate(setup.layers, start=1):
-        if layer.i("ionsMayEnter") and k > 1 and setup.layers[k - 2].i("ionsMayEnter"):
-            problems.append(f"layers {k - 1}–{k}: an ionic region across layers")
-    mobile = any(ly.f("N_anion") * ly.f("mu_anion") > 0 or ly.f("N_cation") * ly.f("mu_cation") > 0
-                 for ly in setup.layers)  # fmt: skip
-    if mobile and setup.i("fixIons") and not setup.i("preCond"):
-        problems.append("fixIons = 1 without preCond (ions held at their initial uniform density)")
+    problems += ion_region_problems(setup)
     if problems:
         raise NotImplementedError("not in jaxdd's Stage A:\n  " + "\n  ".join(problems))

@@ -265,11 +265,13 @@ Anions and cations each have a density `N` and a mobility in a layer. Three case
   Boltzmann in the potential, normalised to the number of ions in its layer:
 
   ```
-  n_anion(x)  = C_a·exp(+V(x)/V_T)        with  ∫ n_anion dx  = N_anion·L_layer
-  n_cation(x) = C_c·exp(−V(x)/V_T)        with  ∫ n_cation dx = N_cation·L_layer
+  n_anion(x)  = C_a·exp(+V(x)/V_T)        with  ∫ n_anion dx  = Σ N_anion·L_layer
+  n_cation(x) = C_c·exp(−V(x)/V_T)        with  ∫ n_cation dx = Σ N_cation·L_layer
   ```
 
-  The integral is SimSS's trapezoidal rule over the layer. The normalisations `C_a`, `C_c` are
+  over the species' ionic region (`Init_Ionic_Region`): its layer, or a run of adjacent layers
+  that each let it enter (`ionsMayEnter`), one profile across their interfaces, the sum over the
+  region's layers. The integral is SimSS's trapezoidal rule over the region. The normalisations `C_a`, `C_c` are
   two extra unknowns of the Newton system ([solver.md](solver.md)). SimSS builds the same
   profile as a product of Bernoulli ratios, which equals the exponential only with the exact
   `B` ([differences.md](differences.md) §3).
@@ -277,8 +279,14 @@ Anions and cations each have a density `N` and a mobility in a layer. Three case
   fixed for the whole scan, in Poisson's equation too (SimSS with
   [`simss/fixed_ions.patch`](../simss/README.md); unpatched SimSS 5.36 lets Poisson move frozen
   ions).
+- **Held from the start** (`fixIons = 1`, `preCond = 0`): where SimSS starts them
+  (`Init_Pot_Dens_Ions_Traps`), each layer's own `N` at each of its points, and held there for
+  the whole scan: the same as immobile ions (the patched SimSS; unpatched, Poisson moves them,
+  40 % of the current's scale on `tests/data/held_thin_light`).
 
-A mobile region spans one layer; an ionic region across layers is refused.
+Each species has one mobile region; two (anions in the ETL and in the HTL, say, each its own)
+are refused, and so are two of SimSS's regions of several layers that it would solve against
+the input ([differences.md](differences.md) §10).
 
 ## The current (`Calc_Curr_Int`, `Calc_Curr_Diff`, `Calc_All_Currents`)
 

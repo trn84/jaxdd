@@ -24,7 +24,7 @@ import numpy as np
 from jaxdd.constants import EPS_0, K_B, Q
 from jaxdd.optics import generation as optics_generation
 from jaxdd.optics import optical_data
-from jaxdd.simss_input import Layer, Setup
+from jaxdd.simss_input import Layer, Setup, ion_region_problems, ion_regions
 
 __all__ = [
     "GRID_SPLITS",
@@ -207,9 +207,9 @@ class Device:
     G_frac: float
     i0: tuple[int, ...]
     i1: tuple[int, ...]
-    # Ions (SIMsalabim's `Init_Ionic_Region`, one layer per region in Stage A): per species, the
-    # mobile region's mask and the number of ions per area it holds (N·L of the layer), or a
-    # fixed density where they cannot move.
+    # Ions (SIMsalabim's `Init_Ionic_Region`, one mobile region per species, of one layer or
+    # several): per species, the mobile region's mask and the number of ions per area it holds
+    # (N·L summed over its layers), or a fixed density where they cannot move.
     anion_mask: np.ndarray
     cation_mask: np.ndarray
     anion_total: float
@@ -283,8 +283,8 @@ class Structure:
     norm: np.ndarray
     layer_gen: np.ndarray  # per layer
     traps: np.ndarray  # per layer: bulk traps
-    anion_mobile: np.ndarray  # per layer: N > 0 and μ > 0
-    anion_fixed: np.ndarray  # per layer: N > 0 and μ = 0
+    anion_mobile: np.ndarray  # per layer: in the mobile region (`simss_input.ion_regions`)
+    anion_fixed: np.ndarray  # per layer: N > 0 and μ = 0, or held from the start
     cation_mobile: np.ndarray
     cation_fixed: np.ndarray
     pre_cond: bool
@@ -402,7 +402,7 @@ def device_parameters(
     (`LANGEVIN_MOBILITIES`); `braun` how the field-dependent generation's dissociation
     probability is integrated (`BRAUN_RULES`). `grid_split`
     as in `build_device`. Changing a parameter keeps the structure: a trap density set on a
-    layer without traps, or an ion density on a layer without ions, does nothing; the points
+    layer without traps, or an ion density outside an ionic region, does nothing; the points
     per layer stay those of the input's thicknesses."""
     layers = setup.layers
     if surface not in SURFACE_MODELS:
@@ -419,6 +419,20 @@ def device_parameters(
     def flags(test):
         return np.array([bool(test(ly)) for ly in layers])
 
+    # `fixIons` without `preCond`: SIMsalabim holds the ions from the start where
+    # `Init_Pot_Dens_Ions_Traps` puts them, each layer's own density at each of its points, so
+    # the mobile ones are fixed ions as the immobile are (SimSS with `simss/fixed_ions.patch`).
+    held = bool(setup.i("fixIons")) and not bool(setup.i("preCond"))
+    problems = ion_region_problems(setup)
+    if problems:
+        raise NotImplementedError("; ".join(problems))
+
+    def region(species):  # per layer: in the species' mobile region (`ion_regions`), if they move
+        inside = np.zeros(len(layers), dtype=bool)
+        for first, last, mobile in ion_regions(setup, species):
+            inside[first : last + 1] |= mobile and not held
+        return inside
+
     bulk_file = flags(lambda ly: _named(ly, "bulkTrapFile"))
     int_file = np.array([_named(ly, "intTrapFile") for ly in layers[:-1]] + [False])
 
@@ -426,10 +440,10 @@ def device_parameters(
         NP=NP, i0=tuple(i0), i1=tuple(i1), lid=lid, raw=raw, norm=norm,
         layer_gen=flags(lambda ly: ly.i("layerGen")),
         traps=flags(lambda ly: ly.f("N_t_bulk") != 0) | bulk_file,
-        anion_mobile=flags(lambda ly: ly.f("N_anion") != 0 and ly.f("mu_anion") != 0),
-        anion_fixed=flags(lambda ly: ly.f("N_anion") != 0 and ly.f("mu_anion") == 0),
-        cation_mobile=flags(lambda ly: ly.f("N_cation") != 0 and ly.f("mu_cation") != 0),
-        cation_fixed=flags(lambda ly: ly.f("N_cation") != 0 and ly.f("mu_cation") == 0),
+        anion_mobile=region("anion"),
+        anion_fixed=flags(lambda ly: ly.f("N_anion") != 0 and (ly.f("mu_anion") == 0 or held)),
+        cation_mobile=region("cation"),
+        cation_fixed=flags(lambda ly: ly.f("N_cation") != 0 and (ly.f("mu_cation") == 0 or held)),
         pre_cond=bool(setup.i("preCond")), fix_ions=bool(setup.i("fixIons")),
         int_traps=np.array([float(ly.raw.get("N_t_int", "0")) != 0 for ly in layers[:-1]]
                            + [False]) | int_file,
@@ -502,9 +516,6 @@ def device_parameters(
                              "not within the gaps of both")  # fmt: skip
         if structure.int_trap_type[j] not in (-1, 0, 1):
             raise ValueError(f"layer {j + 1}: intTrapType {structure.int_trap_type[j]}")
-    for species in ("anion", "cation"):
-        if getattr(structure, f"{species}_mobile").sum() > 1:
-            raise NotImplementedError(f"mobile {species}s in more than one layer")
     mode = {"none": "none", "calc": "calc"}.get(setup.raw.get("genProfile", "none").lower(), "file")
     structure = dataclasses.replace(
         structure, gen_mode=mode, optics=optical_data(setup, layers) if mode == "calc" else None

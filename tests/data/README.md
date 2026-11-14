@@ -56,6 +56,16 @@ Langevin recombination in all three layers; SimSS 5.36 at `tolPois = tolDens = 1
 layer, a Gaussian with `a` 0.5 nm and `P0` 0.1 in the absorber, a delta function at 0.5 nm in
 the last; SimSS 5.36 at `tolPois = tolDens = 1e-9`.
 
+`region_etl_light/`: `pin_iface_light` with the ions free to enter the ETL (`ionsMayEnter`,
+ion mobilities 1e-12 m²/Vs there): one region of two layers. `region_htl_frozen_light/`: the
+same with the HTL instead, the ions settled at the pre-bias 0 V and frozen (`preCond`,
+`fixIons`; SimSS with the patch above). Both SimSS 5.36 at `tolPois = tolDens = 1e-9`, which
+converges up to 0.975 V and 0.9 V.
+
+`held_thin_light/`: `steady_1e17_thin_light` with 8e22 anions per m³ instead of 1e23 (a net
+charge of 2e22 m⁻³) held from the start (`fixIons = 1`, `preCond = 0`): run by SimSS 5.36 with
+[`simss/fixed_ions.patch`](../../simss/fixed_ions.patch) at `tolPois = tolDens = 1e-9`.
+
 `diff_iface_light/`: `iface_charged_light` with the current in SimSS's differential form
 (`currDiffInt = 1`); SimSS 5.36 at `tolPois = tolDens = 1e-9`.
 

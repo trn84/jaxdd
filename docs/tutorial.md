@@ -47,7 +47,8 @@ order: `Vmin` to `Vmax` by `Vstep` or logarithmically towards `Vacc` (`Vdist`), 
 from the solution at the one before.
 The device's own `G_frac` sets the light; `solve_jv(dev, V, g_frac=0.0)` gives the dark curve of
 the same device. If the input has `preCond = 1`, the device is first settled at `Vpre` with its
-ions free (and with `fixIons = 1` the ions are then held for the scan); a pre-bias that does not
+ions free (and with `fixIons = 1` the ions are then held for the scan; `fixIons = 1` alone holds
+them where SimSS starts them, each layer's own density); a pre-bias that does not
 converge raises `RuntimeError`.
 
 `solve_jv` is the reference implementation: a Python loop over voltages and Newton steps, easy
@@ -211,7 +212,8 @@ with the exact Bernoulli function. Larger gaps are usually SimSS's: rerun SimSS 
   Jacobian is assembled by intervals, [solver.md](solver.md)); SimSS skips a third of those
   voltages. Whether such a profile is physical is another question: Boltzmann statistics let
   ions stack without limit ([PLAN.md](../PLAN.md), section 3).
-- **`fixIons` without `preCond`** is refused: SimSS would hold the ions at their initial uniform
-  density, which is rarely meant.
+- **`fixIons` without `preCond`** holds the ions at SimSS's starting density, uniform in each
+  layer, for the whole scan, which is rarely meant: with uniform ions of both signs at the same
+  density they cancel, and the device behaves as one without ions.
 - **One grid size per batch**, and the grid is SIMsalabim's; no adaptive mesh yet
   ([PLAN.md](../PLAN.md)).

@@ -1,11 +1,12 @@
 # Where jaxdd differs from SIMsalabim, and why
 
 jaxdd solves SIMsalabim 5.36's discrete equations (the same grid but for §5, the same Scharfetter–Gummel
-discretisation in the generalised potentials, the same integral current). Where SIMsalabim's
-result is not the solution of those equations, or where SIMsalabim approximates something jaxdd
-can compute exactly, jaxdd takes the physically correct answer by default and says so here.
-Each difference has a way to reproduce SIMsalabim's number, so a comparison can always tell the
-two apart; §7 says why its two have none.
+discretisation in the generalised potentials, the same current in either of its forms). Where
+SIMsalabim's result is not the solution of those equations, or where SIMsalabim approximates
+something jaxdd can compute exactly, jaxdd takes the physically correct answer by default and
+says so here. Each difference has a way to reproduce SIMsalabim's number, so a comparison can
+always tell the two apart; §7 says why its two have none, and §10 why jaxdd refuses those
+inputs instead.
 
 ## 1 Convergence: SimSS stops early, jaxdd does not
 
@@ -216,6 +217,24 @@ to 2 % at `b` = 32 (`ε_r` 3.5 and 1e8 V/m). On `tests/data/braun_light` with `a
 **jaxdd.** Gauss–Legendre in `ln r`, 512 nodes, to 1e-14, and the exact `J` (`braun="exact"`,
 the default); SimSS's Romberg integration, stopped point by point as SimSS stops it, and its
 series with `braun="simss"`, within 2.1e-10 of SimSS on `braun_light`.
+
+## 10 Ionic regions of several layers: two cases SimSS solves against the input
+
+**What.** SIMsalabim's `Init_Ionic_Region` builds each species' regions from runs of layers
+that let it enter (`ionsMayEnter`). Two cases come out against what the input says:
+
+- **A region found does not reset its start.** The next region of the same species, if it
+  follows directly, begins where the one before began. Immobile anions (3e21 m⁻³) in the ETL of
+  `tests/data/pin_iface_light`, before the absorber's mobile ones: SimSS solves one mobile
+  region over both, the absorber's anions spread into the ETL, which may not take them, up to
+  4e23 m⁻³, and the ETL's own fixed anions are gone.
+- **A region is mobile if its last layer's mobility is.** A layer that lets the ions enter but
+  gives them `mu = 0`, after the layer with mobile ions: the region of both is immobile, and
+  SimSS holds all its ions at their starting density (the absorber's 1.5e21 anions uniform).
+
+**jaxdd.** Both are refused by name (`ion_region_problems`): the input says something SimSS
+does not do, and neither reading is clearly the one meant. Close the layer between the two
+regions (`ionsMayEnter = 0`), or give the ions a mobility in the layer they enter.
 
 ## Not differences
 

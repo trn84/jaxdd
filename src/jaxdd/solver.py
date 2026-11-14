@@ -969,9 +969,6 @@ def solve_jv(dev: Device, voltages: np.ndarray, g_frac: float | None = None,
     y_full = _initial(dev, first)
     y = jnp.asarray(y_full[1:-1])
     logs = _ion_logs(jnp.asarray(y_full[:, 0]), ion)
-    if dev.fix_ions and not dev.pre_cond:
-        # Held from the start: the ions as SIMsalabim initialises them, uniform in their layer.
-        s, ion = _freeze(s, ion, y, logs, None, dev.Vt)
 
     def bounds_at(Vint):
         return jnp.array([

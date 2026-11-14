@@ -253,8 +253,9 @@ def write_simss_inputs(setup, target: Path) -> None:
 
 
 def _binary(setup, plain: str, fixed: str) -> str:
-    """The frozen-ion case needs the patched SimSS (`simss/`: `fixIons` held in Poisson too)."""
-    return fixed if setup.i("preCond") and setup.i("fixIons") else plain
+    """Held ions need the patched SimSS (`simss/`: `fixIons` held in Poisson too), after a
+    pre-bias or from the start."""
+    return fixed if setup.i("fixIons") else plain
 
 
 def measure_simss(n: int, procs: int, plain: str, fixed: str, docker: str | None,

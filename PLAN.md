@@ -223,9 +223,10 @@ What jaxdd solves today ("Stage A") is in [docs/overview.md](docs/overview.md). 
   thicknesses, and uniform; the left electrode as the anode; the contacts' finite surface
   recombination and `sfb` work functions; Langevin recombination; the field-dependent mobility,
   also with Langevin in the same layer; the field-dependent generation (Braun's dissociation);
-  the current in SimSS's differential form (`currDiffInt = 1`) ([docs/model.md](docs/model.md)). Left, still refused by name: ions in a region across
-  layers or in more than one layer, and `fixIons` without `preCond`. SimSS's voltages, `Vdist`
-  1 and 2, are `simss_voltages`.
+  the current in SimSS's differential form (`currDiffInt = 1`); ions in a region across layers
+  and held from the start (`fixIons` without `preCond`) ([docs/model.md](docs/model.md));
+  SimSS's voltages, `Vdist` 1 and 2, are `simss_voltages`. Left, still refused by name: two
+  mobile regions of one species (each its own normalisation, one more unknown per region).
   At the end, a SimSS input runs on jaxdd or is refused with the missing feature named.
 - **Stage C: transients (ZimT).** Time-dependent drift-diffusion with mobile ions: scan-rate
   hysteresis, transient photocurrent and photovoltage, impedance. Its own plan when Stage B is

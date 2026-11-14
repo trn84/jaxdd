@@ -102,6 +102,12 @@ git clone https://github.com/trn84/jaxdd.git ~/jaxdd && cd ~/jaxdd
 benchmarks/apptainer.sh                          # STEPS="breakdown bench" for a part
 ```
 
+`STEPS=sample` runs `validation/sample_measured.py` on the three measured samples instead
+(`SAMPLES`, `SAMPLE_ARGS`; hours, not in the default steps), each chain saved to
+`benchmarks/samples/` every 100 steps. With `UPLOAD=https://HOST/s/TOKEN`, a Nextcloud or
+ownCloud public folder link with upload rights, the host uploads the log and the chains there
+every ten minutes and at the end, so a session that ends keeps what is done.
+
 On an A100-SXM4-40GB it runs at 2800 curves/s in the container at batch 16384, all tests
 passing; a Newton step of 16384 devices there is 20 ms, 9 of it the assembly and 7 the block
 sweep's kernel.

@@ -117,6 +117,45 @@ so that the solver is never the larger error in what is computed from it.
   about the generation (0.2 Cl: the ETL interface's traps 1.1e14 against 2.4e13 m⁻²). What these
   curves say about a single parameter depends on the unstated assumptions as much as on the data.
 
+- **The fit's uncertainty, by sampling** (`validation/sample_measured.py`, 2026-11-14): a posterior
+  of the same fourteen parameters, by an ensemble sampler whose walkers' five intensities are
+  solved as one batch (differential evolution, the walkers started around the least-squares fit;
+  the prior uniform in the fitted coordinates within the bounds, the likelihood Gaussian with σ the
+  fit's rms misfit). For the 0.2 Cl sample, 64 walkers and 3000 steps, 1.5 h on the RTX 4070 Ti
+  SUPER (0.92 s per batch of 32 × 5 curves): acceptance 0.06, autocorrelation times 126–208
+  steps, so the 2000 steps kept hold about ten of the longest and some 600 independent samples;
+  quantiles to a few percent, the tails rougher. The 16–84 % half-widths against the linearised
+  `σ²(JᵀJ)⁻¹` at the fit:
+
+  | | fit | median | 16–84 % | linearised | |
+  |---|---|---|---|---|---|
+  | `mu_n` (m²/Vs) | 1.0e-4 | 1.03e-4 | ×1.09 | ×1.62 | |
+  | `mu_p` | 1.0e-3 | 9.3e-4 | ×1.07 | ×2.4 | at the upper bound |
+  | `N_t` (m⁻³) | 6.8e19 | 5.6e19 | ×2.4 | ×41 | |
+  | `Nti_htl` (m⁻²) | 1.0e11 | 1.0e11 | ×1.02 | ×10 | at the lower bound |
+  | `Nti_etl` | 1.06e14 | 1.08e14 | ×1.02 | ×1.23 | |
+  | `k_direct` (m³/s) | 1.0e-18 | 5.6e-18 | ×3.8 | unbounded | |
+  | `R_shunt` (Ω m²) | 1.35 | 1.43 | ×1.22 | ×1.25 | |
+  | `mu_htl` | 1.0e-8 | 2.0e-7 | ×12 | ×2·10⁴ | |
+  | `mu_etl` | 6.7e-6 | 6.4e-6 | ×1.06 | ×2.2 | |
+  | `Ev_htl` (eV) | 5.413 | 5.417 | ±0.007 | ±0.061 | |
+  | `Ec_etl` (eV) | 3.900 | 3.900 | ±0.000 | ±0.008 | at the lower bound |
+  | `N_cation` (m⁻³) | 1.0e20 | 1.02e20 | ×1.02 | ×5.2 | at the lower bound |
+  | `N_anion` | 1.65e21 | 1.52e21 | ×1.19 | ×4.5 | |
+  | generation scale | 1.000 | 1.000 | ±0.001 | ±0.001 | |
+
+  The linearisation is nowhere narrower than the posterior and is wider by up to four decades.
+  Where it leaves a parameter nearly free (`N_t`, `k_direct`, `mu_htl`), the misfit grows faster
+  away from the fit than its curvature there says, and the bounds cut the rest: the posterior
+  still settles these to factors of 2.4–12. Where a parameter sits at a bound (four of fourteen,
+  79–100 % of the samples within 2 % of the box's width from it), the posterior is held by the
+  bound, the prior's statement, not the data's. Those four want the bounds widened or
+  the model changed, not an error bar. The remaining spread lies along a few strongly correlated
+  directions: the HTL's band edge against the anion density (−0.96), the hole mobility (−0.95)
+  and the ETL interface's traps (+0.90). With σ the rms misfit the widths are a lower bound: the
+  misfit is systematic and smooth in the voltage, not independent noise, and where the posterior
+  is close to Gaussian its widths scale with σ (`--sigma`).
+
 When jaxdd and SimSS disagree, check SimSS first: its `errJ` at that voltage, its log for "No
 convergence", and a rerun at tight tolerances. The cases where SimSS was wrong so far are all in
 [differences.md](differences.md).
@@ -162,6 +201,7 @@ as arguments. SimSS itself is built by [`simss/`](../simss/README.md).
 | `validation/bench.py [N] [batch]` | curves per second ([hardware.md](hardware.md)) |
 | `validation/breakdown.py [batch]` | one Newton step's time, part by part |
 | `validation/fit_measured.py [SAMPLE …] [--start cold\|paper] [--device mirrored\|anode]` | a fit to the measured curves of Heester et al. (2025), five intensities at once |
+| `validation/sample_measured.py [SAMPLE] [--move de\|stretch] [--walkers W] [--steps S] [--sigma F] [--out FILE]` | the fit's posterior by an ensemble sampler over the batch; the chain to an `.npz` |
 | `validation/fit.py CASE_DIR [--start S] [--fix NAME …] [--noise σ]` | a fit by gradients to the case's SimSS curve, from a perturbed start; what the curve determines (singular values) |
 
 ## Running SimSS for a comparison

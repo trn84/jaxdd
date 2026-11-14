@@ -133,7 +133,8 @@ optimiser for leaving the region where the solver converges, and it will (a reco
 coefficient run to infinity, every voltage unconverged, the misfit zero). Give it a residual of
 the curve's scale instead; `validation/fit.py` is a whole fit (least squares, the Jacobian by
 `jax.jacfwd`), `validation/fit_measured.py` one of measured curves at five light intensities
-at once, and [validation.md](validation.md) shows what such curves determine.
+at once, `validation/sample_measured.py` its posterior by an ensemble sampler over the batch,
+and [validation.md](validation.md) shows what such curves determine.
 
 Devices of one structure batch by `jax.vmap(functools.partial(device_tree, structure))` over
 stacked parameters, built on the GPU. A parameter change keeps the structure: the points per

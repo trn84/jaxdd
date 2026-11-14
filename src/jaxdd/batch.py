@@ -36,6 +36,7 @@ from jaxdd.solver import (
     STEP_CAPS,
     _assemble,
     _contact_branch,
+    _field_mobilities,
     _interface_points,
     _ion_constraints,
     _ion_logs,
@@ -114,6 +115,10 @@ def prepare(devices: list[Device]) -> dict:
     if any("ct" in t["s"] for t in trees):  # finite surface recombination; the others infinite
         for t in trees:
             t["s"].setdefault("ct", {"S": -np.ones(4), "a": np.ones(4), "both": np.asarray(0.0)})
+    if any("fn_m" in t["s"] for t in trees):  # a field-dependent mobility; the others constant
+        for t in trees:
+            for k in ("fn_m", "fn_p", "fp_m", "fp_p"):
+                t["s"].setdefault(k, np.zeros_like(t["s"]["hm"]))
     if any("tq" in t["s"] for t in trees):  # charged bulk traps; the others none
         for t in trees:
             t["s"].setdefault("tq", np.zeros_like(t["s"]["Nt"]))
@@ -194,8 +199,9 @@ def _current(d, full, g_frac, B=bernoulli):
         through = sn * 0.5 * Q * L * h[: NP + 1] * (R_i[: NP + 1] + R_i[1:])
         return jnp.where(d["iface"], jnp.roll(J, 1) + through, J)
 
-    Jn = carrier(-1.0, V + d["offset_n"], n, d["mu_n"], R_int[0])
-    Jp = carrier(1.0, V + d["offset_p"], p, d["mu_p"], R_int[1])
+    mu_n, mu_p = _field_mobilities(d["mu_n"], d["mu_p"], V, d["s"])
+    Jn = carrier(-1.0, V + d["offset_n"], n, mu_n, R_int[0])
+    Jp = carrier(1.0, V + d["offset_p"], p, mu_p, R_int[1])
     hh = h[: NP + 1]
     # With the anode on the left SIMsalabim turns every current's sign.
     return -d["left_elec"] * (jnp.sum(hh * (Jn + Jp)) / jnp.sum(hh))

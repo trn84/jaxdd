@@ -238,6 +238,11 @@ class Device:
     # is charged (else 0), and its charge when empty (1 a donor, 0 an acceptor). None without.
     trap_charge: np.ndarray | None = None
     trap_cwe: np.ndarray | None = None
+    # The field-dependent mobility (SIMsalabim's `mobnDep`, `mobpDep` = 1, Poole–Frenkel):
+    # μ = μ₀·exp(γ·√|F|) on each interval, `F` its field; here `(k_n, k_p)` on the interleaved
+    # mesh, `k = γ/√(L·h)` (so `γ·√|F| = k·√|ΔV|`), 0 at the interfaces (their transfer mobility)
+    # and in layers with a constant mobility. None without any.
+    mob_field: tuple[np.ndarray, np.ndarray] | None = None
     # Finite surface recombination at the contacts (SIMsalabim's `S_n_L`, `S_p_L`, `S_n_R`,
     # `S_p_R`, m/s, negative for infinite): `S` the four, `a` the first and last interval's
     # `V_T·μ/(L·h)` for electrons and holes in the same order, `both` 1 where the condition holds
@@ -278,6 +283,7 @@ class Structure:
     sfb: tuple[bool, bool] = (False, False)  # `W_L`, `W_R` = 'sfb': from the adjacent layer
     langevin: np.ndarray = None  # per layer: `useLangevin`, `k_direct` from the mobilities
     langevin_mobility: str = "layer"  # `LANGEVIN_MOBILITIES`
+    mob_dep: np.ndarray = None  # per layer × (electrons, holes): `mobnDep`, `mobpDep` = 1
     #: The generation: "file" (a profile, `gen_x`, `gen_G`), "none" (uniform, each layer's
     #: `G_ehp`) or "calc" (the transfer-matrix method, `optics.optical_data`).
     gen_mode: str = "file"
@@ -304,8 +310,8 @@ SURFACE_PARAMETERS = ("S_n_L", "S_p_L", "S_n_R", "S_p_R")
 #: A device's parameters per layer (`device_parameters`), as SIMsalabim names them.
 LAYER_PARAMETERS = (
     "L", "eps_r", "E_c", "E_v", "N_c", "N_D", "N_A", "mu_n", "mu_p", "nu_int_n", "nu_int_p",
-    "k_direct", "preLangevin", "N_t_bulk", "C_n_bulk", "C_p_bulk", "E_t_bulk", "N_anion",
-    "N_cation", "N_t_int", "E_t_int", "C_n_int", "C_p_int", "G_ehp",
+    "gamma_n", "gamma_p", "k_direct", "preLangevin", "N_t_bulk", "C_n_bulk", "C_p_bulk",
+    "E_t_bulk", "N_anion", "N_cation", "N_t_int", "E_t_int", "C_n_int", "C_p_int", "G_ehp",
 )  # fmt: skip
 
 
@@ -399,6 +405,8 @@ def device_parameters(setup: Setup, grid_split: str = "exact", surface: str = "e
         sfb=tuple(setup.raw[k].strip().lower() == "sfb" for k in ("W_L", "W_R")),
         langevin=flags(lambda ly: int(float(ly.raw.get("useLangevin", "0"))) == 1),
         langevin_mobility=langevin,
+        mob_dep=np.array([[int(float(ly.raw.get(k, "0"))) for k in ("mobnDep", "mobpDep")]
+                          for ly in layers]),
         left_elec=setup.i("leftElec"),
     )  # fmt: skip
     # SIMsalabim's checks: each work function within its layer's gap.
@@ -406,6 +414,14 @@ def device_parameters(setup: Setup, grid_split: str = "exact", surface: str = "e
         if not sfb and not ly.f("E_c") <= setup.f(k) <= ly.f("E_v"):
             raise ValueError(f"{k} = {setup.f(k)} eV: outside the gap of its layer "
                              f"({ly.f('E_c')} to {ly.f('E_v')} eV)")  # fmt: skip
+    # SIMsalabim's: `mobnDep`, `mobpDep` 0 or 1. With Langevin the rate would follow the field
+    # too (SimSS takes the interval's mobility): not yet.
+    if not np.isin(structure.mob_dep, (0, 1)).all():
+        raise ValueError(f"mobnDep, mobpDep: 0 or 1, got {structure.mob_dep.tolist()}")
+    both = structure.langevin & structure.mob_dep.any(axis=1)
+    if both.any():
+        raise NotImplementedError(f"layer {np.argmax(both) + 1}: useLangevin with a "
+                                  "field-dependent mobility")  # fmt: skip
     extra = {}
     if bulk_file.any():
         extra["bulk_trap_E"], extra["bulk_trap_N"] = _level_table(
@@ -455,6 +471,8 @@ def device_parameters(setup: Setup, grid_split: str = "exact", surface: str = "e
     optional = {
         "nu_int_n",
         "nu_int_p",
+        "gamma_n",
+        "gamma_p",
         "C_n_bulk",
         "C_p_bulk",
         "E_t_bulk",
@@ -649,6 +667,11 @@ def device_arrays(structure: Structure, p: dict, xp=np) -> Device:
             "a": xp.stack([a_L * mu_n[0], a_L * mu_p[0], a_R * mu_n[NP], a_R * mu_p[NP]]),
             "both": xp.asarray(1.0 if st.surface == "robin" else 0.0),
         }
+    mob_field = None
+    if st.mob_dep is not None and st.mob_dep.any():  # SIMsalabim's `Calc_Elec_Mob`, `Calc_Hole_Mob`
+        dep = xp.asarray(st.mob_dep[lid]) & ~iface[:, None]
+        mob_field = tuple(xp.where(dep[:, c], p[g][lid] / xp.sqrt(total * h), 0.0)
+                          for c, g in enumerate(("gamma_n", "gamma_p")))  # fmt: skip
     interface = None
     if st.int_traps is not None and st.int_traps.any():
         interface = _interface(st, p, h, total, Vt, xp)
@@ -675,6 +698,7 @@ def device_arrays(structure: Structure, p: dict, xp=np) -> Device:
         pre_cond=st.pre_cond, V_pre=p["V_pre"], fix_ions=st.fix_ions, interface=interface,
         R_series=p.get("R_series", 0.0), R_shunt=p.get("R_shunt", -1.0), left_elec=st.left_elec,
         trap_charge=trap_charge, trap_cwe=trap_cwe, surface=surface,
+        mob_field=mob_field,
     )  # fmt: skip
 
 

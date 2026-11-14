@@ -202,9 +202,9 @@ What jaxdd solves today ("Stage A") is in [docs/overview.md](docs/overview.md). 
   charged, one level or several from trap files; series and shunt resistance, SimSS's external
   circuit; the generation profile by the transfer-matrix method, differentiable in the
   thicknesses, and uniform; the left electrode as the anode; the contacts' finite surface
-  recombination and `sfb` work functions; Langevin recombination ([docs/model.md](docs/model.md)).
-  Next: the field-dependent mobility (`mobnDep`, `mobpDep` = 1) and the field-dependent
-  generation (`fieldDepG`, Braun's dissociation).
+  recombination and `sfb` work functions; Langevin recombination; the field-dependent mobility
+  ([docs/model.md](docs/model.md)). Next: the field-dependent generation (`fieldDepG`, Braun's
+  dissociation), and Langevin with a field-dependent mobility in the same layer.
   At the end, a SimSS input runs on jaxdd or is refused with the missing feature named.
 - **Stage C: transients (ZimT).** Time-dependent drift-diffusion with mobile ions: scan-rate
   hysteresis, transient photocurrent and photovoltage, impedance. Its own plan when Stage B is

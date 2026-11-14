@@ -78,6 +78,21 @@ on the left. The Scharfetter–Gummel flux across that interval is then thermion
 velocity `ν_int` over the band offset. A carrier facing a large offset (say 1 eV) is
 effectively blocked.
 
+## The field-dependent mobility (`Calc_Elec_Mob`, `Calc_Hole_Mob`)
+
+In a layer with `mobnDep = 1` (`mobpDep` for holes) each interval's mobility follows its own
+field, Poole–Frenkel's form:
+
+```
+μ_n(i+½) = μ_n · exp( γ_n · √|F| ),   F = (V[i+1] − V[i]) / (L·h[i])
+```
+
+with `gamma_n` (`gamma_p`) in (m/V)^½ and `μ_n` the zero-field mobility. The intervals across
+an interface keep their transfer mobility `L·h·ν_int/V_T`. The mobility then depends on the
+potential: Newton takes its derivative into the Jacobian ([solver.md](solver.md)), and the
+current is integrated with each interval's mobility in the converged field. With Langevin
+recombination in the same layer it is refused for now (the rate would follow the field too).
+
 ## Recombination and generation
 
 ```

@@ -8,7 +8,8 @@ solution is SIMsalabim's to its tolerance:
 * Continuity (`Cont_Eq_Elec`, `Cont_Eq_Holes`): Scharfetter–Gummel in the generalised
   potentials `Vgn = V + E_c − E_c[0] + V_T·ln(N_c/N_c[0])` (and `Vgp`), which carry the band
   offsets; at an interface the mobility of the interval across it is `L·h·ν_int/V_T`
-  (`Calc_Elec_Mob`), so the transfer is thermionic at `ν_int`.
+  (`Calc_Elec_Mob`), so the transfer is thermionic at `ν_int`. Where it depends on the field
+  (`mobnDep`, `mobpDep` = 1), each interval's mobility is `μ·exp(γ·√|F|)` in its own field.
 * Recombination: direct `k_direct·(n·p − n_i²)` and bulk SRH through one neutral level.
 * Current (`Calc_Curr_Int`, `currDiffInt = 2`): the integral form of De Mari, averaged over
   the device (`Calc_All_Currents`).
@@ -91,6 +92,48 @@ def bernoulli_simss(x):
     )
 
 
+#: `sqrt_abs`'s derivative is taken at |x| ≥ this (V): finite at 0, where √|x| has none.
+_SQRT_FLOOR = 1e-12
+
+
+@jax.custom_jvp
+def sqrt_abs(x):
+    """`√|x|`, with a finite derivative: at |x| below `_SQRT_FLOOR` that of √`_SQRT_FLOOR`
+    (0 at 0). Only the Jacobian sees the floor; the residual, and so the solution, is exact."""
+    return jnp.sqrt(jnp.abs(x))
+
+
+@sqrt_abs.defjvp
+def _sqrt_abs_jvp(primals, tangents):
+    (x,), (t,) = primals, tangents
+    return sqrt_abs(x), jnp.sign(x) * t * 0.5 / jnp.sqrt(jnp.maximum(jnp.abs(x), _SQRT_FLOOR))
+
+
+def _field_factors(V, s):
+    """Each interval's mobility over its value at zero field, `exp(k·√|ΔV|)` for electrons and
+    holes (`Device.mob_field`), from `V` on all NP + 2 points; None without a field-dependent
+    mobility."""
+    if "fn_m" not in s:
+        return None
+    dV = sqrt_abs(jnp.diff(V))
+    return tuple(jnp.exp(k * dV) for k in _edge_k(s))
+
+
+def _edge_k(s):
+    """`Device.mob_field`'s `k` for electrons and holes on the NP + 1 intervals, from the
+    stencils' (each interior point's two)."""
+    return (jnp.concatenate([s["fn_m"], s["fn_p"][-1:]]),
+            jnp.concatenate([s["fp_m"], s["fp_p"][-1:]]))  # fmt: skip
+
+
+def _field_mobilities(mu_n, mu_p, V, s):
+    """The interleaved mobilities (NP + 2) at `V`: `_field_factors` on the NP + 1 intervals."""
+    f = _field_factors(V, s)
+    if f is None:
+        return mu_n, mu_p
+    return mu_n.at[:-1].multiply(f[0]), mu_p.at[:-1].multiply(f[1])
+
+
 #: Which Bernoulli function the discretisation uses: `"exact"`, or `"simss"` to reproduce
 #: SIMsalabim's approximation (its numbers to round-off rather than to 1e-4).
 BERNOULLI = {"exact": bernoulli, "simss": bernoulli_simss}
@@ -147,6 +190,9 @@ def _stencils(dev: Device, xp=np) -> dict[str, jnp.ndarray]:
         out["ti"] = dict(dev.interface)
     if dev.surface is not None:  # finite surface recombination at a contact (`Device.surface`)
         out["ct"] = dict(dev.surface)
+    if dev.mob_field is not None:  # the field-dependent mobility's `k` on each point's intervals
+        kn, kp = dev.mob_field
+        out.update(fn_m=kn[i - 1], fn_p=kn[i], fp_m=kp[i - 1], fp_p=kp[i])
     return out
 
 
@@ -163,6 +209,10 @@ def _robin(first, last, z0, zN, s, Vt, B):
     equilibrium states `z0`, `zN` (the bounds)."""
     ct = s["ct"]
     S, a = ct["S"], ct["a"]
+    if "fn_m" in s:  # the contacts' intervals in their own field
+        dL, dR = sqrt_abs(first[0] - z0[0]), sqrt_abs(zN[0] - last[0])
+        a = a * jnp.exp(jnp.stack([s["fn_m"][0] * dL, s["fp_m"][0] * dL,
+                                   s["fn_p"][-1] * dR, s["fp_p"][-1] * dR]))  # fmt: skip
     x_nL = (first[0] + s["offn"][0, 1] - z0[0] - s["offn"][0, 0]) / Vt
     x_pL = (first[0] + s["offp"][0, 1] - z0[0] - s["offp"][0, 0]) / Vt
     x_nR = (zN[0] + s["offn"][-1, 2] - last[0] - s["offn"][-1, 1]) / Vt
@@ -331,14 +381,17 @@ def _row(left, mid, right, s, Vt, g_frac, la, lc, B=bernoulli):
         poisson = poisson + Q * _trap_charge(n[1], p[1], s)
     gn = (V + s["offn"]) / Vt
     gp = (V + s["offp"]) / Vt
-    lo_n = s["hp"] * s["mun_m"] * Vt * B(gn[0] - gn[1])
-    up_n = s["hm"] * s["mun_p"] * Vt * B(gn[2] - gn[1])
-    m_n = -(s["hm"] * s["mun_p"] * Vt * B(gn[1] - gn[2])
-            + s["hp"] * s["mun_m"] * Vt * B(gn[1] - gn[0]))  # fmt: skip
-    lo_p = s["hp"] * s["mup_m"] * Vt * B(gp[1] - gp[0])
-    up_p = s["hm"] * s["mup_p"] * Vt * B(gp[1] - gp[2])
-    m_p = -(s["hm"] * s["mup_p"] * Vt * B(gp[2] - gp[1])
-            + s["hp"] * s["mup_m"] * Vt * B(gp[0] - gp[1]))  # fmt: skip
+    mun_m, mun_p, mup_m, mup_p = s["mun_m"], s["mun_p"], s["mup_m"], s["mup_p"]
+    if "fn_m" in s:  # each interval's mobility in its own field
+        dm, dp = sqrt_abs(V[1] - V[0]), sqrt_abs(V[2] - V[1])
+        mun_m, mun_p = mun_m * jnp.exp(s["fn_m"] * dm), mun_p * jnp.exp(s["fn_p"] * dp)
+        mup_m, mup_p = mup_m * jnp.exp(s["fp_m"] * dm), mup_p * jnp.exp(s["fp_p"] * dp)
+    lo_n = s["hp"] * mun_m * Vt * B(gn[0] - gn[1])
+    up_n = s["hm"] * mun_p * Vt * B(gn[2] - gn[1])
+    m_n = -(s["hm"] * mun_p * Vt * B(gn[1] - gn[2]) + s["hp"] * mun_m * Vt * B(gn[1] - gn[0]))
+    lo_p = s["hp"] * mup_m * Vt * B(gp[1] - gp[0])
+    up_p = s["hm"] * mup_p * Vt * B(gp[1] - gp[2])
+    m_p = -(s["hm"] * mup_p * Vt * B(gp[2] - gp[1]) + s["hp"] * mup_m * Vt * B(gp[0] - gp[1]))
     net = s["G"] * g_frac - _recombination(n[1], p[1], s)
     elec = lo_n * n[0] + m_n * n[1] + up_n * n[2] + s["fac"] * net
     hole = lo_p * p[0] + m_p * p[1] + up_p * p[2] + s["fac"] * net
@@ -384,6 +437,15 @@ def _assemble(full, s, Vt, g_frac, la, lc, B=bernoulli):
     cp = Vt * jnp.concatenate([s["mup_m"], s["mup_p"][-1:]])
     xn = jnp.diff(V + offn) / Vt
     xp = jnp.diff(V + offp) / Vt
+    dlog_n = dlog_p = 0.0
+    if "fn_m" in s:  # each interval's mobility in its own field, and its derivative in ΔV
+        kn, kp = _edge_k(s)
+        dV = jnp.diff(V)
+        (fn, fp), (dfn, dfp) = jax.jvp(
+            lambda d: (jnp.exp(kn * sqrt_abs(d)), jnp.exp(kp * sqrt_abs(d))),
+            (dV,), (jnp.ones_like(dV),))  # fmt: skip
+        cn, cp = cn * fn, cp * fp
+        dlog_n, dlog_p = dfn / fn, dfp / fp
     args = jnp.concatenate([xn, -xn, xp, -xp])
     Bv, dB = jax.jvp(B, (args,), (jnp.ones_like(args),))
     Bn_f, Bn_b, Bp_f, Bp_b = jnp.split(Bv, 4)
@@ -392,11 +454,11 @@ def _assemble(full, s, Vt, g_frac, la, lc, B=bernoulli):
     zero = jnp.zeros_like(xn)
     # Electrons: Fn = cn·(B(x)·n₁ − B(−x)·n₀); holes: Fp = cp·(B(x)·p₀ − B(−x)·p₁).
     Fn = cn * (Bn_f * n1 - Bn_b * n0)
-    gn = cn * (dBn_f * n1 + dBn_b * n0) / Vt
+    gn = cn * (dBn_f * n1 + dBn_b * n0) / Vt + Fn * dlog_n
     dFn0 = jnp.stack([-gn, -cn * Bn_b * n0, zero], -1)
     dFn1 = jnp.stack([gn, cn * Bn_f * n1, zero], -1)
     Fp = cp * (Bp_f * p0 - Bp_b * p1)
-    gp = cp * (dBp_f * p0 + dBp_b * p1) / Vt
+    gp = cp * (dBp_f * p0 + dBp_b * p1) / Vt + Fp * dlog_p
     dFp0 = jnp.stack([-gp, zero, cp * Bp_f * p0], -1)
     dFp1 = jnp.stack([gp, zero, -cp * Bp_b * p1], -1)
 
@@ -673,8 +735,13 @@ def _current(dev: Device, V, n, p, g_frac) -> float:
             J[i] = J[i - 1] + sn * 0.5 * Q * L * h[i] * (R_i[i] + R_i[i + 1])
         return J
 
-    Jn = carrier(-1, V + dev.offset_n, n, dev.mu_n, R_int[0])
-    Jp = carrier(1, V + dev.offset_p, p, dev.mu_p, R_int[1])
+    mu_n, mu_p = dev.mu_n, dev.mu_p
+    if dev.mob_field is not None:  # each interval's mobility in its own field
+        dV = np.sqrt(np.abs(np.diff(V)))
+        mu_n = np.concatenate([mu_n[:-1] * np.exp(dev.mob_field[0][:-1] * dV), mu_n[-1:]])
+        mu_p = np.concatenate([mu_p[:-1] * np.exp(dev.mob_field[1][:-1] * dV), mu_p[-1:]])
+    Jn = carrier(-1, V + dev.offset_n, n, mu_n, R_int[0])
+    Jp = carrier(1, V + dev.offset_p, p, mu_p, R_int[1])
     total = Jn + Jp
     # With the anode on the left SIMsalabim turns every current's sign.
     return -dev.left_elec * float(np.sum(h[: NP + 1] * total) / np.sum(h[: NP + 1]))

@@ -199,6 +199,12 @@ intervals': the residual `F` and the three 3×3 blocks of the block-tridiagonal 
 continuity by `1/(μ_max·V_T·N_c·h)`), which keeps the blocks well conditioned. No dense
 Jacobian of the device (1200×1200, 11.5 MB per device) is ever formed.
 
+With a field-dependent mobility ([model.md](model.md)) the factor `exp(k·√|ΔV|)` of each
+interval, `k = γ/√(L·h)`, multiplies its flux, and the flux's derivative in either end's
+potential gains `±F·k·d√|ΔV|/dΔV`. `√|x|` has no derivative at 0: `solver.sqrt_abs` takes it
+at |ΔV| ≥ 1e-12 V (0 at 0). Only the Jacobian sees that floor; the residual, and so the
+solution, is exact, and Newton needs as many steps as with a constant mobility.
+
 The reference is `solver._row`, the three residuals of one point from its three neighbours as
 SIMsalabim writes them, and `jax.jacfwd` of it in its three neighbour arguments: `_assemble`
 equals it to 1e-11 (tests). It was the solver's assembly before; two things replaced it.

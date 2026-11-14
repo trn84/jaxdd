@@ -249,16 +249,22 @@ def test_surface_recombination_at_the_other_two_ends_is_the_mirror_image() -> No
     assert curves["finite"][at_1V][0] < 10 * curves["infinite"][at_1V][0] < 0
 
 
+@pytest.mark.parametrize("field", [False, True])
 @pytest.mark.parametrize("surface", ["extraction", "robin"])
-def test_the_contacts_jacobian_is_autodiff(surface: str) -> None:
+def test_the_contacts_jacobian_is_autodiff(surface: str, field: bool) -> None:
     """`_assemble`'s blocks with finite surface recombination (each contact's density a function
     of its neighbour's unknowns, the chain rule added to the first and last block) are
-    `jax.jacfwd` of its residual, at a perturbed state."""
+    `jax.jacfwd` of its residual, at a perturbed state; also with a field-dependent mobility in
+    the contacts' layers (the contact's interval in its own field)."""
     from jaxdd import solver as S
+    from jaxdd.simss_input import setup_from_texts
     from jaxdd.solver import _assemble, _ion_setup, _stencils, bernoulli
 
-    dev = build_device(read_setup(DATA / "surface_light" / "simulation_setup.txt"),
-                       surface=surface)  # fmt: skip
+    texts = _texts("surface_light")
+    if field:
+        for f, g in (("L1_parameters.txt", "gamma_n"), ("L3_parameters.txt", "gamma_p")):
+            texts[f] = _put(_put(texts[f], f"mob{g[-1]}Dep", "1"), g, "3e-4")
+    dev = build_device(setup_from_texts(texts), surface=surface)
     s = jax.tree_util.tree_map(jnp.asarray, _stencils(dev))
     y0 = S._initial(dev, 0.6)
     NP = len(dev.x) - 2
@@ -368,6 +374,57 @@ def test_the_gradient_in_the_langevin_prefactor_is_finite_differences() -> None:
     assert abs(float(by_jvp) - fd) < 1e-5 * abs(fd)
 
 
+def test_the_field_dependent_mobility_reproduces_simss() -> None:
+    """Stage B: SIMsalabim's field-dependent mobility (`mobnDep`, `mobpDep` = 1), `μ·exp(γ·√|F|)`
+    on each interval in its own field, the interfaces' transfer mobility left alone: γ from 0
+    to 3e-4 (m/V)^½ in the three layers, the electrons' constant in the last (the curve moves
+    by 32 %); SimSS at a tolerance of 1e-9, in as many Newton steps as without."""
+    setup = read_setup(DATA / "fieldmob_light" / "simulation_setup.txt")
+    check_supported(setup)
+    ref = np.genfromtxt(DATA / "fieldmob_light" / "JV.dat", names=True)
+    res = solve_jv(build_device(setup), ref["Vint"], bernoulli_name="simss")
+    assert res.converged.all() and res.iterations.max() <= 16
+    assert np.max(np.abs(res.J - ref["Jext"])) < 1e-9 * np.max(np.abs(ref["Jext"]))
+
+
+def test_the_gradient_in_the_field_dependence_is_finite_differences() -> None:
+    """The curve's derivative in the absorber's `gamma_n` and `gamma_p`, through `device_tree`
+    and the converged solution, against central finite differences."""
+    from jaxdd.batch import device_tree, solve_batch
+    from jaxdd.device import device_parameters
+
+    structure, params = device_parameters(read_setup(DATA / "fieldmob_light" /
+                                                     "simulation_setup.txt"))  # fmt: skip
+    V = np.round(np.arange(-0.1, 1.0 + 1e-9, 0.1), 6)
+    w = jnp.asarray(np.random.default_rng(0).normal(size=len(V)))
+
+    def loss(a):
+        g = {k: jnp.asarray(params[k]).at[1].multiply(1 + a * c)
+             for k, c in (("gamma_n", 1.0), ("gamma_p", -0.5))}  # fmt: skip
+        batch = jax.tree_util.tree_map(lambda v: v[None], device_tree(structure, params | g))
+        J, ok, _ = solve_batch(batch, V, strict=True)
+        return jnp.sum(w * jnp.where(ok[0], J[0], 0.0))
+
+    _, by_jvp = jax.jvp(loss, (0.0,), (1.0,))
+    h = 1e-4
+    fd = (float(loss(h)) - float(loss(-h))) / (2 * h)
+    assert abs(float(by_jvp) - fd) < 1e-6 * abs(fd)
+
+
+def test_a_field_dependent_mobility_with_langevin_is_refused() -> None:
+    """`mobnDep` other than 0 or 1 is refused, as SIMsalabim does; a field-dependent mobility in
+    a layer with Langevin recombination is not yet supported."""
+    from jaxdd.simss_input import setup_from_texts
+
+    texts = _texts("fieldmob_light")
+    bad = dict(texts, **{"L2_parameters.txt": _put(texts["L2_parameters.txt"], "mobnDep", "2")})
+    with pytest.raises(ValueError, match="mobnDep"):
+        build_device(setup_from_texts(bad))
+    lan = dict(texts, **{"L2_parameters.txt": _put(texts["L2_parameters.txt"], "useLangevin", "1")})
+    with pytest.raises(NotImplementedError, match="layer 2: useLangevin"):
+        build_device(setup_from_texts(lan))
+
+
 def test_series_and_shunt_resistance_are_simss_external_circuit() -> None:
     """Stage B: SimSS's external circuit, `J_ext = J + V_int/R_shunt`, `V_ext = V_int +
     J_ext·R_series`, with 2e-4 and 0.3 Ω m² (the series resistance moves the voltage by 1.8 V at
@@ -455,12 +512,13 @@ def test_the_gradient_through_the_optics_is_finite_differences() -> None:
 
 def test_a_batch_mixes_devices_with_and_without_interface_traps() -> None:
     """`prepare` gives the devices without interface traps zero traps on every edge, those
-    without charged bulk traps none, and every device the most trap levels of any (the others
+    without charged bulk traps none, those with a constant mobility no field dependence, and
+    every device the most trap levels of any (the others
     of density 0): each curve of a mixed batch is the one-device solver's."""
     from jaxdd.batch import prepare, solve_batch
 
     cases = ["thin_l1_light", "iface_charged_light", "iface_ions_light", "bulk_acceptor_light",
-             "trapfiles_light", "surface_light"]  # fmt: skip
+             "trapfiles_light", "surface_light", "fieldmob_light"]  # fmt: skip
     devices = [build_device(read_setup(DATA / c / "simulation_setup.txt")) for c in cases]
     V = np.round(np.arange(-0.2, 1.3 + 1e-9, 0.1), 6)
     J, ok, _ = solve_batch(prepare(devices), V, bernoulli_name="simss")
@@ -626,8 +684,9 @@ def test_a_dark_scan_with_a_density_far_below_the_floor_converges() -> None:
 @pytest.mark.parametrize("bern", ["exact", "simss"])
 @pytest.mark.parametrize(
     "case",
-    ["thin_l1_light", "frozen_1e17_x1_thin_light", "steady_1e17_thin_light", "bulk_acceptor_light"],
-)
+    ["thin_l1_light", "frozen_1e17_x1_thin_light", "steady_1e17_thin_light", "bulk_acceptor_light",
+     "fieldmob_light"],
+)  # fmt: skip
 def test_the_jacobian_by_edges_is_autodiff_of_the_rows(case: str, bern: str) -> None:
     """`_assemble` (each interval's fluxes once, assembled by hand) gives `_kernels`' residual,
     Jacobian blocks and ion columns (`jacfwd` of each row) to round-off, at a perturbed state
@@ -866,7 +925,7 @@ def test_the_bordered_system_and_its_transpose_are_solved() -> None:
     ["thin_l1_light", "frozen_1e17_x1_thin_light", "steady_1e17_thin_light",
      "frozen_thick_htl_dark", "iface_ions_light", "pin_iface_light", "resist_light",
      "calc_light", "none_light", "pin_anode_left_light", "bulk_acceptor_light",
-     "trapfiles_light", "surface_light", "langevin_light"],
+     "trapfiles_light", "surface_light", "langevin_light", "fieldmob_light"],
 )  # fmt: skip
 def test_the_device_in_jax_is_numpys(case: str) -> None:
     """`batch.device_tree` (the device in `jax.numpy` from its structure and parameters) gives

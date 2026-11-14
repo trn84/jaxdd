@@ -49,7 +49,7 @@ each with its own parameters.
 
 | Part | Supported |
 |---|---|
-| Layers | any number; per layer thickness, permittivity, band edges, effective density of states, mobilities, donor and acceptor doping |
+| Layers | any number; per layer thickness, permittivity, band edges, effective density of states, mobilities (constant or field-dependent, `mobnDep`, `mobpDep`; Stage B), donor and acceptor doping |
 | Grid | SIMsalabim's: `NP` points, exponentially graded in each layer (`grad`) |
 | Interfaces | band offsets; thermionic transfer at a finite velocity (`nu_int_n`, `nu_int_p`); interface traps, one level per interface or several from a trap file (`intTrapFile`), neutral or charged (`N_t_int`, `E_t_int`, `intTrapType`; Stage B) |
 | Contacts | at the work functions `W_L`, `W_R` (or `sfb`), anywhere in the gap (a Schottky barrier away from the band edges); infinite or finite surface recombination (`S_n_L`, `S_p_L`, `S_n_R`, `S_p_R`, Stage B); the left electrode the cathode or the anode (`leftElec = -1` or `1`, Stage B); series and shunt resistance as SimSS's external circuit (Stage B) |
@@ -59,9 +59,9 @@ each with its own parameters.
 | Output | `J(V)` and a `converged` flag per device and voltage; the number of Newton steps |
 
 Everything else is **refused by name**, never approximated: `check_supported` raises
-`NotImplementedError` listing each parameter outside this scope (field-dependent mobility or
-generation, an ionic region across layers, `fixIons`
-without `preCond`). What comes next in physics is
+`NotImplementedError` listing each parameter outside this scope (field-dependent generation,
+an ionic region across layers, `fixIons` without `preCond`, a field-dependent mobility with
+Langevin recombination in the same layer). What comes next in physics is
 in [PLAN.md](../PLAN.md).
 
 ## Where jaxdd follows SIMsalabim, and where it does not

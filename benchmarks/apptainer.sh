@@ -36,9 +36,13 @@
 #              cells' parameters; each chain to benchmarks/samples/chain_<sample>.npz, saved every
 #              100 steps, so a session that ends keeps what is done. Not in the default steps:
 #                STEPS=sample benchmarks/apptainer.sh
+#              with UPLOAD (below) the results go to a shared folder as they come:
+#                STEPS=sample UPLOAD=https://HOST/s/TOKEN benchmarks/apptainer.sh
 #
 # Settings (environment): STEPS; CHUNK, the batch file of the chunk step; SAMPLES and SAMPLE_ARGS
-# for the sample step; LABEL, the machine's name in the plot (default: the GPU's
+# for the sample step; UPLOAD, a public share link of a Nextcloud or ownCloud folder with upload
+# rights (https://HOST/s/TOKEN): the log and the sample step's chains are uploaded to it every
+# UPLOAD_EVERY seconds (default 600) while the run lives, and once at its end; LABEL, the machine's name in the plot (default: the GPU's
 # name and "apptainer"); SIF, the image file (default cuda129.sif in the repository); IMAGE,
 # where it is pulled from. Everything is appended to benchmarks/apptainer.log (not committed).
 set -euo pipefail
@@ -53,6 +57,30 @@ LOG="$ROOT/benchmarks/apptainer.log"
 STEPS="${STEPS:-info tests breakdown bench hard run}"
 
 say() { printf '\n== %s  %s\n' "$(date '+%F %T')" "$*"; }
+
+# ------------------------------------------------------------------ the uploads (on the host)
+upload() {
+    local base="${UPLOAD%%/s/*}" token="${UPLOAD##*/s/}" f
+    token="${token%%[/?#]*}"
+    for f in "$LOG" "$ROOT"/benchmarks/samples/*.npz; do
+        [ -f "$f" ] || continue
+        curl -sS -f -u "$token:" -T "$f" "$base/public.php/webdav/$(basename "$f")" ||
+            echo "!! upload of $(basename "$f") failed"
+    done
+}
+if [ "${1:-}" = "--upload" ]; then
+    pid="$2"
+    while kill -0 "$pid" 2>/dev/null; do
+        for _ in $(seq $(( ${UPLOAD_EVERY:-600} / 10 ))); do
+            kill -0 "$pid" 2>/dev/null || break
+            sleep 10
+        done
+        upload
+    done
+    say "uploaded the log and the chains"
+    upload
+    exit 0
+fi
 
 # ------------------------------------------------------------------ inside the container
 if [ "${1:-}" = "--inside" ]; then
@@ -161,6 +189,10 @@ nohup apptainer -s exec --nv "$SIF" "$ROOT/benchmarks/apptainer.sh" --inside \
     >> "$LOG" 2>&1 < /dev/null &
 pid=$!
 echo "pid $pid; Ctrl+C ends only the following, not the run"
+if [ -n "${UPLOAD:-}" ]; then
+    nohup "$ROOT/benchmarks/apptainer.sh" --upload "$pid" >> "$LOG" 2>&1 < /dev/null &
+    echo "uploading the log and the chains every ${UPLOAD_EVERY:-600} s and at the end"
+fi
 sleep 5
 kill -0 "$pid" 2>/dev/null || { echo "it stopped at once:"; tail -20 "$LOG"; exit 1; }
 tail -c +"$start" -F --pid="$pid" "$LOG" 2>/dev/null

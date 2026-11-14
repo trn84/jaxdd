@@ -121,40 +121,55 @@ so that the solver is never the larger error in what is computed from it.
   of the same fourteen parameters, by an ensemble sampler whose walkers' five intensities are
   solved as one batch (differential evolution, the walkers started around the least-squares fit;
   the prior uniform in the fitted coordinates within the bounds, the likelihood Gaussian with σ the
-  fit's rms misfit). For the 0.2 Cl sample, 64 walkers and 3000 steps, 1.5 h on the RTX 4070 Ti
-  SUPER (0.92 s per batch of 32 × 5 curves): acceptance 0.06, autocorrelation times 126–208
-  steps, so the 2000 steps kept hold about ten of the longest and some 600 independent samples;
-  quantiles to a few percent, the tails rougher. The 16–84 % half-widths against the linearised
-  `σ²(JᵀJ)⁻¹` at the fit:
+  fit's rms misfit). All three samples, 128 walkers and 3000 steps each, the first 1000
+  discarded: 4.2 h on an A100-SXM4-40GB (0.75–0.96 s per batch of 64 × 5 curves). Acceptance
+  0.05–0.07, autocorrelation times 103–246 steps, so the 2000 steps kept hold 8–10 of the longest
+  and 1000–1300 independent samples: quantiles to a few percent, the tails rougher. The 0.2 Cl
+  sample run on the RTX 4070 Ti SUPER with 64 walkers (1.5 h, 0.92 s per batch of 32 × 5)
+  gives the same medians and widths to within that noise. Median and 16–84 % half-width:
 
-  | | fit | median | 16–84 % | linearised | |
-  |---|---|---|---|---|---|
-  | `mu_n` (m²/Vs) | 1.0e-4 | 1.03e-4 | ×1.09 | ×1.62 | |
-  | `mu_p` | 1.0e-3 | 9.3e-4 | ×1.07 | ×2.4 | at the upper bound |
-  | `N_t` (m⁻³) | 6.8e19 | 5.6e19 | ×2.4 | ×41 | |
-  | `Nti_htl` (m⁻²) | 1.0e11 | 1.0e11 | ×1.02 | ×10 | at the lower bound |
-  | `Nti_etl` | 1.06e14 | 1.08e14 | ×1.02 | ×1.23 | |
-  | `k_direct` (m³/s) | 1.0e-18 | 5.6e-18 | ×3.8 | unbounded | |
-  | `R_shunt` (Ω m²) | 1.35 | 1.43 | ×1.22 | ×1.25 | |
-  | `mu_htl` | 1.0e-8 | 2.0e-7 | ×12 | ×2·10⁴ | |
-  | `mu_etl` | 6.7e-6 | 6.4e-6 | ×1.06 | ×2.2 | |
-  | `Ev_htl` (eV) | 5.413 | 5.417 | ±0.007 | ±0.061 | |
-  | `Ec_etl` (eV) | 3.900 | 3.900 | ±0.000 | ±0.008 | at the lower bound |
-  | `N_cation` (m⁻³) | 1.0e20 | 1.02e20 | ×1.02 | ×5.2 | at the lower bound |
-  | `N_anion` | 1.65e21 | 1.52e21 | ×1.19 | ×4.5 | |
-  | generation scale | 1.000 | 1.000 | ±0.001 | ±0.001 | |
+  | | 0.1 Cl | 0.2 Cl | 0.6 Cl | bounds |
+  |---|---|---|---|---|
+  | `mu_n` (m²/Vs) | 9.7e-4 ×1.04 ↑ | 1.03e-4 ×1.09 | 9.9e-4 ×1.01 ↑ | 1e-3 above |
+  | `mu_p` | 1.04e-4 ×1.09 | 9.3e-4 ×1.07 ↑ | 4.4e-4 ×1.02 | 1e-3 above |
+  | `N_t` (m⁻³) | 3.1e19 ×2.5 | 5.6e19 ×2.6 | 3.1e19 ×2.5 | |
+  | `Nti_htl` (m⁻²) | 2.4e11 ×2.0 | 1.0e11 ×1.02 ↓ | 2.4e13 ×1.07 | 1e11 below |
+  | `Nti_etl` | 7.7e13 ×1.10 | 1.08e14 ×1.02 | 9.9e14 ×1.01 ↑ | 1e15 above |
+  | `k_direct` (m³/s) | 2.5e-17 ×10 | 5.4e-18 ×3.7 | 2.9e-17 ×10 | 1e-18 – 1e-15 |
+  | `R_shunt` (Ω m²) | ≳ 15 | 1.42 ×1.22 | ≳ 15 | up to 1e3 |
+  | `mu_htl` | 1.0e-6 ×5.7 | 1.6e-7 ×12 | 1.5e-8 ×2.0 (↓ 23 %) | 1e-8 below |
+  | `mu_etl` | 1.01e-8 ×1.02 ↓ | 6.4e-6 ×1.06 | 2.9e-6 ×2.0 | 1e-8 below |
+  | `Ev_htl` (eV) | 5.599 ±0.001 ↑ | 5.417 ±0.007 | 5.401 ±0.001 ↓ | 5.4 – 5.6 |
+  | `Ec_etl` (eV) | 4.071 ±0.003 | 3.900 ±0.000 ↓ | 4.139 ±0.003 | 3.9 – 4.3 |
+  | `N_cation` (m⁻³) | 1.11e21 ×1.06 | 1.02e20 ×1.02 ↓ | 4.35e21 ×1.04 | 1e20 below |
+  | `N_anion` | 5.9e20 ×1.18 | 1.53e21 ×1.19 | 1.22e22 ×1.01 | |
+  | generation scale | 0.998 | 1.000 | 1.02 | |
 
-  The linearisation is nowhere narrower than the posterior and is wider by up to four decades.
-  Where it leaves a parameter nearly free (`N_t`, `k_direct`, `mu_htl`), the misfit grows faster
-  away from the fit than its curvature there says, and the bounds cut the rest: the posterior
-  still settles these to factors of 2.4–12. Where a parameter sits at a bound (four of fourteen,
-  79–100 % of the samples within 2 % of the box's width from it), the posterior is held by the
-  bound, the prior's statement, not the data's. Those four want the bounds widened or
-  the model changed, not an error bar. The remaining spread lies along a few strongly correlated
-  directions: the HTL's band edge against the anion density (−0.96), the hole mobility (−0.95)
-  and the ETL interface's traps (+0.90). With σ the rms misfit the widths are a lower bound: the
-  misfit is systematic and smooth in the voltage, not independent noise, and where the posterior
-  is close to Gaussian its widths scale with σ (`--sigma`).
+  ↑ and ↓: at least 79 % of the samples within 2 % of the box's width from the upper or lower
+  bound. Three or four of the fourteen parameters are held by a bound in every sample, and
+  not the same ones: the electron and the hole mobility take turns at the upper bound, the
+  HTL's band edge sits at the upper bound in one sample and at the lower in another. There the
+  posterior is the prior's statement, not the data's; those parameters want the bounds widened or
+  the model changed, not an error bar. `k_direct` is settled only in the 0.2 Cl sample (below
+  2.4e-17); in the other two its 16–84 % range covers two of the box's three decades. The shunt
+  is measured only in the 0.2 Cl sample; in the other two the curves say it is above about
+  15 Ω m², and the posterior above that is the prior's, log-uniform up to the bound. `N_t` is
+  settled to a factor of 2.5 in all three, at 3–6e19 m⁻³.
+
+  The linearised `σ²(JᵀJ)⁻¹` at the fit is nowhere narrower than the posterior and is wider by
+  up to seven decades (0.1 Cl's `mu_n`, whose fit sits at its bound), or unbounded (`k_direct`
+  in all three; `N_t` and the shunt in 0.1 and 0.6 Cl; in 0.1 Cl also the HTL's mobility and
+  interface traps): away from the fit the misfit grows
+  faster than its curvature there says, and the bounds cut the rest. The remaining spread lies
+  along a few strongly correlated directions, different in each sample: 0.1 Cl the ETL's band
+  edge against its interface traps (−0.96); 0.2 Cl the HTL's band edge against the anion density
+  (−0.95) and the hole mobility (−0.93); 0.6 Cl the cation density against the ETL's band edge
+  (+0.96). The posteriors are narrow, but the parameters differ between the samples in ways
+  that are not a trend in the chlorine content (the mobilities swapping, the cation density at
+  1e20, 1e21, 4e21), so what they measure is the fit under these assumptions as much as the
+  cells. With σ the rms misfit the widths are a lower bound: the misfit is systematic and smooth
+  in the voltage, not independent noise, and where the posterior is close to Gaussian its widths
+  scale with σ (`--sigma`).
 
 When jaxdd and SimSS disagree, check SimSS first: its `errJ` at that voltage, its log for "No
 convergence", and a rerun at tight tolerances. The cases where SimSS was wrong so far are all in

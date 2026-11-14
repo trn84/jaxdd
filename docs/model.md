@@ -153,14 +153,36 @@ The generation profile (`Init_Generation_Profile`) comes in one of three ways, a
 
 ## Contacts and the applied voltage
 
-The contacts are ohmic. The work functions set the boundary values of the potential and the
-densities there; the applied voltage is split evenly between the two ends:
+The work functions set the boundary values of the potential and the equilibrium densities
+there; the applied voltage is split evenly between the two ends:
 
 ```
 V[0]    = (W_R − W_L)/2 + leftElec·V_int/2
 V[NP+1] = (W_L − W_R)/2 − leftElec·V_int/2
-n, p at the contacts: from N_c and the distance of the work function to E_c, E_v
+n_eq, p_eq at the contacts: from N_c and the distance of the work function to E_c, E_v
 ```
+
+A work function lies within its layer's gap (SIMsalabim refuses one outside it, and so does
+jaxdd), anywhere in it: away from the band edges the contact is a Schottky barrier of
+`W − E_c` for electrons and `E_v − W` for holes. `W_L` or `W_R` = `sfb` (semi-flat band) is the
+adjacent layer's equilibrium Fermi level from its net doping, `E_v − V_T·ln(N_c/(N_A − N_D))`
+p-doped, `E_c + V_T·ln(N_c/(N_D − N_A))` n-doped, mid-gap undoped (`ObtainWorkFunction`).
+
+With an infinite surface recombination velocity (`S_n_L`, `S_p_L`, `S_n_R`, `S_p_R` negative,
+SIMsalabim's default) the densities at the contacts are `n_eq`, `p_eq`. With a finite one
+(m/s, 0 blocking), the carrier's flux into the contact is `S·(n − n_eq)`:
+
+```
+J·n̂ = −q·S_n·(n − n_eq)     electrons
+J·n̂ =  q·S_p·(p − p_eq)     holes             n̂ the outward normal
+```
+
+which SIMsalabim's manual applies only while the carrier is extracted there (`n > n_eq`), the
+contact's density `n_eq` while it is injected (`Cont_Eq_Elec`, `Cont_Eq_Holes`). That is jaxdd's
+default (`build_device(..., surface="extraction")`); `surface="robin"` applies the condition in
+both directions, thermionic emission over the barrier at the velocity `S`. SimSS 5.36 has the
+sign of `S` wrong at two of the four ends ([differences.md](differences.md) §7); jaxdd's
+condition is the same at all four, mirror images of each other.
 
 `leftElec` is −1 when the left electrode is the cathode and 1 when it is the anode (a p-i-n cell
 in its own orientation, lit through its anode); with the anode on the left every current's sign is

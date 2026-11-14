@@ -145,7 +145,70 @@ def _stencils(dev: Device, xp=np) -> dict[str, jnp.ndarray]:
         out["tq"], out["tcwe"] = dev.trap_charge[i], dev.trap_cwe[i]
     if dev.interface is not None:  # on the edges (`Device.interface`), only where there are any
         out["ti"] = dict(dev.interface)
+    if dev.surface is not None:  # finite surface recombination at a contact (`Device.surface`)
+        out["ct"] = dict(dev.surface)
     return out
+
+
+#: A contact's branch (extraction or injection, `_contact_ends`) is changed during Newton only once
+#: the step is below this, or converged: changed at every step, Newton cycles between the two
+#: (docs/solver.md, "Contacts with finite surface recombination").
+BRANCH_FLIP_SIZE = 1e-3
+
+
+def _robin(first, last, z0, zN, s, Vt, B):
+    """Each contact's `ln n`, `ln p` where finite surface recombination holds (`_contact_ends`),
+    in `S` order (electrons left, holes left, electrons right, holes right), and its
+    equilibrium value, from the first and last interior point's states and the contacts'
+    equilibrium states `z0`, `zN` (the bounds)."""
+    ct = s["ct"]
+    S, a = ct["S"], ct["a"]
+    x_nL = (first[0] + s["offn"][0, 1] - z0[0] - s["offn"][0, 0]) / Vt
+    x_pL = (first[0] + s["offp"][0, 1] - z0[0] - s["offp"][0, 0]) / Vt
+    x_nR = (zN[0] + s["offn"][-1, 2] - last[0] - s["offn"][-1, 1]) / Vt
+    x_pR = (zN[0] + s["offp"][-1, 2] - last[0] - s["offp"][-1, 1]) / Vt
+    B_in = jnp.stack([B(x_nL), B(-x_pL), B(-x_nR), B(x_pR)])
+    B_out = jnp.stack([B(-x_nL), B(x_pL), B(x_nR), B(-x_pR)])
+    inner = jnp.stack([first[1], first[2], last[1], last[2]])
+    eq = jnp.stack([z0[1], z0[2], zN[1], zN[2]])
+    S_ = jnp.where(S >= 0, S, 0.0)
+    dens = (a * B_in * jnp.exp(inner) + S_ * jnp.exp(eq)) / (a * B_out + S_)
+    return jnp.log(dens), eq
+
+
+def _contact_branch(full, s, Vt, B):
+    """1 for each contact whose carrier is extracted at `full` (the condition's density above
+    equilibrium), else 0: the branch `_contact_ends` takes there."""
+    robin, eq = _robin(full[1], full[-2], full[0], full[-1], s, Vt, B)
+    return (robin > eq).astype(robin.dtype)
+
+
+def _contact_ends(first, last, z0, zN, s, Vt, B):
+    """The contacts' states `(V, ln n, ln p)` with finite surface recombination, from the first
+    and last interior point's and the contacts' equilibrium states `z0`, `zN` (the bounds).
+
+    The flux over the contact's interval (Scharfetter–Gummel) equals `S·(n − n_eq)` towards
+    the contact, `J·n̂ = q·S·(n − n_eq)` for holes and `−q·S·(n − n_eq)` for electrons, `n̂` the
+    outward normal; solved for the contact's density, which then depends on its neighbour's
+    unknowns alone, so the system stays block tridiagonal (`_assemble` adds the chain rule).
+    With `both` 0 (SimSS's manual) the condition holds only while the carrier is extracted
+    there, `n > n_eq`; injected, the density is `n_eq`: the larger of the two, or, during
+    Newton, the branch held in `ct["branch"]` (1 extraction). `S` < 0: infinite, `n_eq`."""
+    ct = s["ct"]
+    robin, eq = _robin(first, last, z0, zN, s, Vt, B)
+    held = ct.get("branch")
+    one_way = jnp.maximum(robin, eq) if held is None else jnp.where(held > 0, robin, eq)
+    ln = jnp.where(ct["S"] >= 0, jnp.where(ct["both"] > 0, robin, one_way), eq)
+    return (jnp.stack([z0[0], ln[0], ln[1]]), jnp.stack([zN[0], ln[2], ln[3]]))
+
+
+def _with_contacts(full, s, Vt, B=bernoulli):
+    """`full` (contacts included) with the contacts' densities of finite surface recombination
+    (`_contact_ends`), where there is any."""
+    if "ct" not in s:
+        return full
+    left, right = _contact_ends(full[1], full[-2], full[0], full[-1], s, Vt, B)
+    return full.at[0].set(left).at[-1].set(right)
 
 
 def _per_level(levels, *values):
@@ -304,6 +367,14 @@ def _assemble(full, s, Vt, g_frac, la, lc, B=bernoulli):
     each row in its three neighbours evaluated every flux twice, and the residual a third
     time; docs/solver.md). Equal to `_kernels` to round-off (tests).
     """
+    if "ct" in s:  # finite surface recombination: the contacts follow their neighbours
+
+        def ends(first, last):
+            return _contact_ends(first, last, full[0], full[-1], s, Vt, B)
+
+        J_left = jax.jacfwd(lambda y: ends(y, full[-2])[0])(full[1])
+        J_right = jax.jacfwd(lambda y: ends(full[1], y)[1])(full[-2])
+        full = _with_contacts(full, s, Vt, B)
     V, ln_n, ln_p = full[:, 0], full[:, 1], full[:, 2]
     n, p = jnp.exp(ln_n), jnp.exp(ln_p)
     # Per edge e = 0 … NP, between points e and e + 1.
@@ -376,6 +447,8 @@ def _assemble(full, s, Vt, g_frac, la, lc, B=bernoulli):
             return jnp.concatenate([jnp.zeros_like(d[..., :1]), d], -1)
 
         A, Bb, C = A + block(down), Bb + block(own), C + block(up)
+    if "ct" in s:  # the contacts' dependence on the first and last point (`_contact_ends`)
+        Bb = Bb.at[0].add(_mm(A[0], J_left)).at[-1].add(_mm(C[-1], J_right))
     F = jnp.stack([poisson * s["sP"], elec * s["sC"], hole * s["sC"]], -1)
     U = jnp.stack([
         jnp.stack([-Q * anion * s["sP"], zm, zm], -1),
@@ -526,8 +599,9 @@ def _poisson_row(left, mid, right, s, Vt, ref_left, ref_mid, ref_right, la, lc):
 
 
 def _on_points(s):
-    """The stencils on the interior points: without the interface traps' edges."""
-    return {k: v for k, v in s.items() if k != "ti"}
+    """The stencils on the interior points: without the interface traps' edges and the
+    contacts' surface recombination."""
+    return {k: v for k, v in s.items() if k not in ("ti", "ct")}
 
 
 _P_AXES = (0, 0, 0, 0, None, 0, 0, 0, None, None)
@@ -668,19 +742,37 @@ def solve_jv(dev: Device, voltages: np.ndarray, g_frac: float | None = None,
 
     def settle(y, logs, s, ion, Vint):
         """Newton to `tol`, or to the round-off floor: a step below `ROUND_OFF_FLOOR` that has
-        stopped falling for `STALL_STEPS` iterations."""
+        stopped falling for `STALL_STEPS` iterations. With finite surface recombination, each
+        contact's branch held from the start and changed only near convergence
+        (`BRANCH_FLIP_SIZE`); converged only where it holds at the solution."""
         bounds = bounds_at(Vint)
+        B = BERNOULLI[bernoulli_name]
+        contacts = "ct" in s
+
+        def branch(y):
+            full = jnp.concatenate([bounds[0][None], y, bounds[1][None]])
+            return _contact_branch(full, s, dev.Vt, B)
+
+        held = branch(y) if contacts else None
         sizes: list[float] = []
-        while len(sizes) < max_iter:
-            y, logs, size = _newton_step(y, logs, bounds, s, ion, dev.Vt, g_frac, bernoulli_name)
+        steps = 0
+        while steps < max_iter:
+            s_now = dict(s, ct=dict(s["ct"], branch=held)) if contacts else s
+            y, logs, size = _newton_step(y, logs, bounds, s_now, ion, dev.Vt, g_frac,
+                                         bernoulli_name)  # fmt: skip
+            steps += 1
             sizes.append(float(size))
-            if sizes[-1] < tol:
-                return y, logs, True, len(sizes)
             recent = sizes[-STALL_STEPS - 1 :]
-            if (len(recent) > STALL_STEPS and max(recent) < ROUND_OFF_FLOOR
-                    and min(recent[1:]) >= 0.1 * recent[0]):  # fmt: skip
-                return y, logs, True, len(sizes)
-        return y, logs, False, len(sizes)
+            done = sizes[-1] < tol or (
+                len(recent) > STALL_STEPS and max(recent) < ROUND_OFF_FLOOR
+                and min(recent[1:]) >= 0.1 * recent[0])  # fmt: skip
+            if contacts and (done or sizes[-1] < BRANCH_FLIP_SIZE):
+                now = branch(y)
+                if bool(jnp.any(now != held)):
+                    held, sizes, done = now, [], False
+            if done:
+                return y, logs, True, steps
+        return y, logs, False, steps
 
     for _ in range(max_iter):
         y, size = _poisson_step(y, bounds_at(first), s, ion, dev.Vt)
@@ -707,9 +799,9 @@ def solve_jv(dev: Device, voltages: np.ndarray, g_frac: float | None = None,
     for Vint in voltages:
         y_new, logs_new, ok, it = settle(y, logs, s, ion, float(Vint))
         bounds = bounds_at(float(Vint))
-        full = np.concatenate(
-            [np.asarray(bounds[0])[None], np.asarray(y_new), np.asarray(bounds[1])[None]]
-        )
+        full = np.asarray(_with_contacts(
+            jnp.concatenate([bounds[0][None], jnp.asarray(y_new), bounds[1][None]]), s, dev.Vt,
+            BERNOULLI[bernoulli_name]))  # fmt: skip
         # Each voltage starts from the last converged solution: a failed one costs that
         # voltage, not the rest of the scan.
         if ok and np.isfinite(full).all() and np.isfinite(np.asarray(logs_new)).all():

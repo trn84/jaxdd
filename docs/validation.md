@@ -66,6 +66,11 @@ so that the solver is never the larger error in what is computed from it.
   levels from an interface trap file at the left interface and one donor level at the right;
   within 2.5e-10 and 1.0e-10 of SimSS's scale at its tolerances of 1e-9, at most six Newton steps
   per voltage. The traps' charge moves these curves by 4–5 % of their scale.
+- **Finite surface recombination** (2026-11-14): 20 m/s for the electrons at the left contact
+  and 50 m/s for the holes at the right one on the 1 nm stack, within 5e-12 of SimSS's scale at
+  its tolerances of 1e-9, at every voltage but 1.05 V, where SimSS takes the contact's branch
+  from the voltage before ([differences.md](differences.md) §7). At the other two ends, where
+  SimSS 5.36 has the sign of `S` wrong, the device turned around gives the same curve to 1e-11.
 - **Series and shunt resistance** (2026-11-13): 2e-4 and 0.3 Ω m² on the 1 nm stack, the
   series resistance moving the voltage by 1.8 V at the top of the scan: `J_ext` within 2.2e-6 of
   SimSS's scale, `V_ext` within 4 µV.

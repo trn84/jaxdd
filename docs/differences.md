@@ -5,7 +5,7 @@ discretisation in the generalised potentials, the same integral current). Where 
 result is not the solution of those equations, or where SIMsalabim approximates something jaxdd
 can compute exactly, jaxdd takes the physically correct answer by default and says so here.
 Each difference has a way to reproduce SIMsalabim's number, so a comparison can always tell the
-two apart.
+two apart; §7 says why its two have none.
 
 ## 1 Convergence: SimSS stops early, jaxdd does not
 
@@ -131,6 +131,53 @@ interval before. On data at whole nanometres, which every file SIMsalabim ships 
 wavelength hits a data point and the result is exact either way. jaxdd interpolates within the
 bracketing interval (and extrapolates linearly beyond either end, as SimSS does); on data off the
 1 nm grid the two differ.
+
+## 7 Surface recombination at the contacts
+
+**What.** With a finite surface recombination velocity at a contact, SimSS 5.36's condition for
+the density there (`Cont_Eq_Elec`, `Cont_Eq_Holes`) is, with `F` the Scharfetter–Gummel flux of
+the contact's interval in `+x` (electron current or hole current over `q`):
+
+| | SimSS 5.36 | physical (`J·n̂ = ∓q·S·(n − n_eq)`) |
+|---|---|---|
+| electrons, left | `F = S·(n − n_eq)` | the same |
+| holes, right | `F = S·(p − p_eq)` | the same |
+| electrons, right | `F = S·(n − n_eq)` | `F = −S·(n − n_eq)` |
+| holes, left | `F = S·(p − p_eq)` | `F = −S·(p − p_eq)` |
+
+At the last two ends `S` has the wrong sign: there the condition is a source of carriers, not
+a sink. These are the minority carriers at the contacts in the usual orientation (the
+electrons at the anode, the holes at the cathode), where a finite `S` is usually set. Its
+switch "finite only while extracted, else `n_eq`" tests the same sign of the previous voltage's
+current (`Jn[0] > 0`, `Jn[NP] > 0`) at both ends, so at those two ends it holds the condition
+while the carrier is injected.
+
+**How large.** The 1 nm stack without band offsets (all three layers `E_c` 4, `E_v` 5.6 eV),
+`S_n_R = S_p_L`, SimSS 5.36 (2026-11-14): at 1e4, 1e2 and 1 m/s it stops with a floating-point
+exception (invalid operation, underflow, division by zero) during the scan; before it, at 1e2 m/s
+and 1.0 V, it reports a photocurrent of −1339 A/m² from a generation of 254 A/m². At 1e-2 and
+0 m/s it gives the blocking contact's curve (`V_oc` 0.998 V), as both conditions do at `S` = 0.
+jaxdd on that stack lit uniformly (`none_light` without offsets): the current at 1 V rises
+monotonically from 44 A/m² at an infinite `S` to 877 at 0, and the device turned around (`leftElec = 1`,
+the carriers then at the ends SimSS has right) gives the same curve to 1e-11
+(`tests`).
+
+**The switch, at the ends SimSS has right.** SimSS takes each contact's branch from the sign of
+`Jn[0]` (`Jp[NP]`) of the voltage before, held through all iterations of a voltage. At the
+first voltage past a change of direction it solves with the old branch, whose condition does not
+hold at its solution: on `tests/data/surface_light` (20 and 50 m/s for the majority carriers)
+SimSS reports 43.6 A/m² at 1.05 V, which jaxdd reproduces to 2e-9 with that branch held, and
+110.0 A/m² with the branch that holds. One voltage later both agree again; the gap depends on
+the voltage step.
+
+**jaxdd.** The physical condition at all four ends, finite while the carrier is extracted
+(SimSS's manual) or in both directions (`surface="robin"`); during Newton each contact's branch
+is held and changed near convergence until it holds at the solution ([solver.md](solver.md)).
+There is no switch to SimSS's numbers: at the two ends with the wrong sign they are not a
+solution of any steady state (currents above the generation, SimSS's own crashes), and the
+lagged branch is a property of SimSS's iteration, one voltage per change of direction. A
+comparison with SimSS sets `S` only at the electrons' left and the holes' right end and leaves
+out the voltage after a change of direction.
 
 ## Not differences
 

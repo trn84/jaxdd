@@ -118,9 +118,9 @@ def test_unsupported_input_is_refused_by_name(tmp_path) -> None:
         (tmp_path / f.name).write_text(f.read_text())
     setup_file = tmp_path / "simulation_setup.txt"
     text = setup_file.read_text()
-    assert "S_n_L = -1 " in text
-    setup_file.write_text(text.replace("S_n_L = -1 ", "S_n_L = 100 ", 1))
-    with pytest.raises(NotImplementedError, match="S_n_L"):
+    assert "Vdist = 1 " in text
+    setup_file.write_text(text.replace("Vdist = 1 ", "Vdist = 2 ", 1))
+    with pytest.raises(NotImplementedError, match="Vdist"):
         check_supported(read_setup(setup_file))
 
 
@@ -168,6 +168,160 @@ def test_jv_with_charged_bulk_traps_and_trap_files_reproduces_simss(case: str) -
     assert res.converged.all() and res.iterations.max() <= 8
     scale = np.max(np.abs(ref["Jext"]))
     assert np.max(np.abs(res.J - ref["Jext"])) < 1e-9 * scale
+
+
+def test_finite_surface_recombination_reproduces_simss() -> None:
+    """Stage B, the contacts: 20 m/s for the electrons at the left electrode and 50 m/s for the
+    holes at the right one (SimSS at tolerances of 1e-9), finite only while extracted. Within
+    1e-9 of SimSS's scale at every voltage but one: at 1.05 V the electrons at the left contact
+    turn from extracted to injected, and SimSS takes the contact's branch from the voltage before
+    (docs/differences.md); there jaxdd's current is the one whose branch holds at its solution."""
+    setup = read_setup(DATA / "surface_light" / "simulation_setup.txt")
+    check_supported(setup)
+    ref = np.genfromtxt(DATA / "surface_light" / "JV.dat", names=True)
+    res = solve_jv(build_device(setup), ref["Vint"], bernoulli_name="simss")
+    assert res.converged.all()
+    scale = np.max(np.abs(ref["Jext"]))
+    lagged = np.isclose(ref["Vint"], 1.05)
+    assert np.max(np.abs(res.J - ref["Jext"])[~lagged]) < 1e-9 * scale
+    assert res.J[lagged][0] > ref["Jext"][lagged][0] + 50.0  # 110.0 against SimSS's 43.6 A/m²
+
+
+def _texts(case: str) -> dict[str, str]:
+    return {f.name: f.read_text() for f in (DATA / case).iterdir() if f.suffix == ".txt"}
+
+
+def _put(text: str, name: str, value: str) -> str:
+    """`text` with the parameter `name` set to `value`, its comment kept."""
+    import re
+
+    new, count = re.subn(rf"^{name} = \S+", f"{name} = {value}", text, flags=re.M)
+    assert count == 1, name
+    return new
+
+
+def _mirrored(texts: dict[str, str]) -> dict[str, str]:
+    """A three-layer input turned around: the layers reversed, the work functions and the
+    surface recombination velocities exchanged, the left electrode the other one."""
+    import re
+
+    t = dict(texts)
+    setup = t["simulation_setup.txt"]
+
+    def get(name):
+        return re.search(rf"^{name} = (\S+)", setup, flags=re.M).group(1)
+
+    files = [get(f"l{k}") for k in (1, 2, 3)]
+    pairs = [("W_L", "W_R"), ("S_n_L", "S_n_R"), ("S_p_L", "S_p_R")]
+    values = {name: get(name) for pair in pairs for name in pair}
+    for k, f in zip((1, 2, 3), reversed(files), strict=True):
+        setup = _put(setup, f"l{k}", f)
+    for a, b in pairs:
+        setup = _put(_put(setup, a, values[b]), b, values[a])
+    t["simulation_setup.txt"] = _put(setup, "leftElec", str(-int(get("leftElec"))))
+    return t
+
+
+def test_surface_recombination_at_the_other_two_ends_is_the_mirror_image() -> None:
+    """The two ends where SimSS 5.36 has the sign of `S` wrong (the electrons at the right
+    electrode, the holes at the left; docs/differences.md): the uniformly lit 1 nm stack without
+    band offsets, 100 m/s there, against the same device turned around (`leftElec = 1`), where
+    the same carriers meet `S_n_L` and `S_p_R`, the ends SimSS has right. The same curve to
+    1e-11, and the minority carriers' recombination at the contacts costs most of the current
+    at 1 V (an infinite `S` 44 A/m² of 877)."""
+    from jaxdd.simss_input import setup_from_texts
+
+    t = _texts("none_light")
+    for f in ("L1_parameters.txt", "L3_parameters.txt"):
+        t[f] = _put(_put(t[f], "E_c", "4"), "E_v", "5.6")
+    finite = dict(t)
+    setup = _put(_put(t["simulation_setup.txt"], "S_n_R", "1e2"), "S_p_L", "1e2")
+    finite["simulation_setup.txt"] = setup
+    V = np.round(np.arange(-0.2, 1.2 + 1e-9, 0.05), 6)
+    curves = {}
+    for name, texts in (("infinite", t), ("finite", finite), ("mirrored", _mirrored(finite))):
+        res = solve_jv(build_device(setup_from_texts(texts)), V, bernoulli_name="simss")
+        assert res.converged.all(), name
+        curves[name] = res.J
+    scale = np.max(np.abs(curves["finite"]))
+    assert np.max(np.abs(curves["finite"] - curves["mirrored"])) < 1e-11 * scale
+    at_1V = np.isclose(V, 1.0)
+    assert curves["finite"][at_1V][0] < 10 * curves["infinite"][at_1V][0] < 0
+
+
+@pytest.mark.parametrize("surface", ["extraction", "robin"])
+def test_the_contacts_jacobian_is_autodiff(surface: str) -> None:
+    """`_assemble`'s blocks with finite surface recombination (each contact's density a function
+    of its neighbour's unknowns, the chain rule added to the first and last block) are
+    `jax.jacfwd` of its residual, at a perturbed state."""
+    from jaxdd import solver as S
+    from jaxdd.solver import _assemble, _ion_setup, _stencils, bernoulli
+
+    dev = build_device(read_setup(DATA / "surface_light" / "simulation_setup.txt"),
+                       surface=surface)  # fmt: skip
+    s = jax.tree_util.tree_map(jnp.asarray, _stencils(dev))
+    y0 = S._initial(dev, 0.6)
+    NP = len(dev.x) - 2
+    noise = np.zeros_like(y0)
+    noise[1:-1] = np.random.default_rng(3).normal(0, 1, (NP, 3)) * np.array([dev.Vt, 1.0, 1.0])
+    full = jnp.asarray(y0 + noise)
+    ion = jax.tree_util.tree_map(jnp.asarray, _ion_setup(dev))
+    la, lc = S._ion_logs(full[:, 0], ion)
+
+    def residual(y):
+        return _assemble(full.at[1:-1].set(y), s, dev.Vt, dev.G_frac, la, lc, bernoulli)[0]
+
+    dense = np.asarray(jax.jacfwd(residual)(full[1:-1]))
+    _, A, B, C, _ = (np.asarray(a) for a in _assemble(full, s, dev.Vt, dev.G_frac, la, lc,
+                                                      bernoulli))  # fmt: skip
+    i = np.arange(NP)
+    rows = np.max(np.abs(dense), axis=(2, 3))[:, :, None]
+    for block, shift in ((B, 0), (A[1:], -1), (C[:-1], 1)):
+        k = i[max(0, -shift) : NP - max(0, shift)]
+        assert np.max(np.abs(block - dense[k, :, k + shift, :]) / rows[k]) < 1e-11
+    assert np.abs(B[0] - dense[0, :, 0, :]).max() < 1e-11 * rows[0].max()
+
+
+def test_sfb_work_functions_and_the_gap_check() -> None:
+    """'sfb' gives each work function the adjacent layer's equilibrium Fermi level (mid-gap for
+    an undoped one, as SIMsalabim's `ObtainWorkFunction`); a work function outside its layer's
+    gap is refused."""
+    from jaxdd.simss_input import setup_from_texts
+
+    t = _texts("thin_l1_light")
+    t["L3_parameters.txt"] = _put(t["L3_parameters.txt"], "N_A", "1e24")
+    sfb = dict(t, **{"simulation_setup.txt": _put(_put(t["simulation_setup.txt"], "W_L", "sfb"),
+                                                  "W_R", "sfb")})  # fmt: skip
+    dev = build_device(setup_from_texts(sfb))
+    assert abs(dev.W_L - 0.5 * (4 + 6.6)) < 1e-12
+    assert abs(dev.W_R - (5.6 - dev.Vt * np.log(2.2237571e24 / 1e24))) < 1e-12
+    bad = dict(t, **{"simulation_setup.txt": _put(t["simulation_setup.txt"], "W_L", "3.9")})
+    with pytest.raises(ValueError, match="W_L"):
+        build_device(setup_from_texts(bad))
+
+
+def test_the_gradient_in_the_surface_recombination_is_finite_differences() -> None:
+    """The curve's derivative in both finite surface recombination velocities, through
+    `device_tree` and the converged solution, against central finite differences (a step of
+    1e-3: close to the open-circuit voltage the curve's round-off is 1e-7 A/m²)."""
+    from jaxdd.batch import device_tree, solve_batch
+    from jaxdd.device import device_parameters
+
+    structure, params = device_parameters(read_setup(DATA / "surface_light" /
+                                                     "simulation_setup.txt"))  # fmt: skip
+    V = np.round(np.arange(-0.1, 1.0 + 1e-9, 0.1), 6)
+    w = jnp.asarray(np.random.default_rng(0).normal(size=len(V)))
+
+    def loss(a):
+        p = dict(params, S_n_L=params["S_n_L"] * jnp.exp(a), S_p_R=params["S_p_R"] * jnp.exp(-a))
+        batch = jax.tree_util.tree_map(lambda v: v[None], device_tree(structure, p))
+        J, ok, _ = solve_batch(batch, V, strict=True)
+        return jnp.sum(w * jnp.where(ok[0], J[0], 0.0))
+
+    _, by_jvp = jax.jvp(loss, (0.0,), (1.0,))
+    h = 1e-3
+    fd = (float(loss(h)) - float(loss(-h))) / (2 * h)
+    assert abs(float(by_jvp) - fd) < 1e-5 * abs(fd)
 
 
 def test_series_and_shunt_resistance_are_simss_external_circuit() -> None:
@@ -262,7 +416,7 @@ def test_a_batch_mixes_devices_with_and_without_interface_traps() -> None:
     from jaxdd.batch import prepare, solve_batch
 
     cases = ["thin_l1_light", "iface_charged_light", "iface_ions_light", "bulk_acceptor_light",
-             "trapfiles_light"]  # fmt: skip
+             "trapfiles_light", "surface_light"]  # fmt: skip
     devices = [build_device(read_setup(DATA / c / "simulation_setup.txt")) for c in cases]
     V = np.round(np.arange(-0.2, 1.3 + 1e-9, 0.1), 6)
     J, ok, _ = solve_batch(prepare(devices), V, bernoulli_name="simss")
@@ -668,7 +822,7 @@ def test_the_bordered_system_and_its_transpose_are_solved() -> None:
     ["thin_l1_light", "frozen_1e17_x1_thin_light", "steady_1e17_thin_light",
      "frozen_thick_htl_dark", "iface_ions_light", "pin_iface_light", "resist_light",
      "calc_light", "none_light", "pin_anode_left_light", "bulk_acceptor_light",
-     "trapfiles_light"],
+     "trapfiles_light", "surface_light"],
 )  # fmt: skip
 def test_the_device_in_jax_is_numpys(case: str) -> None:
     """`batch.device_tree` (the device in `jax.numpy` from its structure and parameters) gives

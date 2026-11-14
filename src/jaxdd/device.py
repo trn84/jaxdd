@@ -28,6 +28,7 @@ from jaxdd.simss_input import Layer, Setup
 
 __all__ = [
     "GRID_SPLITS",
+    "SURFACE_MODELS",
     "Device",
     "Structure",
     "build_device",
@@ -236,6 +237,12 @@ class Device:
     # is charged (else 0), and its charge when empty (1 a donor, 0 an acceptor). None without.
     trap_charge: np.ndarray | None = None
     trap_cwe: np.ndarray | None = None
+    # Finite surface recombination at the contacts (SIMsalabim's `S_n_L`, `S_p_L`, `S_n_R`,
+    # `S_p_R`, m/s, negative for infinite): `S` the four, `a` the first and last interval's
+    # `V_T·μ/(L·h)` for electrons and holes in the same order, `both` 1 where the condition holds
+    # in both directions (`surface = "robin"`), 0 only for extraction (SimSS's manual). None
+    # where every one is infinite.
+    surface: dict | None = None
 
 
 @dataclass(frozen=True)
@@ -264,12 +271,26 @@ class Structure:
     bulk_trap_type: np.ndarray = None  # per layer: -1 acceptor, 0 neutral, 1 donor
     bulk_trap_file: np.ndarray = None  # per layer: the levels from `bulkTrapFile`
     int_trap_file: np.ndarray = None  # per layer: the levels from `intTrapFile` (not the last)
+    #: The contacts with finite surface recombination: None (all infinite), "extraction" or
+    #: "robin" (`SURFACE_MODELS`).
+    surface: str | None = None
+    sfb: tuple[bool, bool] = (False, False)  # `W_L`, `W_R` = 'sfb': from the adjacent layer
     #: The generation: "file" (a profile, `gen_x`, `gen_G`), "none" (uniform, each layer's
     #: `G_ehp`) or "calc" (the transfer-matrix method, `optics.optical_data`).
     gen_mode: str = "file"
     optics: dict | None = None
     left_elec: int = -1
 
+
+#: How finite surface recombination at a contact (`S_n_L`, …, ≥ 0) acts: "extraction" as
+#: SIMsalabim's manual states it, `J·n̂ = q·S·(n − n_eq)` while the carrier is extracted there
+#: and the density `n_eq` while it is injected; "robin" the same condition in both directions
+#: (thermionic emission at a Schottky contact). Both with the physical sign at all four ends,
+#: which SimSS 5.36 has at two of them (docs/differences.md).
+SURFACE_MODELS = ("extraction", "robin")
+
+#: The surface recombination velocities, in `S` order (`Device.surface`).
+SURFACE_PARAMETERS = ("S_n_L", "S_p_L", "S_n_R", "S_p_R")
 
 #: A device's parameters per layer (`device_parameters`), as SIMsalabim names them.
 LAYER_PARAMETERS = (
@@ -311,17 +332,31 @@ def _level_table(layers, files, single_E, read, kind):
     return E_tab, N_tab
 
 
-def device_parameters(setup: Setup, grid_split: str = "exact") -> tuple[Structure, dict]:
+def _sfb(N_A, N_D, E_c, E_v, N_c, Vt, xp=np):
+    """SIMsalabim's `ObtainWorkFunction` for 'sfb' (semi-flat band): the adjacent layer's
+    equilibrium Fermi level from its net doping, mid-gap where there is none."""
+    net = N_A - N_D
+    safe = xp.where(net == 0, 1.0, xp.abs(net))
+    n_type = xp.where(net < 0, E_c + Vt * xp.log(N_c / safe), 0.5 * (E_c + E_v))
+    return xp.where(net > 0, E_v - Vt * xp.log(N_c / safe), n_type)
+
+
+def device_parameters(setup: Setup, grid_split: str = "exact",
+                      surface: str = "extraction") -> tuple[Structure, dict]:  # fmt: skip
     """A SIMsalabim input (Stage A, `check_supported` first) as its `Structure` and its
     parameters: a dict of `LAYER_PARAMETERS`, each an array over the layers, and `T`, `W_L`,
     `W_R`, `G_frac`, `V_pre`, the generation profile's file (`gen_x`, `gen_G`) and the external
     circuit's `R_series` and `R_shunt` (Ω m², `R_shunt` ≤ 0 none). Trap files add their levels,
     layers × levels: `bulk_trap_E`, `bulk_trap_N` (eV, m⁻³) and `int_trap_E`, `int_trap_N`
-    (m⁻²), used on the layers whose file names them. `grid_split`
+    (m⁻²), used on the layers whose file names them; the surface recombination velocities
+    `S_n_L`, `S_p_L`, `S_n_R`, `S_p_R` (m/s, negative infinite), acting as `surface` says
+    (`SURFACE_MODELS`). `grid_split`
     as in `build_device`. Changing a parameter keeps the structure: a trap density set on a
     layer without traps, or an ion density on a layer without ions, does nothing; the points
     per layer stay those of the input's thicknesses."""
     layers = setup.layers
+    if surface not in SURFACE_MODELS:
+        raise ValueError(f"surface {surface!r}: one of {SURFACE_MODELS}")
     if setup.i("leftElec") not in (-1, 1):
         raise ValueError("leftElec must be -1 (the left electrode the cathode) or 1 (the anode)")
     NP, grad = setup.i("NP"), setup.f("grad")
@@ -347,8 +382,16 @@ def device_parameters(setup: Setup, grid_split: str = "exact") -> tuple[Structur
         int_trap_type=np.array([int(float(ly.raw.get("intTrapType", "0"))) for ly in layers]),
         bulk_trap_type=np.array([int(float(ly.raw.get("bulkTrapType", "0"))) for ly in layers]),
         bulk_trap_file=bulk_file, int_trap_file=int_file,
+        surface=surface if any(float(setup.raw.get(k, "-1")) >= 0 for k in SURFACE_PARAMETERS)
+        else None,
+        sfb=tuple(setup.raw[k].strip().lower() == "sfb" for k in ("W_L", "W_R")),
         left_elec=setup.i("leftElec"),
     )  # fmt: skip
+    # SIMsalabim's checks: each work function within its layer's gap.
+    for k, ly, sfb in (("W_L", layers[0], structure.sfb[0]), ("W_R", layers[-1], structure.sfb[1])):
+        if not sfb and not ly.f("E_c") <= setup.f(k) <= ly.f("E_v"):
+            raise ValueError(f"{k} = {setup.f(k)} eV: outside the gap of its layer "
+                             f"({ly.f('E_c')} to {ly.f('E_v')} eV)")  # fmt: skip
     extra = {}
     if bulk_file.any():
         extra["bulk_trap_E"], extra["bulk_trap_N"] = _level_table(
@@ -413,7 +456,11 @@ def device_parameters(setup: Setup, grid_split: str = "exact") -> tuple[Structur
 
     params = {name: np.array([value(ly, name) for ly in layers]) for name in LAYER_PARAMETERS}
     params.update(
-        T=setup.f("T"), W_L=setup.f("W_L"), W_R=setup.f("W_R"), G_frac=setup.f("G_frac"),
+        T=setup.f("T"), G_frac=setup.f("G_frac"),
+        # 'sfb' (`Structure.sfb`) is computed in `device_arrays`; the value here is unused.
+        W_L=0.0 if structure.sfb[0] else setup.f("W_L"),
+        W_R=0.0 if structure.sfb[1] else setup.f("W_R"),
+        **{k: float(setup.raw.get(k, "-1")) for k in SURFACE_PARAMETERS},
         V_pre=setup.f("Vpre"), gen_x=table[:, 0].copy(), gen_G=table[:, 1].copy(),
         R_series=float(setup.raw.get("R_series", "0")),
         R_shunt=float(setup.raw.get("R_shunt", "-1")),
@@ -561,6 +608,19 @@ def device_arrays(structure: Structure, p: dict, xp=np) -> Device:
 
     dos = Vt * xp.log(N_c / N_c[0])
     W_L, W_R = p["W_L"], p["W_R"]
+    for side, k in ((0, 0), (1, -1)):
+        if st.sfb[side]:
+            W = _sfb(p["N_A"][k], p["N_D"][k], p["E_c"][k], p["E_v"][k], p["N_c"][k], Vt, xp)
+            W_L, W_R = (W, W_R) if side == 0 else (W_L, W)
+    surface = None
+    if st.surface is not None:
+        mu_n, mu_p = interleaved("mu_n", "nu_int_n"), interleaved("mu_p", "nu_int_p")
+        a_L, a_R = Vt / (total * h[0]), Vt / (total * h[NP])
+        surface = {
+            "S": xp.stack([xp.asarray(p.get(k, -1.0), dtype=float) for k in SURFACE_PARAMETERS]),
+            "a": xp.stack([a_L * mu_n[0], a_L * mu_p[0], a_R * mu_n[NP], a_R * mu_p[NP]]),
+            "both": xp.asarray(1.0 if st.surface == "robin" else 0.0),
+        }
     interface = None
     if st.int_traps is not None and st.int_traps.any():
         interface = _interface(st, p, h, total, Vt, xp)
@@ -586,12 +646,13 @@ def device_arrays(structure: Structure, p: dict, xp=np) -> Device:
         anion_fixed=ions["anion"][2], cation_fixed=ions["cation"][2],
         pre_cond=st.pre_cond, V_pre=p["V_pre"], fix_ions=st.fix_ions, interface=interface,
         R_series=p.get("R_series", 0.0), R_shunt=p.get("R_shunt", -1.0), left_elec=st.left_elec,
-        trap_charge=trap_charge, trap_cwe=trap_cwe,
+        trap_charge=trap_charge, trap_cwe=trap_cwe, surface=surface,
     )  # fmt: skip
 
 
-def build_device(setup: Setup, grid_split: str = "exact") -> Device:
+def build_device(setup: Setup, grid_split: str = "exact", surface: str = "extraction") -> Device:
     """The device of a SIMsalabim input (Stage A, `check_supported` first), in NumPy. `grid_split`
     "simss" shares the grid points among the layers as SimSS's 10-byte reals do
-    (`layer_points`; docs/differences.md §5), for a comparison point by point."""
-    return device_arrays(*device_parameters(setup, grid_split))
+    (`layer_points`; docs/differences.md §5), for a comparison point by point; `surface` how
+    finite surface recombination at the contacts acts (`SURFACE_MODELS`)."""
+    return device_arrays(*device_parameters(setup, grid_split, surface))

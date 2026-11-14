@@ -29,11 +29,13 @@ from jaxdd.constants import Q
 from jaxdd.device import Device, Structure, device_arrays
 from jaxdd.solver import (
     BERNOULLI,
+    BRANCH_FLIP_SIZE,
     ION_LOG_CAP,
     ROUND_OFF_FLOOR,
     STALL_STEPS,
     STEP_CAPS,
     _assemble,
+    _contact_branch,
     _interface_points,
     _ion_constraints,
     _ion_logs,
@@ -43,6 +45,8 @@ from jaxdd.solver import (
     _poisson_val,
     _recombination,
     _stencils,
+    _with_contacts,
+    bernoulli,
     step_caps,
 )
 from jaxdd.sweep import block_sweep
@@ -107,6 +111,9 @@ def prepare(devices: list[Device]) -> dict:
     if with_traps:  # the others with none: zero on every edge
         for t in trees:
             t["s"].setdefault("ti", {k: np.zeros_like(v) for k, v in with_traps[0].items()})
+    if any("ct" in t["s"] for t in trees):  # finite surface recombination; the others infinite
+        for t in trees:
+            t["s"].setdefault("ct", {"S": -np.ones(4), "a": np.ones(4), "both": np.asarray(0.0)})
     if any("tq" in t["s"] for t in trees):  # charged bulk traps; the others none
         for t in trees:
             t["s"].setdefault("tq", np.zeros_like(t["s"]["Nt"]))
@@ -154,8 +161,11 @@ def _initial(d, Vint):
     return jnp.stack([V, ln_n, ln_p], -1)
 
 
-def _current(d, full, g_frac):
-    """SIMsalabim's `Calc_Curr_Int` for both carriers, averaged (`Calc_All_Currents`)."""
+def _current(d, full, g_frac, B=bernoulli):
+    """SIMsalabim's `Calc_Curr_Int` for both carriers, averaged (`Calc_All_Currents`); the
+    contacts' densities of finite surface recombination from `full`'s neighbours (Bernoulli
+    function `B`)."""
+    full = _with_contacts(full, d["s"], d["Vt"], B)
     V, n, p = full[:, 0], jnp.exp(full[:, 1]), jnp.exp(full[:, 2])
     Vt, x, h, L = d["Vt"], d["x"], d["h"], d["L"]
     NP = x.shape[0] - 2
@@ -367,7 +377,7 @@ def _tangent(B, valid, y, logs, params, params_dot):
     def current(y, params):
         d, _, _, Vint, g_frac = params
         bounds = _bounds(d, Vint)
-        return _current(d, jnp.concatenate([bounds[0][None], y, bounds[1][None]]), g_frac)
+        return _current(d, jnp.concatenate([bounds[0][None], y, bounds[1][None]]), g_frac, B)
 
     _, J_dot = jax.jvp(current, (y, params), (y_dot, params_dot))
     return y_dot, logs_dot, jnp.where(valid, J_dot, 0.0)
@@ -378,8 +388,16 @@ def _newton_loop(y, logs, d, s, ion, Vint, g_frac, B, tol, max_iter, strict):
     bounds = _bounds(d, Vint)
     Vt = d["Vt"]
 
-    def step(y, logs):
-        F, g, blocks = _system(y, logs, bounds, s, ion, Vt, g_frac, B)
+    contacts = "ct" in s
+
+    def held(branch):  # the stencils with each contact's branch held (`solver._contact_ends`)
+        return dict(s, ct=dict(s["ct"], branch=branch)) if contacts else s
+
+    def full_of(y):
+        return jnp.concatenate([bounds[0][None], y, bounds[1][None]])
+
+    def step(y, logs, branch):
+        F, g, blocks = _system(y, logs, bounds, held(branch), ion, Vt, g_frac, B)
         delta, d_logs = _bordered_solve(blocks, -F, -g)
         caps = step_caps(Vt)
         stepv = jnp.clip(delta, -caps, caps)
@@ -396,7 +414,7 @@ def _newton_loop(y, logs, d, s, ion, Vint, g_frac, B, tol, max_iter, strict):
         return new, logs + d_logs, size
 
     def current(y):
-        return _current(d, jnp.concatenate([bounds[0][None], y, bounds[1][None]]), g_frac)
+        return _current(d, jnp.concatenate([bounds[0][None], y, bounds[1][None]]), g_frac, B)
 
     hist0 = jnp.full(STALL_STEPS + 1, jnp.inf)
     J0 = jnp.full(STALL_STEPS + 1, jnp.inf)
@@ -425,19 +443,28 @@ def _newton_loop(y, logs, d, s, ion, Vint, g_frac, B, tol, max_iter, strict):
         return (size < tol) | stalled | settled | quadratic
 
     def body(carry):
-        y, logs, size_hist, J_hist, it, _ = carry
-        y, logs, size = step(y, logs)
+        y, logs, size_hist, J_hist, it, _, branch = carry
+        y, logs, size = step(y, logs, branch)
         size_hist = jnp.roll(size_hist, -1).at[-1].set(size)
         J_hist = jnp.roll(J_hist, -1).at[-1].set(current(y))
         it = it + 1
-        return y, logs, size_hist, J_hist, it, converged(size_hist, J_hist, it)
+        done = converged(size_hist, J_hist, it)
+        if contacts:  # a branch that does not hold near the solution: changed, histories anew
+            now = _contact_branch(full_of(y), s, Vt, B)
+            flip = (done | (size < BRANCH_FLIP_SIZE)) & jnp.any(now != branch)
+            branch = jnp.where(flip, now, branch)
+            size_hist = jnp.where(flip, hist0, size_hist)
+            J_hist = jnp.where(flip, J0, J_hist)
+            done = done & ~flip
+        return y, logs, size_hist, J_hist, it, done, branch
 
     def cond(carry):
-        *_, it, done = carry
+        *_, it, done, _ = carry
         return (~done) & (it < max_iter)
 
-    y, logs, _, J_hist, it, done = jax.lax.while_loop(
-        cond, body, (y, logs, hist0, J0, 0, jnp.array(False))
+    branch0 = _contact_branch(full_of(y), s, Vt, B) if contacts else jnp.zeros(4)
+    y, logs, _, J_hist, it, done, _ = jax.lax.while_loop(
+        cond, body, (y, logs, hist0, J0, 0, jnp.array(False), branch0)
     )
     return y, logs, J_hist[-1], done, it
 

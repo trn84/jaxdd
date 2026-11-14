@@ -37,6 +37,11 @@ and 5.1 eV), two acceptor levels at the left interface from `int_traps.txt` (1.5
 4.6 and 5.0 eV) and one donor level of 3e14 m⁻² at 4.7 eV at the right interface. Both SimSS
 5.36 at `tolPois = tolDens = 1e-9`.
 
+`surface_light/`: `thin_l1_light` with finite surface recombination for the majority carriers,
+20 m/s for the electrons at the left contact and 50 m/s for the holes at the right one (`S_n_L`,
+`S_p_R`, the two ends SimSS 5.36 has right, docs/differences.md §7); SimSS 5.36 at
+`tolPois = tolDens = 1e-9`.
+
 `resist_light/`: `thin_l1_light` with a series resistance of 2e-4 Ω m² and a shunt of 0.3 Ω m²
 (Stage B); SimSS 5.36.
 

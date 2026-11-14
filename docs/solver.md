@@ -345,6 +345,37 @@ normalisations to ±5 (a factor e⁵). This is SIMsalabim's limit on the potenti
 converges quadratically. The same caps (`solver.STEP_CAPS`, `ION_LOG_CAP`) hold the batched
 scan's extrapolated start.
 
+### Contacts with finite surface recombination
+
+With a finite surface recombination velocity a contact's density is no longer fixed by the
+work function, but set by the condition `F = ±S·(n − n_eq)` on the flux of the contact's
+interval ([model.md](model.md)). That flux is linear in the contact's density and in its
+neighbour's, so the condition solves for the contact's density in closed form, e.g. at the left
+electrode for electrons
+
+```
+n[0] = (a·B(x)·n[1] + S·n_eq) / (a·B(−x) + S)        a = V_T·μ/(L·h[0]),  x = ΔVgn/V_T
+```
+
+(`solver._contact_ends`). The contact's state is then a function of the first interior point's
+unknowns alone; it enters the residual through `full` as the fixed contact did, and its
+derivative by the chain rule, `B[0] += A[0]·∂z₀/∂y₁` (and `B[NP] += C[NP]·∂z_{NP+1}/∂y_NP`), each
+3 × 3 by `jax.jacfwd`. The system stays block tridiagonal, the sweep and its kernels unchanged.
+
+Where the condition holds only while the carrier is extracted (the default), the contact's
+density is the larger of that value and `n_eq`: continuous, but with a kink where the flux
+changes direction, and a strong one, the slope of the flux in the neighbour's density falling
+from `a` (10⁵ m/s on a 1 nm layer) to about `S`. Close to it Newton cycles between the two
+branches without end (on `tests/data/surface_light` at 1.05 V, a two-cycle of step 0.40 for 200
+iterations). Smoothing the kink does not help: in the injected branch a relative change of `ε`
+in the contact's density moves the flux by `a·n_eq·ε`, so even `ε` = 1e-4 left the curve 7e-3 of
+its scale off. So each contact's branch is held: chosen from the start of each voltage, kept
+through the iterations, and changed only once the step is below `BRANCH_FLIP_SIZE` (1e-3) or
+converged, where it is checked against the solution; after a change the convergence history
+starts anew (`solve_jv` and the batch's `_newton_loop`). A voltage is converged only where every
+contact's branch holds at its solution. On `surface_light` every voltage converges in at most 18
+steps. Devices without a finite `S` have no contact state and skip all of it, to the bit.
+
 ## When is a voltage converged?
 
 The step size is the largest of `|ΔV|/V_T`, `|Δ ln n|` and `|Δ ln p|` (each weighted by

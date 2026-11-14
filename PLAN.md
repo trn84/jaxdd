@@ -201,9 +201,10 @@ What jaxdd solves today ("Stage A") is in [docs/overview.md](docs/overview.md). 
   on its own test devices before the next. Done: bulk and interface traps, neutral or
   charged, one level or several from trap files; series and shunt resistance, SimSS's external
   circuit; the generation profile by the transfer-matrix method, differentiable in the
-  thicknesses, and uniform; the left electrode as the anode ([docs/model.md](docs/model.md)).
-  Next: Schottky contacts and finite surface recombination; the remaining recombination and
-  mobility options.
+  thicknesses, and uniform; the left electrode as the anode; the contacts' finite surface
+  recombination and `sfb` work functions ([docs/model.md](docs/model.md)). Next: the remaining
+  recombination and mobility options (Langevin, field- and density-dependent mobility,
+  field-dependent generation).
   At the end, a SimSS input runs on jaxdd or is refused with the missing feature named.
 - **Stage C: transients (ZimT).** Time-dependent drift-diffusion with mobile ions: scan-rate
   hysteresis, transient photocurrent and photovoltage, impedance. Its own plan when Stage B is

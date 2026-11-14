@@ -324,6 +324,50 @@ def test_the_gradient_in_the_surface_recombination_is_finite_differences() -> No
     assert abs(float(by_jvp) - fd) < 1e-5 * abs(fd)
 
 
+def test_langevin_recombination_reproduces_simss() -> None:
+    """Stage B, Langevin recombination in all three layers (`preLangevin` 1e-2 in the absorber,
+    1e-3 in the transport layers; SimSS at tolerances of 1e-9), which moves the curve by 2 % of
+    its scale. With the mobilities SimSS takes (`langevin="simss"`) within 1e-9 of its scale; with
+    each point's own layer's (the default; docs/differences.md §8) 3.7e-5 off, the last point of
+    each layer but the last."""
+    setup = read_setup(DATA / "langevin_light" / "simulation_setup.txt")
+    check_supported(setup)
+    ref = np.genfromtxt(DATA / "langevin_light" / "JV.dat", names=True)
+    scale = np.max(np.abs(ref["Jext"]))
+    gap = {}
+    for langevin in ("simss", "layer"):
+        res = solve_jv(build_device(setup, langevin=langevin), ref["Vint"], bernoulli_name="simss")
+        assert res.converged.all()
+        gap[langevin] = np.max(np.abs(res.J - ref["Jext"])) / scale
+    assert gap["simss"] < 1e-9
+    assert 1e-5 < gap["layer"] < 1e-4
+
+
+def test_the_gradient_in_the_langevin_prefactor_is_finite_differences() -> None:
+    """The curve's derivative in the absorber's `preLangevin`, through `device_tree` and the
+    converged solution, against central finite differences."""
+    from jaxdd.batch import device_tree, solve_batch
+    from jaxdd.device import device_parameters
+
+    structure, params = device_parameters(read_setup(DATA / "langevin_light" /
+                                                     "simulation_setup.txt"))  # fmt: skip
+    V = np.round(np.arange(-0.1, 1.0 + 1e-9, 0.1), 6)
+    w = jnp.asarray(np.random.default_rng(0).normal(size=len(V)))
+
+    def loss(a):
+        pre = jnp.asarray(params["preLangevin"]).at[1].multiply(jnp.exp(a))
+        batch = jax.tree_util.tree_map(
+            lambda v: v[None], device_tree(structure, dict(params, preLangevin=pre))
+        )
+        J, ok, _ = solve_batch(batch, V, strict=True)
+        return jnp.sum(w * jnp.where(ok[0], J[0], 0.0))
+
+    _, by_jvp = jax.jvp(loss, (0.0,), (1.0,))
+    h = 1e-3
+    fd = (float(loss(h)) - float(loss(-h))) / (2 * h)
+    assert abs(float(by_jvp) - fd) < 1e-5 * abs(fd)
+
+
 def test_series_and_shunt_resistance_are_simss_external_circuit() -> None:
     """Stage B: SimSS's external circuit, `J_ext = J + V_int/R_shunt`, `V_ext = V_int +
     J_ext·R_series`, with 2e-4 and 0.3 Ω m² (the series resistance moves the voltage by 1.8 V at
@@ -822,7 +866,7 @@ def test_the_bordered_system_and_its_transpose_are_solved() -> None:
     ["thin_l1_light", "frozen_1e17_x1_thin_light", "steady_1e17_thin_light",
      "frozen_thick_htl_dark", "iface_ions_light", "pin_iface_light", "resist_light",
      "calc_light", "none_light", "pin_anode_left_light", "bulk_acceptor_light",
-     "trapfiles_light", "surface_light"],
+     "trapfiles_light", "surface_light", "langevin_light"],
 )  # fmt: skip
 def test_the_device_in_jax_is_numpys(case: str) -> None:
     """`batch.device_tree` (the device in `jax.numpy` from its structure and parameters) gives

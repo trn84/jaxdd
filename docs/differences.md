@@ -179,6 +179,22 @@ lagged branch is a property of SimSS's iteration, one voltage per change of dire
 comparison with SimSS sets `S` only at the electrons' left and the holes' right end and leaves
 out the voltage after a change of direction.
 
+## 8 The Langevin rate at the last point of a layer
+
+**What.** SIMsalabim's `Calc_Langevin_Factor` takes, at each point `x_i`, the mobilities `mu[i]`
+of the interleaved mesh, "the mobility at x = x_i as well; this avoids averaging over grid points
+in adjacent layers". At the last point of each layer but the last, `mu[i]` is the interval across
+the interface, whose mobility `Calc_Elec_Mob` has set to the transfer `L·h·ν_int/V_T`: the
+Langevin rate there is that of the interface's thermionic transfer, not of the layer.
+
+**How large.** `tests/data/langevin_light` (Langevin in all three layers of the 1 nm stack,
+`preLangevin` 1e-2 in the absorber): the rate at those two points is 20 and 3 times below the
+layer's, and the curve 3.7e-5 of its scale off the one with the layer's mobilities; Langevin
+recombination itself moves it by 2 %.
+
+**jaxdd.** Each point's layer's mobilities (`langevin="layer"`, the default); SimSS's with
+`langevin="simss"`, within 1.4e-10 of SimSS on that device.
+
 ## Not differences
 
 Reproduced on purpose, because they are part of the discrete equations SimSS defines:

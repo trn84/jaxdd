@@ -42,6 +42,9 @@ and 5.1 eV), two acceptor levels at the left interface from `int_traps.txt` (1.5
 `S_p_R`, the two ends SimSS 5.36 has right, docs/differences.md §7); SimSS 5.36 at
 `tolPois = tolDens = 1e-9`.
 
+`langevin_light/`: `thin_l1_light` with Langevin recombination in all three layers
+(`useLangevin = 1`, `preLangevin` 1e-3, 1e-2, 1e-3); SimSS 5.36 at `tolPois = tolDens = 1e-9`.
+
 `resist_light/`: `thin_l1_light` with a series resistance of 2e-4 Ω m² and a shunt of 0.3 Ω m²
 (Stage B); SimSS 5.36.
 

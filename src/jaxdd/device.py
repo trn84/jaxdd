@@ -28,6 +28,7 @@ from jaxdd.simss_input import Layer, Setup
 
 __all__ = [
     "GRID_SPLITS",
+    "LANGEVIN_MOBILITIES",
     "SURFACE_MODELS",
     "Device",
     "Structure",
@@ -275,6 +276,8 @@ class Structure:
     #: "robin" (`SURFACE_MODELS`).
     surface: str | None = None
     sfb: tuple[bool, bool] = (False, False)  # `W_L`, `W_R` = 'sfb': from the adjacent layer
+    langevin: np.ndarray = None  # per layer: `useLangevin`, `k_direct` from the mobilities
+    langevin_mobility: str = "layer"  # `LANGEVIN_MOBILITIES`
     #: The generation: "file" (a profile, `gen_x`, `gen_G`), "none" (uniform, each layer's
     #: `G_ehp`) or "calc" (the transfer-matrix method, `optics.optical_data`).
     gen_mode: str = "file"
@@ -289,14 +292,20 @@ class Structure:
 #: which SimSS 5.36 has at two of them (docs/differences.md).
 SURFACE_MODELS = ("extraction", "robin")
 
+#: The mobilities in the Langevin rate `preLangevin·q·(μ_n + μ_p)/ε` at a point: "layer" its
+#: layer's; "simss" those of the interval after it, as SimSS 5.36 takes them, which at the last
+#: point of each layer but the last is the interface's transfer mobility `L·h·ν_int/V_T`
+#: (docs/differences.md §8).
+LANGEVIN_MOBILITIES = ("layer", "simss")
+
 #: The surface recombination velocities, in `S` order (`Device.surface`).
 SURFACE_PARAMETERS = ("S_n_L", "S_p_L", "S_n_R", "S_p_R")
 
 #: A device's parameters per layer (`device_parameters`), as SIMsalabim names them.
 LAYER_PARAMETERS = (
     "L", "eps_r", "E_c", "E_v", "N_c", "N_D", "N_A", "mu_n", "mu_p", "nu_int_n", "nu_int_p",
-    "k_direct", "N_t_bulk", "C_n_bulk", "C_p_bulk", "E_t_bulk", "N_anion", "N_cation",
-    "N_t_int", "E_t_int", "C_n_int", "C_p_int", "G_ehp",
+    "k_direct", "preLangevin", "N_t_bulk", "C_n_bulk", "C_p_bulk", "E_t_bulk", "N_anion",
+    "N_cation", "N_t_int", "E_t_int", "C_n_int", "C_p_int", "G_ehp",
 )  # fmt: skip
 
 
@@ -341,8 +350,8 @@ def _sfb(N_A, N_D, E_c, E_v, N_c, Vt, xp=np):
     return xp.where(net > 0, E_v - Vt * xp.log(N_c / safe), n_type)
 
 
-def device_parameters(setup: Setup, grid_split: str = "exact",
-                      surface: str = "extraction") -> tuple[Structure, dict]:  # fmt: skip
+def device_parameters(setup: Setup, grid_split: str = "exact", surface: str = "extraction",
+                      langevin: str = "layer") -> tuple[Structure, dict]:  # fmt: skip
     """A SIMsalabim input (Stage A, `check_supported` first) as its `Structure` and its
     parameters: a dict of `LAYER_PARAMETERS`, each an array over the layers, and `T`, `W_L`,
     `W_R`, `G_frac`, `V_pre`, the generation profile's file (`gen_x`, `gen_G`) and the external
@@ -350,13 +359,16 @@ def device_parameters(setup: Setup, grid_split: str = "exact",
     layers × levels: `bulk_trap_E`, `bulk_trap_N` (eV, m⁻³) and `int_trap_E`, `int_trap_N`
     (m⁻²), used on the layers whose file names them; the surface recombination velocities
     `S_n_L`, `S_p_L`, `S_n_R`, `S_p_R` (m/s, negative infinite), acting as `surface` says
-    (`SURFACE_MODELS`). `grid_split`
+    (`SURFACE_MODELS`); `langevin` which mobilities the Langevin rate takes
+    (`LANGEVIN_MOBILITIES`). `grid_split`
     as in `build_device`. Changing a parameter keeps the structure: a trap density set on a
     layer without traps, or an ion density on a layer without ions, does nothing; the points
     per layer stay those of the input's thicknesses."""
     layers = setup.layers
     if surface not in SURFACE_MODELS:
         raise ValueError(f"surface {surface!r}: one of {SURFACE_MODELS}")
+    if langevin not in LANGEVIN_MOBILITIES:
+        raise ValueError(f"langevin {langevin!r}: one of {LANGEVIN_MOBILITIES}")
     if setup.i("leftElec") not in (-1, 1):
         raise ValueError("leftElec must be -1 (the left electrode the cathode) or 1 (the anode)")
     NP, grad = setup.i("NP"), setup.f("grad")
@@ -385,6 +397,8 @@ def device_parameters(setup: Setup, grid_split: str = "exact",
         surface=surface if any(float(setup.raw.get(k, "-1")) >= 0 for k in SURFACE_PARAMETERS)
         else None,
         sfb=tuple(setup.raw[k].strip().lower() == "sfb" for k in ("W_L", "W_R")),
+        langevin=flags(lambda ly: int(float(ly.raw.get("useLangevin", "0"))) == 1),
+        langevin_mobility=langevin,
         left_elec=setup.i("leftElec"),
     )  # fmt: skip
     # SIMsalabim's checks: each work function within its layer's gap.
@@ -452,6 +466,8 @@ def device_parameters(setup: Setup, grid_split: str = "exact",
     }
 
     def value(ly: Layer, name: str) -> float:
+        if name == "preLangevin":
+            return float(ly.raw.get(name, "1"))
         return float(ly.raw.get(name, "0")) if name in optional else ly.f(name)
 
     params = {name: np.array([value(ly, name) for ly in layers]) for name in LAYER_PARAMETERS}
@@ -554,7 +570,6 @@ def device_arrays(structure: Structure, p: dict, xp=np) -> Device:
 
     E_c, E_v, N_c = p["E_c"][lid], p["E_v"][lid], p["N_c"][lid]
     ni = N_c * xp.exp(-0.5 * (E_v - E_c) / Vt)
-    k_direct = xp.where(interior, p["k_direct"][lid], 0.0)
 
     # Interface mobilities: on the last point of each layer but the last, the interval to the
     # next layer, `L·h·ν_int/V_T`.
@@ -563,6 +578,19 @@ def device_arrays(structure: Structure, p: dict, xp=np) -> Device:
 
     def interleaved(name: str, nu_name: str):
         return xp.where(iface, (total * h) * p[nu_name][lid] / Vt, p[name][lid])
+
+    # Direct recombination: `k_direct`, or in layers with `useLangevin` the Langevin rate
+    # (`Calc_Langevin_Factor`); none on the electrodes.
+    k_direct = p["k_direct"][lid]
+    if st.langevin is not None and st.langevin.any():
+        if st.langevin_mobility == "simss":
+            mob = interleaved("mu_n", "nu_int_n") + interleaved("mu_p", "nu_int_p")
+        else:
+            mob = p["mu_n"][lid] + p["mu_p"][lid]
+        rate = p.get("preLangevin", xp.ones_like(p["k_direct"]))[lid] * Q * mob / (
+            p["eps_r"][lid] * EPS_0)  # fmt: skip
+        k_direct = xp.where(st.langevin[lid], rate, k_direct)
+    k_direct = xp.where(interior, k_direct, 0.0)
 
     trap = interior & st.traps[lid]
     E_t, N_t, on = p["E_t_bulk"], p["N_t_bulk"], trap
@@ -650,9 +678,11 @@ def device_arrays(structure: Structure, p: dict, xp=np) -> Device:
     )  # fmt: skip
 
 
-def build_device(setup: Setup, grid_split: str = "exact", surface: str = "extraction") -> Device:
+def build_device(setup: Setup, grid_split: str = "exact", surface: str = "extraction",
+                 langevin: str = "layer") -> Device:  # fmt: skip
     """The device of a SIMsalabim input (Stage A, `check_supported` first), in NumPy. `grid_split`
     "simss" shares the grid points among the layers as SimSS's 10-byte reals do
     (`layer_points`; docs/differences.md §5), for a comparison point by point; `surface` how
-    finite surface recombination at the contacts acts (`SURFACE_MODELS`)."""
-    return device_arrays(*device_parameters(setup, grid_split, surface))
+    finite surface recombination at the contacts acts (`SURFACE_MODELS`); `langevin` which
+    mobilities the Langevin rate takes (`LANGEVIN_MOBILITIES`)."""
+    return device_arrays(*device_parameters(setup, grid_split, surface, langevin))

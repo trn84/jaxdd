@@ -116,10 +116,11 @@ def setup_from_texts(files: Mapping[str, str], setup: str = "simulation_setup.tx
 #: Stage A (docs/overview.md, "Scope") and the modules of Stage B so far (bulk and interface
 #: traps, neutral or charged, one level or several from a trap file; series and shunt
 #: resistance; the generation profile; the left electrode as the anode; finite surface
-#: recombination at the contacts and 'sfb' work functions): the values a supported
-#: input must have. Ions are supported in one layer per region, steady (free at every voltage)
-#: or held after a pre-bias (`preCond`, `fixIons`, as SimSS with `simss/fixed_ions.patch`:
-#: Poisson leaves them). Anything else is refused by name, never approximated.
+#: recombination at the contacts and 'sfb' work functions; Langevin recombination): the values
+#: a supported input must have. Ions are supported in one layer per region, steady (free at
+#: every voltage) or held after a pre-bias (`preCond`, `fixIons`, as SimSS with
+#: `simss/fixed_ions.patch`: Poisson leaves them). Anything else is refused by name, never
+#: approximated.
 _SETUP_REQUIRED = {
     "Vdist": 1.0,
     "currDiffInt": 2.0,
@@ -128,7 +129,6 @@ _LAYER_REQUIRED = {
     "mobnDep": 0.0,
     "mobpDep": 0.0,
     "fieldDepG": 0.0,
-    "useLangevin": 0.0,
 }
 
 

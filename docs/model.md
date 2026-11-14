@@ -89,6 +89,18 @@ the second term (SRH through the trap levels `E_t` of density `N_t`) only in lay
 `n_t0 = N_c·exp((E_c − E_t)/V_T)`, `p_t0 = N_c·exp((E_t − E_v)/V_T)`. Neither acts on the
 electrodes.
 
+In a layer with `useLangevin = 1` the direct rate is Langevin's instead of `k_direct`
+(`Calc_Langevin_Factor`):
+
+```
+k_direct = preLangevin · q · (μ_n + μ_p) / ε
+```
+
+with the layer's mobilities and permittivity at each point. SimSS takes the mobilities of the
+interval after the point, which at the last point of each layer but the last is the interface's
+transfer mobility `L·h·ν_int/V_T`; `build_device(..., langevin="simss")` does the same
+([differences.md](differences.md) §8).
+
 ### Bulk traps (`Init_Trapping`, `Calc_Trap_Filling_Charge`)
 
 A layer has one level (`N_t_bulk` m⁻³ at `E_t_bulk`) or, with `bulkTrapFile`, the levels of that

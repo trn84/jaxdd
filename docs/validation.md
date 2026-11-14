@@ -71,6 +71,9 @@ so that the solver is never the larger error in what is computed from it.
   its tolerances of 1e-9, at every voltage but 1.05 V, where SimSS takes the contact's branch
   from the voltage before ([differences.md](differences.md) §7). At the other two ends, where
   SimSS 5.36 has the sign of `S` wrong, the device turned around gives the same curve to 1e-11.
+- **Langevin recombination** (2026-11-14): in all three layers of the 1 nm stack, moving the
+  curve by 2 % of its scale: within 1.4e-10 of SimSS with its mobilities, 3.7e-5 with each
+  point's own layer's, the default ([differences.md](differences.md) §8).
 - **Series and shunt resistance** (2026-11-13): 2e-4 and 0.3 Ω m² on the 1 nm stack, the
   series resistance moving the voltage by 1.8 V at the top of the scan: `J_ext` within 2.2e-6 of
   SimSS's scale, `V_ext` within 4 µV.

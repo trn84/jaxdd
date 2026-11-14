@@ -31,8 +31,14 @@
 #              writes benchmarks/results/<label>.json for benchmarks/plot.py
 #   chunk      validation/chunk.py on the batch file CHUNK (a real workload built elsewhere and
 #              copied here; not in the default steps)
+#   sample     validation/sample_measured.py on each of SAMPLES (default "02Cl 06Cl 01Cl"), with
+#              SAMPLE_ARGS (default "--walkers 128 --steps 3000"): a posterior of the measured
+#              cells' parameters; each chain to benchmarks/samples/chain_<sample>.npz, saved every
+#              100 steps, so a session that ends keeps what is done. Not in the default steps:
+#                STEPS=sample benchmarks/apptainer.sh
 #
-# Settings (environment): STEPS; CHUNK, the batch file of the chunk step; LABEL, the machine's name in the plot (default: the GPU's
+# Settings (environment): STEPS; CHUNK, the batch file of the chunk step; SAMPLES and SAMPLE_ARGS
+# for the sample step; LABEL, the machine's name in the plot (default: the GPU's
 # name and "apptainer"); SIF, the image file (default cuda129.sif in the repository); IMAGE,
 # where it is pulled from. Everything is appended to benchmarks/apptainer.log (not committed).
 set -euo pipefail
@@ -79,8 +85,19 @@ if [ "${1:-}" = "--inside" ]; then
             chunk)
                 "$py" validation/chunk.py "$CHUNK"
                 ;;
+            sample)
+                mkdir -p benchmarks/samples
+                for s in ${SAMPLES:-02Cl 06Cl 01Cl}; do
+                    say "sample $s"
+                    # shellcheck disable=SC2086
+                    "$py" -u validation/sample_measured.py "$s" \
+                        ${SAMPLE_ARGS:---walkers 128 --steps 3000} \
+                        --out "benchmarks/samples/chain_$s.npz" ||
+                        echo "!! sample $s failed (exit $?); going on"
+                done
+                ;;
             *)
-                echo "unknown step $step (info tests breakdown bench hard run chunk)"
+                echo "unknown step $step (info tests breakdown bench hard run chunk sample)"
                 ;;
         esac || echo "!! step $step failed (exit $?); going on"
     done
@@ -103,7 +120,7 @@ if pgrep -u "$(id -un)" -f "benchmarks/apptainer.sh --inside" >/dev/null; then
 fi
 if [ -n "${SLURM_JOB_ID:-}" ]; then
     echo "this job has $(squeue -h -j "$SLURM_JOB_ID" -o %L 2>/dev/null || echo '?') left" \
-         "(every step: about 20 min on an A100)"
+         "(every default step: about 20 min on an A100; the sample step hours)"
 fi
 
 # The host's LD_LIBRARY_PATH stays out, as do the image's CUDA compat libraries, which need a
@@ -126,6 +143,8 @@ GPU="$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1 |
 LABEL="${LABEL:-${GPU#NVIDIA } apptainer}"
 COMMIT="$(git rev-parse --short=12 HEAD)$(git diff --quiet || echo ' with local changes')"
 export APPTAINERENV_STEPS="$STEPS" APPTAINERENV_LABEL="$LABEL" APPTAINERENV_JAXDD_COMMIT="$COMMIT"
+[ -n "${SAMPLES:-}" ] && export APPTAINERENV_SAMPLES="$SAMPLES"
+[ -n "${SAMPLE_ARGS:-}" ] && export APPTAINERENV_SAMPLE_ARGS="$SAMPLE_ARGS"
 if [[ " $STEPS " == *" chunk "* ]]; then
     [ -f "${CHUNK:-}" ] || { echo "the chunk step needs CHUNK=<batch file>"; exit 1; }
     export APPTAINERENV_CHUNK="$(realpath "$CHUNK")"

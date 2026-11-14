@@ -73,7 +73,10 @@ FREE = [
 ]  # fmt: skip
 
 
-def fit(sample: str, start: str = "cold", device: str = "mirrored") -> dict:
+def problem(sample: str, device: str = "mirrored") -> dict:
+    """The sample's curves and the model in the fitted coordinates `theta` (`FREE`'s order, a
+    logarithm where `FREE` says so): `residuals(theta)` for one point, `residuals_many(thetas)`
+    for many at once (every point's five intensities in one batch), `unpack`, the bounds."""
     curves = [np.loadtxt(DATA / f"{sample}_{f}_fwd_JV.dat", skiprows=1) for f in FILES]
     V = jnp.asarray(curves[0][:, 0])
     J_data = np.stack([c[:, 1] for c in curves])
@@ -108,17 +111,39 @@ def fit(sample: str, start: str = "cold", device: str = "mirrored") -> dict:
         p["R_shunt"] = v["R_sh"]
         return p
 
+    def trees(theta):
+        v = unpack(theta)
+        return [device_tree(structure, params(v, g)) for g in suns]
+
+    def stacked(trees):
+        return jax.tree_util.tree_map(lambda *x: jnp.stack(x), *trees)
+
     @jax.jit
     def residuals(theta):
-        v = unpack(theta)
-        trees = [device_tree(structure, params(v, g)) for g in suns]
-        J, ok, _ = solve_batch(jax.tree_util.tree_map(lambda *x: jnp.stack(x), *trees), V)
+        J, ok, _ = solve_batch(stacked(trees(theta)), V)
         # A voltage not converged costs a whole scale (validation/fit.py).
         return jnp.where(ok, (J - J_data) / scale, 1.0).ravel()
 
-    jacobian = jax.jit(jax.jacfwd(residuals))
+    @jax.jit
+    def residuals_many(thetas):
+        """(points, 5 * voltages): the points' five intensities solved as one batch."""
+        batch = jax.vmap(lambda t: stacked(trees(t)))(thetas)
+        n = thetas.shape[0] * len(suns)
+        J, ok, _ = solve_batch(jax.tree_util.tree_map(lambda x: x.reshape(n, *x.shape[2:]),
+                                                      batch), V)  # fmt: skip
+        r = jnp.where(ok, (J - np.tile(J_data, (thetas.shape[0], 1))) / scale, 1.0)
+        return r.reshape(thetas.shape[0], -1)
+
     lo = np.array([np.log(a) if log else a for _, log, a, _ in FREE])
     hi = np.array([np.log(b) if log else b for _, log, _, b in FREE])
+    return dict(V=V, J_data=J_data, suns=suns, scale=scale, unpack=unpack, lo=lo, hi=hi,
+                residuals=residuals, residuals_many=residuals_many)  # fmt: skip
+
+
+def fit(sample: str, start: str = "cold", device: str = "mirrored") -> dict:
+    pr = problem(sample, device)
+    residuals, unpack, lo, hi = pr["residuals"], pr["unpack"], pr["lo"], pr["hi"]
+    jacobian = jax.jit(jax.jacfwd(residuals))
     if start == "paper":
         v0 = dict(PAPER[sample], G=1.0)
         theta0 = np.clip([np.log(v0[n]) if log else v0[n] for n, log, _, _ in FREE], lo, hi)
@@ -140,9 +165,9 @@ def fit(sample: str, start: str = "cold", device: str = "mirrored") -> dict:
     out = least_squares(fun, theta0, jac=jac, bounds=(lo, hi), method="trf", x_scale="jac",
                         xtol=1e-10, ftol=1e-12, gtol=1e-12, max_nfev=400)  # fmt: skip
     t2 = time.perf_counter()
-    return dict(sample=sample, start=start, out=out, suns=suns, scale=scale, theta0=theta0,
-                fitted={k: float(x) for k, x in unpack(out.x).items()}, device=device,
-                seconds=(t1 - t0, t2 - t1), calls=dict(calls))  # fmt: skip
+    return dict(sample=sample, start=start, out=out, suns=pr["suns"], scale=pr["scale"],
+                theta0=theta0, fitted={k: float(x) for k, x in unpack(out.x).items()},
+                device=device, seconds=(t1 - t0, t2 - t1), calls=dict(calls))  # fmt: skip
 
 
 def report(r: dict) -> None:

@@ -162,10 +162,25 @@ and samples the posteriors, each by two independent runs that agree
 - **The posteriors of 0.1 and 0.6 Cl around their best minimum.** From 16 starts, both have a
   minimum below the cold fit's, elsewhere in the box (rms 0.70 against 0.77 %, 1.93 against
   2.69 %), e⁵⁹ and e¹⁵⁸ more likely with the sampler's σ; their posteriors so far are the cold
-  fit's minimum. `fit_measured.py SAMPLE --starts N` saves every start's end, and
-  `sample_measured.py SAMPLE --from-multistart` starts the walkers at the best: two runs each
-  (on the desktop 64 walkers, about 2 h a run). Only 2 of 16 starts found 0.6 Cl's best, so
-  more starts there first (64: about 40 min) may find a lower one.
+  fit's minimum. 64 starts for 0.6 Cl find the same best (8 starts, 24 min). The ends of every
+  start are in `benchmarks/samples/multistart_{01Cl,06Cl}.npz` (not committed).
+
+  **Hand-over (2026-11-14, 17:47):** running on the desktop GPU, in the background, four
+  sampling runs one after the other, each `sample_measured.py SAMPLE --from-multistart
+  --walkers 64 --steps 3000 --seed {0,1}`: 0.1 Cl seed 0, seed 1, then 0.6 Cl seed 0, seed 1;
+  about 1.8 h each, done around 01:00. Log `benchmarks/samples/best.log` (a failed run is a
+  line `!! SAMPLE seed N failed`), chains `benchmarks/samples/chain_{01Cl,06Cl}_best_s{0,1}.npz`.
+  The first started well: σ 7.01e-3 (the best minimum's rms), acceptance 0.08. Do not start a
+  second GPU process beside it. When done:
+  1. Per sample, compare the two seeds as the earlier second runs were (chain coordinates, the
+     first 1000 steps discarded): each median's shift over the 16–84 % half-width (they agreed
+     within 0.13), the half-widths' ratio, the independent samples of both together (≥ 1000).
+  2. In docs/validation.md, replace the 0.1 and 0.6 Cl columns of the posterior table with the
+     new posteriors (median and half-width, which parameters sit at a bound, the strongest
+     correlations, from the log's summaries), and drop the remarks that they hold the cold
+     fit's minimum only (the many-starts bullet and the sampling bullet).
+  3. M7 is then done: remove this item and M7's row's first clause; commit, push to both
+     remotes (`origin`, `forgejo`).
 - **The optics for the measured cell**: the measured fits assume a uniform generation. The cell
   in its own orientation with the transfer-matrix profile is `tests/data/pin_anode_left_light`,
   but the paper's perovskite n,k data (Werner et al., ACS Energy Lett. 3, 742 (2018)) are not

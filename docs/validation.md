@@ -153,7 +153,8 @@ so that the solver is never the larger error in what is computed from it.
   2e-5 against 1e-3 m²/Vs, the ions 1e22 against 1e21 m⁻³) and 1.93 % against 2.69 % and 2.42 %
   (2 starts; the cations at their bound of 1e23 m⁻³, the holes' mobility at 1e-6). With the
   sampler's σ the lower minima are e⁵⁹ and e¹⁵⁸ more likely: the posteriors below hold, for
-  those two samples, the cold fit's minimum only.
+  those two samples, the cold fit's minimum only. 64 starts for 0.6 Cl (24 min, 1.6× the time
+  of 16 per evaluation for 4× the starts) find the same best, from 8 starts.
 
 - **The fit's uncertainty, by sampling** (`validation/sample_measured.py`, 2026-11-14): a posterior
   of the same fourteen parameters, by an ensemble sampler whose walkers' five intensities are

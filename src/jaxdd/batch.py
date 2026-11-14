@@ -36,6 +36,7 @@ from jaxdd.solver import (
     STEP_CAPS,
     _assemble,
     _contact_branch,
+    _direct_rate,
     _field_mobilities,
     _interface_points,
     _ion_constraints,
@@ -119,6 +120,10 @@ def prepare(devices: list[Device]) -> dict:
         for t in trees:
             for k in ("fn_m", "fn_p", "fp_m", "fp_p"):
                 t["s"].setdefault(k, np.zeros_like(t["s"]["hm"]))
+    if any("kln" in t["s"] for t in trees):  # Langevin in the field; the others' rate constant
+        for t in trees:
+            for k in ("kln", "klp", "klb"):
+                t["s"].setdefault(k, np.zeros_like(t["s"]["hm"]))
     if any("tq" in t["s"] for t in trees):  # charged bulk traps; the others none
         for t in trees:
             t["s"].setdefault("tq", np.zeros_like(t["s"]["Nt"]))
@@ -174,7 +179,11 @@ def _current(d, full, g_frac, B=bernoulli):
     V, n, p = full[:, 0], jnp.exp(full[:, 1]), jnp.exp(full[:, 2])
     Vt, x, h, L = d["Vt"], d["x"], d["h"], d["L"]
     NP = x.shape[0] - 2
-    R = _recombination(n, p, d["rec"])
+    rec = d["rec"]
+    if "kln" in d["s"]:  # Langevin in the field at `V`
+        kd = _direct_rate(V[:-2], V[1:-1], V[2:], d["s"])
+        rec = dict(rec, kd=rec["kd"].at[1:-1].set(kd))
+    R = _recombination(n, p, rec)
     R_int = (jnp.zeros_like(R), jnp.zeros_like(R))
     if "ti" in d["s"]:
         R_int = _interface_points(n, p, d["s"]["ti"])[:2]

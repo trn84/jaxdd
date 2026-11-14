@@ -91,7 +91,7 @@ with `gamma_n` (`gamma_p`) in (m/V)^½ and `μ_n` the zero-field mobility. The i
 an interface keep their transfer mobility `L·h·ν_int/V_T`. The mobility then depends on the
 potential: Newton takes its derivative into the Jacobian ([solver.md](solver.md)), and the
 current is integrated with each interval's mobility in the converged field. With Langevin
-recombination in the same layer it is refused for now (the rate would follow the field too).
+recombination in the same layer the rate follows the field as well (below).
 
 ## Recombination and generation
 
@@ -114,7 +114,11 @@ k_direct = preLangevin · q · (μ_n + μ_p) / ε
 with the layer's mobilities and permittivity at each point. SimSS takes the mobilities of the
 interval after the point, which at the last point of each layer but the last is the interface's
 transfer mobility `L·h·ν_int/V_T`; `build_device(..., langevin="simss")` does the same
-([differences.md](differences.md) §8).
+([differences.md](differences.md) §8). With a field-dependent mobility in the layer the rate
+takes each mobility in its interval's field: the interval after the point (SimSS's), or, at
+the last point of a layer, the one before it, the layer's own (the default). The rate then
+depends on the potential at the point and at a neighbour, and so does the recombination in
+Newton's Jacobian.
 
 ### Bulk traps (`Init_Trapping`, `Calc_Trap_Filling_Charge`)
 

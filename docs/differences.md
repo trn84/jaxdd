@@ -192,8 +192,11 @@ Langevin rate there is that of the interface's thermionic transfer, not of the l
 layer's, and the curve 3.7e-5 of its scale off the one with the layer's mobilities; Langevin
 recombination itself moves it by 2 %.
 
-**jaxdd.** Each point's layer's mobilities (`langevin="layer"`, the default); SimSS's with
-`langevin="simss"`, within 1.4e-10 of SimSS on that device.
+With field-dependent mobilities as well (`langevin_field_light`) the same points differ, 6.2e-5.
+
+**jaxdd.** Each point's layer's mobilities (`langevin="layer"`, the default; with a
+field-dependent mobility the layer's last interval, in its field, at its last point); SimSS's
+with `langevin="simss"`, within 1.4e-10 and 1.5e-10 of SimSS on the two devices.
 
 ## Not differences
 

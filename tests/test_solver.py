@@ -330,15 +330,17 @@ def test_the_gradient_in_the_surface_recombination_is_finite_differences() -> No
     assert abs(float(by_jvp) - fd) < 1e-5 * abs(fd)
 
 
-def test_langevin_recombination_reproduces_simss() -> None:
+@pytest.mark.parametrize("case", ["langevin_light", "langevin_field_light"])
+def test_langevin_recombination_reproduces_simss(case: str) -> None:
     """Stage B, Langevin recombination in all three layers (`preLangevin` 1e-2 in the absorber,
     1e-3 in the transport layers; SimSS at tolerances of 1e-9), which moves the curve by 2 % of
-    its scale. With the mobilities SimSS takes (`langevin="simss"`) within 1e-9 of its scale; with
-    each point's own layer's (the default; docs/differences.md §8) 3.7e-5 off, the last point of
-    each layer but the last."""
-    setup = read_setup(DATA / "langevin_light" / "simulation_setup.txt")
+    its scale; with constant mobilities, and with `fieldmob_light`'s field-dependent ones (the
+    rate in the field of its interval). With the mobilities SimSS takes (`langevin="simss"`)
+    within 1e-9 of its scale; with each point's own layer's (the default; docs/differences.md
+    §8) 3.7e-5 and 6.2e-5 off, the last point of each layer but the last."""
+    setup = read_setup(DATA / case / "simulation_setup.txt")
     check_supported(setup)
-    ref = np.genfromtxt(DATA / "langevin_light" / "JV.dat", names=True)
+    ref = np.genfromtxt(DATA / case / "JV.dat", names=True)
     scale = np.max(np.abs(ref["Jext"]))
     gap = {}
     for langevin in ("simss", "layer"):
@@ -349,14 +351,15 @@ def test_langevin_recombination_reproduces_simss() -> None:
     assert 1e-5 < gap["layer"] < 1e-4
 
 
-def test_the_gradient_in_the_langevin_prefactor_is_finite_differences() -> None:
+@pytest.mark.parametrize("case", ["langevin_light", "langevin_field_light"])
+def test_the_gradient_in_the_langevin_prefactor_is_finite_differences(case: str) -> None:
     """The curve's derivative in the absorber's `preLangevin`, through `device_tree` and the
-    converged solution, against central finite differences."""
+    converged solution, against central finite differences; with constant and with
+    field-dependent mobilities."""
     from jaxdd.batch import device_tree, solve_batch
     from jaxdd.device import device_parameters
 
-    structure, params = device_parameters(read_setup(DATA / "langevin_light" /
-                                                     "simulation_setup.txt"))  # fmt: skip
+    structure, params = device_parameters(read_setup(DATA / case / "simulation_setup.txt"))
     V = np.round(np.arange(-0.1, 1.0 + 1e-9, 0.1), 6)
     w = jnp.asarray(np.random.default_rng(0).normal(size=len(V)))
 
@@ -411,18 +414,14 @@ def test_the_gradient_in_the_field_dependence_is_finite_differences() -> None:
     assert abs(float(by_jvp) - fd) < 1e-6 * abs(fd)
 
 
-def test_a_field_dependent_mobility_with_langevin_is_refused() -> None:
-    """`mobnDep` other than 0 or 1 is refused, as SIMsalabim does; a field-dependent mobility in
-    a layer with Langevin recombination is not yet supported."""
+def test_a_mobility_model_other_than_0_or_1_is_refused() -> None:
+    """`mobnDep` other than 0 or 1 is refused, as SIMsalabim does."""
     from jaxdd.simss_input import setup_from_texts
 
     texts = _texts("fieldmob_light")
     bad = dict(texts, **{"L2_parameters.txt": _put(texts["L2_parameters.txt"], "mobnDep", "2")})
     with pytest.raises(ValueError, match="mobnDep"):
         build_device(setup_from_texts(bad))
-    lan = dict(texts, **{"L2_parameters.txt": _put(texts["L2_parameters.txt"], "useLangevin", "1")})
-    with pytest.raises(NotImplementedError, match="layer 2: useLangevin"):
-        build_device(setup_from_texts(lan))
 
 
 def test_series_and_shunt_resistance_are_simss_external_circuit() -> None:
@@ -518,7 +517,8 @@ def test_a_batch_mixes_devices_with_and_without_interface_traps() -> None:
     from jaxdd.batch import prepare, solve_batch
 
     cases = ["thin_l1_light", "iface_charged_light", "iface_ions_light", "bulk_acceptor_light",
-             "trapfiles_light", "surface_light", "fieldmob_light"]  # fmt: skip
+             "trapfiles_light", "surface_light", "fieldmob_light",
+             "langevin_field_light"]  # fmt: skip
     devices = [build_device(read_setup(DATA / c / "simulation_setup.txt")) for c in cases]
     V = np.round(np.arange(-0.2, 1.3 + 1e-9, 0.1), 6)
     J, ok, _ = solve_batch(prepare(devices), V, bernoulli_name="simss")
@@ -685,7 +685,7 @@ def test_a_dark_scan_with_a_density_far_below_the_floor_converges() -> None:
 @pytest.mark.parametrize(
     "case",
     ["thin_l1_light", "frozen_1e17_x1_thin_light", "steady_1e17_thin_light", "bulk_acceptor_light",
-     "fieldmob_light"],
+     "fieldmob_light", "langevin_field_light"],
 )  # fmt: skip
 def test_the_jacobian_by_edges_is_autodiff_of_the_rows(case: str, bern: str) -> None:
     """`_assemble` (each interval's fluxes once, assembled by hand) gives `_kernels`' residual,
@@ -925,7 +925,8 @@ def test_the_bordered_system_and_its_transpose_are_solved() -> None:
     ["thin_l1_light", "frozen_1e17_x1_thin_light", "steady_1e17_thin_light",
      "frozen_thick_htl_dark", "iface_ions_light", "pin_iface_light", "resist_light",
      "calc_light", "none_light", "pin_anode_left_light", "bulk_acceptor_light",
-     "trapfiles_light", "surface_light", "langevin_light", "fieldmob_light"],
+     "trapfiles_light", "surface_light", "langevin_light", "fieldmob_light",
+     "langevin_field_light"],
 )  # fmt: skip
 def test_the_device_in_jax_is_numpys(case: str) -> None:
     """`batch.device_tree` (the device in `jax.numpy` from its structure and parameters) gives

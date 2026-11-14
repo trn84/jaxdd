@@ -60,8 +60,7 @@ each with its own parameters.
 
 Everything else is **refused by name**, never approximated: `check_supported` raises
 `NotImplementedError` listing each parameter outside this scope (field-dependent generation,
-an ionic region across layers, `fixIons` without `preCond`, a field-dependent mobility with
-Langevin recombination in the same layer). What comes next in physics is
+an ionic region across layers, `fixIons` without `preCond`). What comes next in physics is
 in [PLAN.md](../PLAN.md).
 
 ## Where jaxdd follows SIMsalabim, and where it does not

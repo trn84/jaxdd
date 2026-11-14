@@ -77,7 +77,10 @@ so that the solver is never the larger error in what is computed from it.
 - **The field-dependent mobility** (2026-11-14): on the 1 nm stack, γ from 0 to 3e-4 (m/V)^½
   for electrons and holes in the three layers, the electrons' constant in the last, moving the
   curve by 32 % of its scale: within 1.1e-10 of SimSS's scale at its tolerances of 1e-9, in at
-  most 16 Newton steps per voltage, as without.
+  most 16 Newton steps per voltage, as without. With Langevin recombination in all three layers
+  as well (the rate in the field of its interval, moving the curve by another 2.5 %): within
+  1.5e-10 with SimSS's mobilities, 6.2e-5 with each point's own layer's
+  ([differences.md](differences.md) §8).
 - **Series and shunt resistance** (2026-11-13): 2e-4 and 0.3 Ω m² on the 1 nm stack, the
   series resistance moving the voltage by 1.8 V at the top of the scan: `J_ext` within 2.2e-6 of
   SimSS's scale, `V_ext` within 4 µV.

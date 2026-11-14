@@ -243,6 +243,12 @@ class Device:
     # mesh, `k = γ/√(L·h)` (so `γ·√|F| = k·√|ΔV|`), 0 at the interfaces (their transfer mobility)
     # and in layers with a constant mobility. None without any.
     mob_field: tuple[np.ndarray, np.ndarray] | None = None
+    # Langevin in a layer with a field-dependent mobility: the rate follows the field,
+    # `k_direct = n·f_n + p·f_p` at each point (`k_direct` 0 there), `n`, `p` the rate's
+    # electron and hole part at zero field (`preLangevin·q·μ/ε`), `f` the factor of
+    # `mob_field` on the interval after the point, or before it where `before` is 1 (the
+    # layer's own interval at its last point, `langevin="layer"`). None without.
+    langevin_field: dict | None = None
     # Finite surface recombination at the contacts (SIMsalabim's `S_n_L`, `S_p_L`, `S_n_R`,
     # `S_p_R`, m/s, negative for infinite): `S` the four, `a` the first and last interval's
     # `V_T·μ/(L·h)` for electrons and holes in the same order, `both` 1 where the condition holds
@@ -414,14 +420,9 @@ def device_parameters(setup: Setup, grid_split: str = "exact", surface: str = "e
         if not sfb and not ly.f("E_c") <= setup.f(k) <= ly.f("E_v"):
             raise ValueError(f"{k} = {setup.f(k)} eV: outside the gap of its layer "
                              f"({ly.f('E_c')} to {ly.f('E_v')} eV)")  # fmt: skip
-    # SIMsalabim's: `mobnDep`, `mobpDep` 0 or 1. With Langevin the rate would follow the field
-    # too (SimSS takes the interval's mobility): not yet.
+    # SIMsalabim's: `mobnDep`, `mobpDep` 0 or 1.
     if not np.isin(structure.mob_dep, (0, 1)).all():
         raise ValueError(f"mobnDep, mobpDep: 0 or 1, got {structure.mob_dep.tolist()}")
-    both = structure.langevin & structure.mob_dep.any(axis=1)
-    if both.any():
-        raise NotImplementedError(f"layer {np.argmax(both) + 1}: useLangevin with a "
-                                  "field-dependent mobility")  # fmt: skip
     extra = {}
     if bulk_file.any():
         extra["bulk_trap_E"], extra["bulk_trap_N"] = _level_table(
@@ -600,14 +601,24 @@ def device_arrays(structure: Structure, p: dict, xp=np) -> Device:
     # Direct recombination: `k_direct`, or in layers with `useLangevin` the Langevin rate
     # (`Calc_Langevin_Factor`); none on the electrodes.
     k_direct = p["k_direct"][lid]
+    langevin_field = None
     if st.langevin is not None and st.langevin.any():
         if st.langevin_mobility == "simss":
-            mob = interleaved("mu_n", "nu_int_n") + interleaved("mu_p", "nu_int_p")
+            mob_n, mob_p = interleaved("mu_n", "nu_int_n"), interleaved("mu_p", "nu_int_p")
         else:
-            mob = p["mu_n"][lid] + p["mu_p"][lid]
-        rate = p.get("preLangevin", xp.ones_like(p["k_direct"]))[lid] * Q * mob / (
+            mob_n, mob_p = p["mu_n"][lid], p["mu_p"][lid]
+        per_mob = p.get("preLangevin", xp.ones_like(p["k_direct"]))[lid] * Q / (
             p["eps_r"][lid] * EPS_0)  # fmt: skip
-        k_direct = xp.where(st.langevin[lid], rate, k_direct)
+        k_direct = xp.where(st.langevin[lid], per_mob * (mob_n + mob_p), k_direct)
+        dep = st.mob_dep if st.mob_dep is not None else np.zeros((len(st.langevin), 2), int)
+        field = interior & (st.langevin & dep.any(axis=1))[lid]
+        if field.any():  # the rate in the field of its interval (SIMsalabim's `mun[i]`)
+            langevin_field = {
+                "n": xp.where(field, per_mob * mob_n, 0.0),
+                "p": xp.where(field, per_mob * mob_p, 0.0),
+                "before": (field & iface & (st.langevin_mobility == "layer")).astype(float),
+            }
+            k_direct = xp.where(field, 0.0, k_direct)
     k_direct = xp.where(interior, k_direct, 0.0)
 
     trap = interior & st.traps[lid]
@@ -698,7 +709,7 @@ def device_arrays(structure: Structure, p: dict, xp=np) -> Device:
         pre_cond=st.pre_cond, V_pre=p["V_pre"], fix_ions=st.fix_ions, interface=interface,
         R_series=p.get("R_series", 0.0), R_shunt=p.get("R_shunt", -1.0), left_elec=st.left_elec,
         trap_charge=trap_charge, trap_cwe=trap_cwe, surface=surface,
-        mob_field=mob_field,
+        mob_field=mob_field, langevin_field=langevin_field,
     )  # fmt: skip
 
 

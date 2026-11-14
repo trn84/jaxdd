@@ -48,7 +48,8 @@ and 5.1 eV), two acceptor levels at the left interface from `int_traps.txt` (1.5
 `fieldmob_light/`: `thin_l1_light` with the field-dependent mobility (`mobnDep`, `mobpDep` = 1):
 `gamma_n`, `gamma_p` 1e-4 and 0 (m/V)^½ in the first layer, 3e-4 and 2e-4 in the absorber, the
 electrons' mobility constant and `gamma_p` 1e-4 in the last; SimSS 5.36 at
-`tolPois = tolDens = 1e-9`.
+`tolPois = tolDens = 1e-9`. `langevin_field_light/`: `fieldmob_light` with `langevin_light`'s
+Langevin recombination in all three layers; SimSS 5.36 at `tolPois = tolDens = 1e-9`.
 
 `resist_light/`: `thin_l1_light` with a series resistance of 2e-4 Ω m² and a shunt of 0.3 Ω m²
 (Stage B); SimSS 5.36.

@@ -193,7 +193,22 @@ def _stencils(dev: Device, xp=np) -> dict[str, jnp.ndarray]:
     if dev.mob_field is not None:  # the field-dependent mobility's `k` on each point's intervals
         kn, kp = dev.mob_field
         out.update(fn_m=kn[i - 1], fn_p=kn[i], fp_m=kp[i - 1], fp_p=kp[i])
+    if dev.langevin_field is not None:  # Langevin in the field (`Device.langevin_field`)
+        lf = dev.langevin_field
+        out.update(kln=lf["n"][i], klp=lf["p"][i], klb=lf["before"][i])
     return out
+
+
+def _direct_rate(Vl, Vm, Vr, s):
+    """`k_direct` at interior points from their own and their neighbours' potentials: the
+    stencils' where it is constant, plus Langevin's in the field of the point's interval where
+    it follows the field (`Device.langevin_field`)."""
+    if "kln" not in s:
+        return s["kd"]
+    before, after = sqrt_abs(Vm - Vl), sqrt_abs(Vr - Vm)
+    fn = jnp.where(s["klb"] > 0, jnp.exp(s["fn_m"] * before), jnp.exp(s["fn_p"] * after))
+    fp = jnp.where(s["klb"] > 0, jnp.exp(s["fp_m"] * before), jnp.exp(s["fp_p"] * after))
+    return s["kd"] + s["kln"] * fn + s["klp"] * fp
 
 
 #: A contact's branch (extraction or injection, `_contact_ends`) is changed during Newton only once
@@ -392,6 +407,8 @@ def _row(left, mid, right, s, Vt, g_frac, la, lc, B=bernoulli):
     lo_p = s["hp"] * mup_m * Vt * B(gp[1] - gp[0])
     up_p = s["hm"] * mup_p * Vt * B(gp[1] - gp[2])
     m_p = -(s["hm"] * mup_p * Vt * B(gp[2] - gp[1]) + s["hp"] * mup_m * Vt * B(gp[0] - gp[1]))
+    if "kln" in s:
+        s = dict(s, kd=_direct_rate(V[0], V[1], V[2], s))
     net = s["G"] * g_frac - _recombination(n[1], p[1], s)
     elec = lo_n * n[0] + m_n * n[1] + up_n * n[2] + s["fac"] * net
     hole = lo_p * p[0] + m_p * p[1] + up_p * p[2] + s["fac"] * net
@@ -465,11 +482,19 @@ def _assemble(full, s, Vt, g_frac, la, lc, B=bernoulli):
     # Per interior point i = 1 … NP: its left edge i − 1 ([:-1]) and right edge i ([1:]).
     Vm, nm, pm = V[1:-1], n[1:-1], p[1:-1]
     hm, hp, fac = s["hm"][:, None], s["hp"][:, None], s["fac"]
+    zm = jnp.zeros_like(Vm)
+    dR_V = None
+    if "kln" in s:  # Langevin in the field: the rate's derivative in the three potentials
+        Vl, Vr = V[:-2], V[2:]
+        kd, dk = zip(*(jax.jvp(lambda *a: _direct_rate(*a, s), (Vl, Vm, Vr), t)
+                       for t in ((jnp.ones_like(Vm), zm, zm), (zm, jnp.ones_like(Vm), zm),
+                                 (zm, zm, jnp.ones_like(Vm)))), strict=True)  # fmt: skip
+        s = dict(s, kd=kd[0])
+        dR_V = tuple((nm * pm - s["ni2"]) * d for d in dk)  # R is linear in k_direct
     R, dR_n = jax.jvp(lambda a: _recombination(a, pm, s), (nm,), (nm,))
     _, dR_p = jax.jvp(lambda b: _recombination(nm, b, s), (pm,), (pm,))
     net = s["G"] * g_frac - R
-    zm = jnp.zeros_like(Vm)
-    dnet = jnp.stack([zm, -dR_n, -dR_p], -1)
+    dnet = jnp.stack([zm if dR_V is None else -dR_V[1], -dR_n, -dR_p], -1)
     elec = hm[:, 0] * Fn[1:] - hp[:, 0] * Fn[:-1] + fac * net
     hole = hp[:, 0] * Fp[:-1] - hm[:, 0] * Fp[1:] + fac * net
     anion = s["a_mask"] * jnp.exp(la + Vm / Vt)
@@ -497,6 +522,12 @@ def _assemble(full, s, Vt, g_frac, la, lc, B=bernoulli):
         (hp * dFp1[:-1] - hm * dFp0[1:] + fac[:, None] * dnet) * sC,
     ], -2)  # fmt: skip
     C = jnp.stack([P_C * sP, hm * dFn1[1:] * sC, -hm * dFp1[1:] * sC], -2)
+    if dR_V is not None:  # the neighbours' potentials in the rate: the V columns of A and C
+
+        def column(d):  # rows (Poisson, electrons, holes): −fac·∂R/∂V, scaled
+            return jnp.stack([zm, -fac * d * s["sC"], -fac * d * s["sC"]], -1)
+
+        A, C = A.at[:, :, 0].add(column(dR_V[0])), C.at[:, :, 0].add(column(dR_V[2]))
     if "ti" in s:  # interface traps: their charge in Poisson, their capture in continuity
         X, own, up, down = _interface_terms(n, p, s["ti"])
         scale = jnp.stack([Q * s["sP"], -fac * s["sC"], -fac * s["sC"]], -1)  # rows (Q, Rn, Rp)
@@ -707,7 +738,10 @@ def _current(dev: Device, V, n, p, g_frac) -> float:
     Vt, x, h, L = dev.Vt, dev.x, dev.h, dev.L
     NP = len(x) - 2
     s_all = {key: np.zeros(NP + 2) for key in ("kd", "ni2", "Nt", "Cn", "Cp", "nt0", "pt0")}
-    s_all.update(kd=dev.k_direct, ni2=dev.ni**2, Nt=dev.srh_Nt, Cn=dev.srh_Cn,
+    kd = np.asarray(dev.k_direct, dtype=float).copy()
+    if dev.langevin_field is not None:  # Langevin in the converged field
+        kd[1:-1] = np.asarray(_direct_rate(V[:-2], V[1:-1], V[2:], _stencils(dev)))
+    s_all.update(kd=kd, ni2=dev.ni**2, Nt=dev.srh_Nt, Cn=dev.srh_Cn,
                  Cp=dev.srh_Cp, nt0=dev.srh_nt0, pt0=dev.srh_pt0)  # fmt: skip
     R = np.asarray(_recombination(n, p, s_all))
     R_int = (np.zeros(NP + 2), np.zeros(NP + 2))

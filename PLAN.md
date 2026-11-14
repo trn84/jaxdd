@@ -145,7 +145,7 @@ separate arrays, would spare a third of the blocks' writes and reads.
 Order: Stage B in JAX (done); then the kernel for the physics that has settled. A first
 measurement before deciding: the Newton step of Stage A's physics without ions as one CUDA
 kernel on devices without ions, against the JAX step's time on the A100. The fused kernel is not
-needed for the steady state; it is decided with Stage C's plan (sections 4 and 7).
+needed for the steady state; it is decided with Stage C's speed (section 4.1, step 8).
 
 ### 2.4 M7: what fits still need
 
@@ -217,8 +217,95 @@ inputs it refuses are SimSS's ionic regions that SimSS solves against what they 
 ([docs/differences.md](docs/differences.md) §10). After it:
 
 - **Stage C: transients (ZimT).** Time-dependent drift-diffusion with mobile ions: scan-rate
-  hysteresis, transient photocurrent and photovoltage, impedance. Its own plan, to be written
-  next. This is where a fused kernel is most likely needed (section 2.3).
+  hysteresis, transient photocurrent and photovoltage, trap filling. Its plan is section 4.1.
+  This is where a fused kernel is most likely needed (section 2.3).
+
+### 4.1 Stage C: transients, as ZimT 5.36 solves them
+
+**What ZimT is** (`ZimT/zimt.pas`, 600 lines, on `DDRoutines.pas`, which SimSS shares). It
+reads a list of `t Vext G_frac Track` from `tVGFile`; the first line must be `t = 0`, a steady
+state. At every line it solves one time step with the same `Main_Solver` as SimSS, with
+`dti = 1/Δt`:
+
+- **Electrons, holes and ions: implicit Euler** (Selberherr 6-4.32): the continuity equations
+  get `dti·(n − n_prev)` in each control volume; `dti = 0` is the steady state, so a step back to
+  `t = 0` is allowed.
+- **Traps: no new unknowns.** Each level's occupation follows the linear ODE
+  `df/dt = b − a·f` with `a`, `b` from `n`, `p` at the new time, solved over the step:
+  `f = b/a + (f_prev − b/a)·exp(−a·Δt)`, bulk and interface alike; the recombination in the
+  continuity equations is that ODE's capture integrated over the step, divided by `Δt`. The
+  occupations are state carried from step to step, explicit in `n`, `p` at the new time.
+- **Ions: full unknowns per grid point**, Scharfetter-Gummel fluxes, no flux through a region's
+  ends or the contacts, in every ionic region that is mobile (`UpdateIons` is always on: no
+  `preCond`, no `fixIons`). After each solve the region's density is rescaled to its total
+  (`Rescale_Ion_Density`, the trapezoid rule over the region): the discrete equation alone
+  does not conserve it (the region's end points take a whole control volume, a point at a
+  contact none). At convergence the state is therefore the scaled solution, not the discrete
+  equation's own: one unknown factor per region with the total as its constraint, which is
+  what Stage B's slots are.
+- **The current**: either form (`currDiffInt`) with `dti·(n − n_prev)` in the integral form's
+  integrand; the ions' currents and the displacement current `ε·dti·Δ(∂V/∂x)` added;
+  `Jint` the average over the grid.
+- **`Vext`**: given (`Vint = Vext`); with `R_series > 0` the `Vint` that gives it; `oc` the
+  open circuit (`Jext = 0`), at `t = 0` too. ZimT brackets `Vint` and runs Brent on whole
+  solves, up to 100 of them per step.
+- **Stopping**: `Track` 1 marks a reference state, 2 and 3 compare with it; five equal states
+  in a row stop the run (`MinCountStatic`). `failureMode` 0 stops at a failed step, 1 keeps it,
+  2 skips it.
+- **Output** `tJFile`: `t Vext Jext errJ Vint Jint G_frac`, the QFLS and the photo- and
+  recombination currents per layer and interface (bulk trapping per carrier, since the
+  two differ out of steady state), `JminLeft JminRight JShunt Jnion Jpion JD`.
+
+**How jaxdd solves it.** Newton on the whole step, as for the steady state: the same residual
+with the time terms, so ZimT's converged state is jaxdd's to round-off, as SimSS's is. A
+transient is a `lax.scan` over its steps, each one Newton solve from the step before; a batch
+is `vmap` over devices, each with its own `t`, `Vext`, `G_frac` (padded to one length). The
+steady state at `t = 0` is today's solver.
+
+- **Devices without mobile ions** keep the 3×3 blocks `(V, ln n, ln p)`; the trap occupations
+  ride along as state.
+- **With mobile ions** the blocks grow to 5×5 `(V, ln n, ln p, ln a, ln c)`, identity rows
+  where a species cannot be, and one slot per region (the rescaling). A batch takes 5×5 if
+  any device needs it. The sweep (scan and Pallas kernel) takes blocks of either size.
+- **`Vint` as an unknown**: for `oc` and for `R_series` one more bordered row (`Jext = 0`, or
+  `Vint + Jext·R_series = Vext`), which is a dense row of the grid, as the ion constraints
+  are. Newton finds `Vint` with the rest, where ZimT runs whole solves for it.
+- **Gradients** by forward tangents step by step, each one by the implicit function at its
+  step, as M7's fits take them; no reverse pass through time (it would hold every state).
+
+**Steps**, each validated against ZimT 5.36 at `tolPois = tolDens = 1e-9`:
+
+1. **The reference.** `zimt` in the image `jaxdd/simss:5.36` (built from `ZimT/zimt.pas`
+   of the same tag) beside `simss`; `read_tvg` (ZimT's checks as `ValueError`); `check_supported`
+   for ZimT's inputs. Done when a ZimT case runs in the image and its input is read.
+2. **Electrons and holes in time**, no traps, no ions, `Vext` given: the time terms, the
+   displacement current, both forms of the current, the scan over steps, batched.
+   Done when a light step at short circuit (photocurrent) and a fast voltage sweep match
+   ZimT within the validation criteria, single and batched.
+3. **Traps in time**: the occupations as state, their update and the integrated
+   recombination, bulk and interface, neutral and charged. Done when a light step with deep
+   traps (filling, then emptying in the dark) matches ZimT.
+4. **Mobile ions in time**: the 5×5 blocks, region ends and contacts as ZimT writes them, the
+   rescaling as a slot per region, the ions' currents. Done when hysteresis (forward and
+   back at two scan rates) with ions in the absorber and in a region of several layers
+   matches ZimT, batched with devices without ions.
+5. **`oc` and `R_series`**: `Vint` as an unknown. Done when photovoltage after a light pulse
+   at open circuit and a sweep with series resistance match ZimT, and `oc` at `t = 0`
+   matches SimSS's `Voc`.
+6. **Stopping, failures, output**: `Track` and `failureMode` per device, the `tJFile` columns.
+   Done when every input ZimT 5.36 takes runs on jaxdd or is refused by name.
+7. **Gradients through time**: tangents of a transient in its parameters. Done when they match
+   finite differences, and a fit of a transient recovers its parameters.
+8. **Speed**: a transient batch on the A100 (steps per second, Newton steps per time step, the
+   5×5 step's cost against the 3×3 one). Done when its numbers are in the handbook; with them
+   the fused kernel is decided (section 7).
+
+Where ZimT turns out wrong (the rescaling against conservation first), it is documented in
+docs/differences.md and the physically correct answer is a switch, as for SimSS.
+
+Later, not in Stage C: impedance in the frequency domain, from the steady state's Jacobian
+(`(J + iω·M)·δx = b`, one complex solve per frequency) instead of a transient per frequency;
+ZimT has no reference for it but its own time-domain response.
 
 Not planned: a line-by-line port of SIMsalabim (its one-device Gummel structure does not batch),
 a GUI. SimSS stays the reference jaxdd is validated against.
@@ -302,5 +389,5 @@ microseconds per evaluation are needed.
 
 | Decision | When | With |
 |---|---|---|
-| The fused kernel as an optional mode (2.3) | with Stage C's plan | the applications' needs (section 5) and a first measurement of a Stage A kernel |
+| The fused kernel as an optional mode (2.3) | after Stage C's step 8 (4.1) | the applications' needs (section 5) and a first measurement of a Stage A kernel |
 | The steric ion model and its `N_max` | when a source for `N_max` is found | its users: results with and without it differ at high ion density |

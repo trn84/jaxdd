@@ -21,7 +21,14 @@ import jax.numpy as jnp
 from bench import variants
 
 from jaxdd.batch import _bounds, _current, _initial, prepare
-from jaxdd.solver import BERNOULLI, _assemble, _block_thomas, _ion_constraints, _kernels
+from jaxdd.solver import (
+    BERNOULLI,
+    _assemble,
+    _block_thomas,
+    _ion_constraints,
+    _kernels,
+    _point_logs,
+)
 from jaxdd.sweep import (
     MOSAIC_TILE,
     SWEEP_TILE,
@@ -55,21 +62,23 @@ def main(batch_size: int = 256) -> None:
         bounds = _bounds(d, Vint)
         y = _initial(d, Vint)[1:-1]
         full = jnp.concatenate([bounds[0][None], y, bounds[1][None]])
-        return full, jnp.zeros(2)
+        return full, jnp.zeros(d["ion"]["a_slots"].shape[0] + d["ion"]["c_slots"].shape[0])
 
     def residual(d):
         full, logs = state(d)
-        args = (full[:-2], full[1:-1], full[2:], d["s"], d["Vt"], d["g_frac"], logs[0], logs[1])
+        la, lc = _point_logs(logs, d["ion"])
+        args = (full[:-2], full[1:-1], full[2:], d["s"], d["Vt"], d["g_frac"], la, lc)
         return row_val(*args)
 
     def jacobian(d):
         full, logs = state(d)
-        args = (full[:-2], full[1:-1], full[2:], d["s"], d["Vt"], d["g_frac"], logs[0], logs[1])
+        la, lc = _point_logs(logs, d["ion"])
+        args = (full[:-2], full[1:-1], full[2:], d["s"], d["Vt"], d["g_frac"], la, lc)
         return row_jac(*args), row_ions(*args)
 
     def assembled(d):
         full, logs = state(d)
-        return _assemble(full, d["s"], d["Vt"], d["g_frac"], logs[0], logs[1],
+        return _assemble(full, d["s"], d["Vt"], d["g_frac"], *_point_logs(logs, d["ion"]),
                          BERNOULLI["exact"])  # fmt: skip
 
     def constraint(d):
@@ -77,7 +86,7 @@ def main(batch_size: int = 256) -> None:
 
         def g(V_interior, logs_):
             V_full = jnp.concatenate([full[:1, 0], V_interior, full[-1:, 0]])
-            return _ion_constraints(V_full, logs_[0], logs_[1], d["ion"])
+            return _ion_constraints(V_full, logs_, d["ion"])
 
         return jax.jacrev(g, argnums=(0, 1))(full[1:-1, 0], logs)
 

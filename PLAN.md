@@ -214,23 +214,14 @@ density; open). Not started.
 
 ## 4 The physics in stages
 
-What jaxdd solves today ("Stage A") is in [docs/overview.md](docs/overview.md). After it:
+SimSS 5.36's steady state (Stages A and B) is done: an input runs on jaxdd or is refused with
+the reason named, and what jaxdd solves is in [docs/overview.md](docs/overview.md); the two
+inputs it refuses are SimSS's ionic regions that SimSS solves against what they say
+([docs/differences.md](docs/differences.md) §10). After it:
 
-- **Stage B: SimSS's steady state in full.** One module at a time, each validated against SimSS
-  on its own test devices before the next. Done: bulk and interface traps, neutral or
-  charged, one level or several from trap files; series and shunt resistance, SimSS's external
-  circuit; the generation profile by the transfer-matrix method, differentiable in the
-  thicknesses, and uniform; the left electrode as the anode; the contacts' finite surface
-  recombination and `sfb` work functions; Langevin recombination; the field-dependent mobility,
-  also with Langevin in the same layer; the field-dependent generation (Braun's dissociation);
-  the current in SimSS's differential form (`currDiffInt = 1`); ions in a region across layers
-  and held from the start (`fixIons` without `preCond`) ([docs/model.md](docs/model.md));
-  SimSS's voltages, `Vdist` 1 and 2, are `simss_voltages`. Left, still refused by name: two
-  mobile regions of one species (each its own normalisation, one more unknown per region).
-  At the end, a SimSS input runs on jaxdd or is refused with the missing feature named.
 - **Stage C: transients (ZimT).** Time-dependent drift-diffusion with mobile ions: scan-rate
-  hysteresis, transient photocurrent and photovoltage, impedance. Its own plan when Stage B is
-  done. This is where a fused kernel is most likely needed (section 1.2).
+  hysteresis, transient photocurrent and photovoltage, impedance. Its own plan, to be written
+  next. This is where a fused kernel is most likely needed (section 1.2).
 
 Not planned: a line-by-line port of SIMsalabim (its one-device Gummel structure does not batch),
 a GUI. SimSS stays the reference jaxdd is validated against.

@@ -93,6 +93,11 @@ so that the solver is never the larger error in what is computed from it.
   and gold, and on a 20/500/10 nm stack between glass, 150 nm ITO and silver, the profile on the
   grid is SimSS's within 4e-12 and the curves within 2e-7 and 6e-7 of SimSS's scale; a uniform
   profile (`genProfile = none`) within 2.4e-6.
+- **Two mobile regions of a species** (2026-11-14): anions and cations mobile in both
+  transport layers of a p-i-n cell, the absorber closed to them (`tests/data/two_regions_light`),
+  each region its own normalisation: within 6.8e-7 of SimSS's scale where it converged, by both
+  solvers, in a batch beside a device of one region per species, which keeps its curve to
+  4.1e-7; the gradient in one region's ion density against finite differences.
 - **Ions across layers and held from the start** (2026-11-14): one ionic region of two layers,
   free ions entering the 20 nm ETL of a p-i-n cell (`tests/data/region_etl_light`) and ions
   entering its 10 nm HTL, frozen after a pre-bias (`region_htl_frozen_light`): within 1.7e-7
@@ -252,7 +257,8 @@ convergence", and a rerun at tight tolerances. The cases where SimSS was wrong s
 | `test_the_differential_current_reproduces_simss` | `currDiffInt = 1` (`tests/data/diff_iface_light`) to 1e-9 of SimSS's scale, single and in a batch with the integral form |
 | `test_ions_held_from_the_start_reproduce_simss` | `fixIons` without `preCond` against the patched SimSS, to 1e-9 of its scale |
 | `test_ions_in_a_region_across_layers_reproduce_simss` | an ionic region of two layers, free and frozen, against SimSS |
-| `test_ionic_regions_as_simss_finds_them` | `ion_regions` as SimSS's `Init_Ionic_Region`, and what is refused (two mobile regions, differences.md §10) |
+| `test_two_mobile_regions_of_a_species_reproduce_simss` | two regions per species (four normalisations) against SimSS, single and in a padded batch |
+| `test_ionic_regions_as_simss_finds_them` | `ion_regions` as SimSS's `Init_Ionic_Region`, and what is refused (differences.md §10) |
 | `test_voltages_are_simss_own` | `simss_voltages` against the voltages of every SimSS run in `tests/data` |
 | `test_logarithmic_downward_scan_reproduces_simss` | `Vdist = 2`, `Vscan = -1` (`tests/data/logv_light`): SimSS's voltages and curve, to 2e-6 of its scale |
 | `test_voltages_from_experimental_data_and_simss_checks` | `useExpData` (`expJV`'s voltages, in the file's order) and SimSS's checks on the voltage parameters |

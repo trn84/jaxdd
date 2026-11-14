@@ -194,21 +194,18 @@ def setup_from_texts(files: Mapping[str, str], setup: str = "simulation_setup.tx
 #: resistance; the generation profile; the left electrode as the anode; finite surface
 #: recombination at the contacts and 'sfb' work functions; Langevin recombination; the
 #: field-dependent mobility and generation; either form of the current, `currDiffInt` 1 or
-#: 2). Mobile ions in one region per species, of one layer or several (`ion_regions`), steady
+#: 2). Mobile ions in regions of one layer or several (`ion_regions`), any per species, steady
 #: (free at every voltage) or held after a pre-bias (`preCond`, `fixIons`, as SimSS with
 #: `simss/fixed_ions.patch`: Poisson leaves them) or from the start (`fixIons` alone). The
 #: voltages are the caller's (`simss_voltages` gives SimSS's, for either `Vdist`). Anything
 #: else is refused by name, never approximated.
 def ion_region_problems(setup: Setup) -> list[str]:
-    """What jaxdd does not take of the ionic regions (`ion_regions`): more than one mobile
-    region of a species, and SimSS 5.36's two quirks with regions of several layers, which it
-    would solve differently from what the input says (docs/differences.md §10)."""
+    """What jaxdd does not take of the ionic regions (`ion_regions`): SimSS 5.36's two quirks
+    with regions of several layers, which it would solve differently from what the input says
+    (docs/differences.md §10)."""
     problems = []
     for species in ("anion", "cation"):
-        regions = ion_regions(setup, species)
-        if sum(mobile for _, _, mobile in regions) > 1:
-            problems.append(f"mobile {species}s in more than one ionic region")
-        for first, last, mobile in regions:
+        for first, last, mobile in ion_regions(setup, species):
             if first == last:
                 continue
             span = [setup.layers[k] for k in range(first, last + 1)]

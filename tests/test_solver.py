@@ -196,10 +196,58 @@ def test_ions_in_a_region_across_layers_reproduce_simss(case, layers, tol) -> No
     assert np.max(np.abs(np.asarray(J)[0] - ref["Jext"])) < tol * scale
 
 
+def test_two_mobile_regions_of_a_species_reproduce_simss() -> None:
+    """Anions and cations each mobile in the ETL and in the HTL, the absorber closed to them:
+    two regions per species, each its own normalisation (`solver._slots`, four in all); both
+    solvers against SimSS at tolerances of 1e-9, where it converged, the batch beside a device
+    of one region per species (padded with empty slots), which keeps its own curve."""
+    from jaxdd.batch import prepare, solve_batch
+
+    setup = read_setup(DATA / "two_regions_light" / "simulation_setup.txt")
+    check_supported(setup)
+    dev = build_device(setup)
+    assert dev.anion_slots.shape[0] == 2 and dev.cation_slots.shape[0] == 2
+    ref = np.genfromtxt(DATA / "two_regions_light" / "JV.dat", names=True)
+    other = build_device(read_setup(DATA / "pin_iface_light" / "simulation_setup.txt"))
+    oref = np.genfromtxt(DATA / "pin_iface_light" / "JV.dat", names=True)[: ref.size]
+    assert np.array_equal(oref["Vint"], ref["Vint"])
+    single = solve_jv(dev, ref["Vint"], bernoulli_name="simss")
+    J, ok, _ = solve_batch(prepare([dev, other]), ref["Vint"], bernoulli_name="simss")
+    assert single.converged.all() and np.asarray(ok).all()
+    for got, r in ((single.J, ref), (np.asarray(J)[0], ref), (np.asarray(J)[1], oref)):
+        assert np.max(np.abs(got - r["Jext"])) < 2e-6 * np.max(np.abs(r["Jext"]))
+
+
+def test_the_gradient_in_one_regions_ions_is_finite_differences() -> None:
+    """With two mobile regions per species, the curve's derivative in the ETL's anion and the
+    HTL's cation density, through `device_tree` and the converged solution, against central
+    finite differences."""
+    from jaxdd.batch import device_tree, solve_batch
+    from jaxdd.device import device_parameters
+
+    structure, params = device_parameters(read_setup(DATA / "two_regions_light" /
+                                                     "simulation_setup.txt"))  # fmt: skip
+    V = np.round(np.arange(-0.1, 0.9 + 1e-9, 0.1), 6)
+    w = jnp.asarray(np.random.default_rng(0).normal(size=len(V)))
+
+    def loss(a):
+        p = dict(params)
+        p["N_anion"] = jnp.asarray(params["N_anion"]).at[0].multiply(jnp.exp(a))
+        p["N_cation"] = jnp.asarray(params["N_cation"]).at[2].multiply(jnp.exp(-0.7 * a))
+        batch = jax.tree_util.tree_map(lambda v: v[None], device_tree(structure, p))
+        J, ok, _ = solve_batch(batch, V)
+        return jnp.sum(w * jnp.where(ok[0], J[0], 0.0))
+
+    _, by_jvp = jax.jvp(loss, (0.0,), (1.0,))
+    h = 1e-5
+    fd = (float(loss(h)) - float(loss(-h))) / (2 * h)
+    assert abs(float(by_jvp) - fd) < 1e-6 * abs(fd)
+
+
 def test_ionic_regions_as_simss_finds_them(tmp_path) -> None:
-    """`ion_regions` as SIMsalabim's `Init_Ionic_Region`, and what is refused: two mobile regions
-    of a species, and SimSS 5.36's two quirks with regions of several layers (docs/
-    differences.md §10); mobile ions in a layer they may not enter are SimSS's input error."""
+    """`ion_regions` as SIMsalabim's `Init_Ionic_Region`, and what is refused: SimSS 5.36's two
+    quirks with regions of several layers (docs/differences.md §10); mobile ions in a layer
+    they may not enter are SimSS's input error."""
     from jaxdd.simss_input import ion_region_problems, ion_regions
 
     case = DATA / "pin_iface_light"
@@ -234,7 +282,7 @@ def test_ionic_regions_as_simss_finds_them(tmp_path) -> None:
     own = {**enter, "N_anion": 1e21}
     two = setup(**{l1: own, "L2_parameters.txt": closed, l3: own})
     assert ion_regions(two, "anion") == [(0, 0, True), (2, 2, True)]
-    assert any("more than one ionic region" in p for p in ion_region_problems(two))
+    assert ion_region_problems(two) == []
     with pytest.raises(NotImplementedError, match="mobility 0"):
         check_supported(last)
     with pytest.raises(NotImplementedError, match="takes in layer 1"):
@@ -449,7 +497,7 @@ def test_the_contacts_jacobian_is_autodiff(surface: str, field: bool) -> None:
     noise[1:-1] = np.random.default_rng(3).normal(0, 1, (NP, 3)) * np.array([dev.Vt, 1.0, 1.0])
     full = jnp.asarray(y0 + noise)
     ion = jax.tree_util.tree_map(jnp.asarray, _ion_setup(dev))
-    la, lc = S._ion_logs(full[:, 0], ion)
+    la, lc = S._point_logs(S._ion_logs(full[:, 0], ion), ion)
 
     def residual(y):
         return _assemble(full.at[1:-1].set(y), s, dev.Vt, dev.G_frac, la, lc, bernoulli)[0]
@@ -865,7 +913,7 @@ def test_the_interface_traps_jacobian_is_autodiff(case: str) -> None:
     noise[1:-1] = np.random.default_rng(2).normal(0, 1, (NP, 3)) * np.array([dev.Vt, 1.0, 1.0])
     full = jnp.asarray(y0 + noise)
     ion = jax.tree_util.tree_map(jnp.asarray, _ion_setup(dev))
-    la, lc = S._ion_logs(full[:, 0], ion)
+    la, lc = S._point_logs(S._ion_logs(full[:, 0], ion), ion)
 
     def residual(y):
         return _assemble(full.at[1:-1].set(y), s, dev.Vt, dev.G_frac, la, lc, bernoulli)[0]
@@ -897,7 +945,7 @@ def test_free_ions_keep_their_number() -> None:
     rng = np.random.default_rng(0)
     V = jnp.asarray(rng.normal(0.0, 0.3, len(dev.x)))
     logs = S._ion_logs(V, ion)
-    g = S._ion_constraints(V, logs[0], logs[1], ion)
+    g = S._ion_constraints(V, logs, ion)
     assert np.allclose(np.asarray(g), 0.0, atol=1e-12)
 
 
@@ -1022,8 +1070,9 @@ def test_the_jacobian_by_edges_is_autodiff_of_the_rows(case: str, bern: str) -> 
     noise[1:-1] = rng.normal(0, 1, (NP, 3)) * np.array([5 * dev.Vt, 2.0, 2.0])
     noise[1:-1:7, 0] = 0.0  # some neighbours at exactly equal potential: B's series
     full = jnp.asarray(y0 + noise)
-    la, lc = S._ion_logs(full[:, 0], {k: jnp.asarray(v) if isinstance(v, np.ndarray) else v
-                                      for k, v in _ion_setup(dev).items()})  # fmt: skip
+    ion = {k: jnp.asarray(v) if isinstance(v, np.ndarray) else v
+           for k, v in _ion_setup(dev).items()}  # fmt: skip
+    la, lc = S._point_logs(S._ion_logs(full[:, 0], ion), ion)
     B = BERNOULLI[bern]
     row_val, row_jac, row_ions = _kernels(B)
     args = (full[:-2], full[1:-1], full[2:], s, dev.Vt, dev.G_frac, la, lc)
@@ -1154,7 +1203,7 @@ def _scaled(batch, a):
     the anions' total, the doping and the pre-bias."""
     s = dict(batch["s"], mun_m=batch["s"]["mun_m"] * a[0], G=batch["s"]["G"] * a[1],
              dop=batch["s"]["dop"] + 1e21 * (a[3] - 1))  # fmt: skip
-    ion = dict(batch["ion"], a_total=batch["ion"]["a_total"] * a[2])
+    ion = dict(batch["ion"], a_totals=batch["ion"]["a_totals"] * a[2])
     return dict(batch, s=s, ion=ion, G=batch["G"] * a[1], V_pre=batch["V_pre"] + 0.1 * (a[4] - 1))
 
 
@@ -1205,30 +1254,31 @@ def test_a_voltage_not_converged_has_zero_gradient() -> None:
     assert np.all(jac[~ok] == 0.0) and np.any(jac[ok] != 0.0)
 
 
-def test_the_bordered_system_and_its_transpose_are_solved() -> None:
-    """Invariant: `_bordered_solve` solves the block-tridiagonal system bordered by the ions' two
-    rows and columns, and on `_transposed` blocks its transpose; `_apply` is its product. Against
-    the dense matrix."""
+@pytest.mark.parametrize("K", [2, 4])
+def test_the_bordered_system_and_its_transpose_are_solved(K: int) -> None:
+    """Invariant: `_bordered_solve` solves the block-tridiagonal system bordered by the ions' K
+    rows and columns (one per slot, `solver._slots`), and on `_transposed` blocks its
+    transpose; `_apply` is its product. Against the dense matrix."""
     from jaxdd.batch import _apply, _bordered_solve, _transposed
 
     rng = np.random.default_rng(2)
     n = 11
     A, C = rng.normal(size=(n, 3, 3)), rng.normal(size=(n, 3, 3))
     B = rng.normal(size=(n, 3, 3)) + 8 * np.eye(3)
-    U, W = rng.normal(size=(n, 3, 2)), rng.normal(size=(n, 3, 2))
-    D = rng.normal(size=(2, 2)) + 30 * np.eye(2)
-    full = np.zeros((3 * n + 2, 3 * n + 2))
+    U, W = rng.normal(size=(n, 3, K)), rng.normal(size=(n, 3, K))
+    D = rng.normal(size=(K, K)) + 30 * np.eye(K)
+    full = np.zeros((3 * n + K, 3 * n + K))
     for i in range(n):
         full[3 * i : 3 * i + 3, 3 * i : 3 * i + 3] = B[i]
         if i > 0:
             full[3 * i : 3 * i + 3, 3 * i - 3 : 3 * i] = A[i]
         if i < n - 1:
             full[3 * i : 3 * i + 3, 3 * i + 3 : 3 * i + 6] = C[i]
-    full[: 3 * n, 3 * n :] = U.reshape(3 * n, 2)
-    full[3 * n :, : 3 * n] = W.reshape(3 * n, 2).T
+    full[: 3 * n, 3 * n :] = U.reshape(3 * n, K)
+    full[3 * n :, : 3 * n] = W.reshape(3 * n, K).T
     full[3 * n :, 3 * n :] = D
     blocks = tuple(map(jnp.asarray, (A, B, C, U, W, D)))
-    r, rg = rng.normal(size=(n, 3)), rng.normal(size=2)
+    r, rg = rng.normal(size=(n, 3)), rng.normal(size=K)
     rhs = np.concatenate([r.ravel(), rg])
     for matrix, b in ((full, blocks), (full.T, _transposed(blocks))):
         x, z = _bordered_solve(b, jnp.asarray(r), jnp.asarray(rg))
@@ -1246,7 +1296,7 @@ def test_the_bordered_system_and_its_transpose_are_solved() -> None:
      "calc_light", "none_light", "pin_anode_left_light", "bulk_acceptor_light",
      "trapfiles_light", "surface_light", "langevin_light", "fieldmob_light",
      "langevin_field_light", "braun_light", "diff_iface_light", "held_thin_light",
-     "region_etl_light", "region_htl_frozen_light"],
+     "region_etl_light", "region_htl_frozen_light", "two_regions_light"],
 )  # fmt: skip
 def test_the_device_in_jax_is_numpys(case: str) -> None:
     """`batch.device_tree` (the device in `jax.numpy` from its structure and parameters) gives

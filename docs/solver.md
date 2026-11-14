@@ -32,9 +32,11 @@ At each interior grid point `i = 1 … NP`, three unknowns:
 y[i] = ( V[i], ln n[i], ln p[i] )
 ```
 
-plus two scalars for the ions, `ln C_a` and `ln C_c`, the logarithms of the Boltzmann
-normalisations of free anions and cations ([model.md](model.md)). A species that is not free
-(none, immobile, or frozen) keeps its scalar fixed by an identity row.
+plus one scalar per mobile region of each ion species, the logarithm `ln C` of its Boltzmann
+normalisation ([model.md](model.md)): with one region each, `ln C_a` and `ln C_c`. A species
+that is not free (none, immobile, or frozen) keeps its scalar fixed by an identity row, and so
+does a slot a batch pads with (`solver._slots`: the anions' regions first, then the cations',
+at least one each; a batch takes the most of any of its devices).
 
 The logarithms keep the densities positive and put their 20 orders of magnitude into a range
 where a Newton step is well scaled. The boundary values (`V`, `ln n`, `ln p` at both contacts)
@@ -167,7 +169,7 @@ flowchart TD
     A --> E["ion constraints g and their row W, D<br/>jax.jacrev (2 outputs)"]
     C --> F["block Thomas sweep<br/>3 right-hand sides: −F and the 2 ion columns"]
     D --> F
-    F --> G["2×2 Schur complement<br/>→ correction of the ion scalars"]
+    F --> G["K×K Schur complement<br/>→ correction of the ion scalars"]
     E --> G
     G --> H["correction of y"]
     H --> I["damp: |ΔV| ≤ 10 V_T,<br/>|Δ ln n|, |Δ ln p|, |Δ ln C| ≤ 5"]
@@ -230,26 +232,28 @@ equals it to 1e-11 (tests). It was the solver's assembly before; two things repl
   shortcuts reaches its 1e-10 step at every voltage, in about 5 steps, where the row form
   stalled at a third to a half of the voltages.
 
-The ion scalars enter every Poisson row of their layer, through the Boltzmann densities
-`exp(ln C ± V/V_T)`: two extra columns `U` (NP × 3 × 2), assembled with the rest. The two constraints, "each free species holds its number of
-ions", depend on the potential at every point of its layer; their derivatives (two rows `W` and
-a 2×2 corner `D`) come from `jax.jacrev`, two reverse passes for two outputs. (Forward mode
-there would take `NP` passes; it once cost 90 % of a Newton step.)
+The ion scalars enter every Poisson row of their region, through the Boltzmann densities
+`exp(ln C ± V/V_T)`: K extra columns `U` (NP × 3 × K, K = 2 with one region per species),
+assembled with the rest as each point's anion and cation column and then split by region. The K
+constraints, "each region holds its number of ions", depend on the potential at every point of
+its region; their derivatives (K rows `W` and a K×K corner `D`) come from `jax.jacrev`, K
+reverse passes for K outputs. (Forward mode there would take `NP` passes; it once cost 90 % of a
+Newton step.)
 
 ### The bordered system
 
-With free ions the system is block tridiagonal, bordered by two rows and two columns:
+With free ions the system is block tridiagonal, bordered by K rows and K columns:
 
 ```
 | J   U | | δy |   | −F |        J: block tridiagonal (A, B, C)
-| Wᵀ  D | | δl | = | −g |        U, W: NP×3×2, D: 2×2
+| Wᵀ  D | | δl | = | −g |        U, W: NP×3×K, D: K×K
 ```
 
 It is solved by the Sherman–Morrison–Woodbury identity on top of one block sweep:
 
 ```text
-[X_F | X_U] ← J⁻¹ · [ −F | U ]              # one sweep, three right-hand sides
-S           ← D − Wᵀ·X_U                     # 2×2 Schur complement
+[X_F | X_U] ← J⁻¹ · [ −F | U ]              # one sweep, 1 + K right-hand sides
+S           ← D − Wᵀ·X_U                     # K×K Schur complement
 δl          ← S⁻¹ · (−g − Wᵀ·X_F)
 δy          ← X_F − X_U · δl
 ```
@@ -437,7 +441,7 @@ ion normalisations and `θ` everything else (the device's arrays, the voltage). 
 
 One linear solve per voltage, with the blocks of the last Newton step, and one forward-mode pass
 through the residual for the right-hand side; the current's tangent follows from `ẏ`. A held
-normalisation (a species without a mobile region) has the identity row of the Newton step, and its
+normalisation (a species without a mobile region, or a padded slot) has the identity row of the Newton step, and its
 residual row is its own value, so that the derivative stays that row.
 
 Reverse mode transposes the solve. The transposed system is block tridiagonal again, its blocks

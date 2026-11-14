@@ -207,9 +207,10 @@ class Device:
     G_frac: float
     i0: tuple[int, ...]
     i1: tuple[int, ...]
-    # Ions (SIMsalabim's `Init_Ionic_Region`, one mobile region per species, of one layer or
-    # several): per species, the mobile region's mask and the number of ions per area it holds
-    # (N·L summed over its layers), or a fixed density where they cannot move.
+    # Ions (SIMsalabim's `Init_Ionic_Region`, mobile regions of one layer or several): per
+    # species, the mobile regions' mask and the number of ions per area they hold (N·L summed
+    # over their layers; each region's in `anion_slots`, below, if there are several), or a fixed
+    # density where they cannot move.
     anion_mask: np.ndarray
     cation_mask: np.ndarray
     anion_total: float
@@ -266,6 +267,13 @@ class Device:
     # SIMsalabim's `currDiffInt = 1`: the current from each interval's Scharfetter–Gummel flux
     # (`Calc_Curr_Diff`) instead of the integral form (`Calc_Curr_Int`, 2), averaged alike.
     curr_diff: bool = False
+    # Each species' mobile regions one by one (regions × NP + 2 masks, and each region's ions
+    # per area): each has its own normalisation. `anion_mask` and `anion_total` are their union
+    # and sum. None: the one region of `anion_mask`, or none.
+    anion_slots: np.ndarray | None = None
+    anion_totals: np.ndarray | None = None
+    cation_slots: np.ndarray | None = None
+    cation_totals: np.ndarray | None = None
 
 
 @dataclass(frozen=True)
@@ -310,6 +318,8 @@ class Structure:
     optics: dict | None = None
     left_elec: int = -1
     curr_diff: bool = False  # `currDiffInt = 1` (`Device.curr_diff`)
+    anion_region: np.ndarray = None  # per layer: its mobile region's index, −1 none
+    cation_region: np.ndarray = None
 
 
 #: How finite surface recombination at a contact (`S_n_L`, …, ≥ 0) acts: "extraction" as
@@ -427,11 +437,12 @@ def device_parameters(
     if problems:
         raise NotImplementedError("; ".join(problems))
 
-    def region(species):  # per layer: in the species' mobile region (`ion_regions`), if they move
-        inside = np.zeros(len(layers), dtype=bool)
-        for first, last, mobile in ion_regions(setup, species):
-            inside[first : last + 1] |= mobile and not held
-        return inside
+    def region(species):  # per layer: its mobile region's index (`ion_regions`), −1 none
+        index = -np.ones(len(layers), dtype=int)
+        mobile = [(a, b) for a, b, moves in ion_regions(setup, species) if moves and not held]
+        for k, (first, last) in enumerate(mobile):
+            index[first : last + 1] = k
+        return index
 
     bulk_file = flags(lambda ly: _named(ly, "bulkTrapFile"))
     int_file = np.array([_named(ly, "intTrapFile") for ly in layers[:-1]] + [False])
@@ -440,9 +451,9 @@ def device_parameters(
         NP=NP, i0=tuple(i0), i1=tuple(i1), lid=lid, raw=raw, norm=norm,
         layer_gen=flags(lambda ly: ly.i("layerGen")),
         traps=flags(lambda ly: ly.f("N_t_bulk") != 0) | bulk_file,
-        anion_mobile=region("anion"),
+        anion_mobile=region("anion") >= 0, anion_region=region("anion"),
         anion_fixed=flags(lambda ly: ly.f("N_anion") != 0 and (ly.f("mu_anion") == 0 or held)),
-        cation_mobile=region("cation"),
+        cation_mobile=region("cation") >= 0, cation_region=region("cation"),
         cation_fixed=flags(lambda ly: ly.f("N_cation") != 0 and (ly.f("mu_cation") == 0 or held)),
         pre_cond=bool(setup.i("preCond")), fix_ions=bool(setup.i("fixIons")),
         int_traps=np.array([float(ly.raw.get("N_t_int", "0")) != 0 for ly in layers[:-1]]
@@ -714,11 +725,18 @@ def device_arrays(structure: Structure, p: dict, xp=np) -> Device:
     for species in ("anion", "cation"):
         conc = p[f"N_{species}"]
         mobile, fixed = getattr(st, f"{species}_mobile"), getattr(st, f"{species}_fixed")
+        index = getattr(st, f"{species}_region")
+        if index is None:
+            index = np.where(mobile, 0, -1)
+        regions = range(int(index.max()) + 1)
         ions[species] = (
             mobile[lid],
             xp.sum(xp.where(mobile, p["L"] * conc, 0.0)),
             xp.where(fixed[lid], conc[lid], 0.0),
-        )
+            np.stack([index[lid] == k for k in regions]) if len(regions) > 1 else None,
+            xp.stack([xp.sum(xp.where(index == k, p["L"] * conc, 0.0)) for k in regions])
+            if len(regions) > 1 else None,
+        )  # fmt: skip
 
     dos = Vt * xp.log(N_c / N_c[0])
     W_L, W_R = p["W_L"], p["W_R"]
@@ -783,6 +801,8 @@ def device_arrays(structure: Structure, p: dict, xp=np) -> Device:
         trap_charge=trap_charge, trap_cwe=trap_cwe, surface=surface,
         mob_field=mob_field, langevin_field=langevin_field, braun=braun,
         curr_diff=st.curr_diff,
+        anion_slots=ions["anion"][3], anion_totals=ions["anion"][4],
+        cation_slots=ions["cation"][3], cation_totals=ions["cation"][4],
     )  # fmt: skip
 
 

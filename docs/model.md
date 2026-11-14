@@ -271,8 +271,10 @@ Anions and cations each have a density `N` and a mobility in a layer. Three case
 
   over the species' ionic region (`Init_Ionic_Region`): its layer, or a run of adjacent layers
   that each let it enter (`ionsMayEnter`), one profile across their interfaces, the sum over the
-  region's layers. The integral is SimSS's trapezoidal rule over the region. The normalisations `C_a`, `C_c` are
-  two extra unknowns of the Newton system ([solver.md](solver.md)). SimSS builds the same
+  region's layers. The integral is SimSS's trapezoidal rule over the region. A species may have
+  several regions (in both transport layers, say, the absorber closed to it), each with its own
+  normalisation; with one region each these are `C_a`, `C_c`, extra unknowns of the Newton system
+  ([solver.md](solver.md)). SimSS builds the same
   profile as a product of Bernoulli ratios, which equals the exponential only with the exact
   `B` ([differences.md](differences.md) §3).
 - **Frozen** (`preCond = 1`, `fixIons = 1`): the free profile at the pre-bias `Vpre`, then held
@@ -284,9 +286,8 @@ Anions and cations each have a density `N` and a mobility in a layer. Three case
   the whole scan: the same as immobile ions (the patched SimSS; unpatched, Poisson moves them,
   40 % of the current's scale on `tests/data/held_thin_light`).
 
-Each species has one mobile region; two (anions in the ETL and in the HTL, say, each its own)
-are refused, and so are two of SimSS's regions of several layers that it would solve against
-the input ([differences.md](differences.md) §10).
+Two of SimSS's regions of several layers are refused: those it would solve against the input
+([differences.md](differences.md) §10).
 
 ## The current (`Calc_Curr_Int`, `Calc_Curr_Diff`, `Calc_All_Currents`)
 

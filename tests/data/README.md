@@ -62,6 +62,11 @@ same with the HTL instead, the ions settled at the pre-bias 0 V and frozen (`pre
 `fixIons`; SimSS with the patch above). Both SimSS 5.36 at `tolPois = tolDens = 1e-9`, which
 converges up to 0.975 V and 0.9 V.
 
+`two_regions_light/`: `pin_iface_light` with mobile anions and cations in both transport
+layers (2e22 and 1e22 m⁻³ in the ETL, 5e21 and 3e22 in the HTL, mobilities 1e-12 m²/Vs) and
+none in the absorber, which they may not enter: two regions per species; SimSS 5.36 at
+`tolPois = tolDens = 1e-9`, which converges up to 0.95 V.
+
 `held_thin_light/`: `steady_1e17_thin_light` with 8e22 anions per m³ instead of 1e23 (a net
 charge of 2e22 m⁻³) held from the start (`fixIons = 1`, `preCond = 0`): run by SimSS 5.36 with
 [`simss/fixed_ions.patch`](../../simss/fixed_ions.patch) at `tolPois = tolDens = 1e-9`.

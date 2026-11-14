@@ -545,7 +545,7 @@ def _kernels(B):
     """The batched residual, its Jacobian blocks and its derivative in the ions'
     normalisations, of `_row` with Bernoulli function `B`."""
     row = functools.partial(_row, B=B)
-    axes = (0, 0, 0, 0, None, None, None, None)
+    axes = (0, 0, 0, 0, None, None, 0, 0)
     return (
         jax.vmap(row, in_axes=axes),
         jax.vmap(jax.jacfwd(row, argnums=(0, 1, 2)), in_axes=axes),
@@ -679,19 +679,44 @@ def _assemble(full, s, Vt, g_frac, la, lc, B=bernoulli):
     return F, A, Bb, C, U
 
 
-def _ion_constraints(V_full, la, lc, ion):
-    """`(g_a, g_c)`: each mobile species' number over its total, less 1 (trapezoidal over its
-    region, as SIMsalabim's `Rescale_Ion_Density`); 0 for a species without one."""
+def _slots(ion):
+    """The ions' normalisations one by one: each mobile region of each species a slot, the
+    anions' first (`ion["a_slots"]`, at least one, an empty one with no ions) and then the
+    cations': masks (K × NP + 2), totals (K) and signs (K: +1 anions, −1 cations). With one
+    region per species `K` = 2, `logs` = `(ln C_anion, ln C_cation)`."""
+    masks = jnp.concatenate([ion["a_slots"], ion["c_slots"]])
+    totals = jnp.concatenate([ion["a_totals"], ion["c_totals"]])
+    ka, kc = ion["a_slots"].shape[0], ion["c_slots"].shape[0]
+    return masks, totals, jnp.concatenate([jnp.ones(ka), -jnp.ones(kc)])
 
-    def species(mask, total, sign, log_norm):
-        dens = mask * jnp.exp(log_norm + sign * V_full / ion["Vt"])
-        number = jnp.sum(0.5 * (dens[1:] + dens[:-1]) * mask[1:] * mask[:-1] * ion["hL"])
-        return jnp.where(total > 0, number / jnp.where(total > 0, total, 1.0) - 1.0, 0.0)
 
-    return jnp.stack([
-        species(ion["a_mask"], ion["a_total"], 1.0, la),
-        species(ion["c_mask"], ion["c_total"], -1.0, lc),
-    ])  # fmt: skip
+def _point_logs(logs, ion):
+    """Each interior point's anion and cation normalisation (NP each): its region's `logs`."""
+    ka = ion["a_slots"].shape[0]
+    return logs[:ka] @ ion["a_slots"][:, 1:-1], logs[ka:] @ ion["c_slots"][:, 1:-1]
+
+
+def _slot_columns(U, ion):
+    """`_assemble`'s ion columns (NP × 3 × 2, in the points' anion and cation normalisation)
+    as columns in the slots' (NP × 3 × K): each point's in its own region's."""
+    a = U[..., :1] * ion["a_slots"][:, 1:-1].T[:, None, :]
+    c = U[..., 1:] * ion["c_slots"][:, 1:-1].T[:, None, :]
+    return jnp.concatenate([a, c], -1)
+
+
+def _held(ion):
+    """1 for a slot without ions, whose normalisation is held (an identity row), else 0."""
+    return jnp.where(_slots(ion)[1] > 0, 0.0, 1.0)
+
+
+def _ion_constraints(V_full, logs, ion):
+    """Each slot's number of ions over its total, less 1 (trapezoidal over its region, as
+    SIMsalabim's `Rescale_Ion_Density`); 0 for a slot without ions."""
+    masks, totals, sign = _slots(ion)
+    dens = masks * jnp.exp(logs[:, None] + sign[:, None] * V_full / ion["Vt"])
+    pair = masks[:, 1:] * masks[:, :-1]
+    number = jnp.sum(0.5 * (dens[:, 1:] + dens[:, :-1]) * pair * ion["hL"], axis=1)
+    return jnp.where(totals > 0, number / jnp.where(totals > 0, totals, 1.0) - 1.0, 0.0)
 
 
 #: Grid points per kernel in the block Thomas sweep: unrolling lets XLA fuse several of the
@@ -756,27 +781,28 @@ def _block_thomas(A, B, C, d):
 @functools.partial(jax.jit, static_argnames="bernoulli_name")
 def _newton_step(y, logs, bounds, s, ion, Vt, g_frac, bernoulli_name="exact"):
     """One damped Newton step on the interior unknowns `y` (NP × 3) and the ions'
-    normalisations `logs` = `(ln C_anion, ln C_cation)`.
+    normalisations `logs` (`_slots`: `(ln C_anion, ln C_cation)` with one region each).
 
-    Free ions make the system block-tridiagonal bordered by two rows and columns (each
+    Free ions make the system block-tridiagonal bordered by K rows and columns (each
     normalisation enters every Poisson row of its region, its constraint every potential):
-    solved by the block Thomas sweep on three right-hand sides and a 2×2 Schur complement
+    solved by the block Thomas sweep on 1 + K right-hand sides and a K×K Schur complement
     (Sherman–Morrison–Woodbury, docs/solver.md).
     """
-    la, lc = logs[0], logs[1]
+    la, lc = _point_logs(logs, ion)
     full = jnp.concatenate([bounds[0][None], y, bounds[1][None]])
     F, A, B, C, U = _assemble(full, s, Vt, g_frac, la, lc, BERNOULLI[bernoulli_name])
+    U = _slot_columns(U, ion)
 
     def constraints(V_interior, logs_):
         V_full = jnp.concatenate([bounds[0][:1], V_interior, bounds[1][:1]])
-        return _ion_constraints(V_full, logs_[0], logs_[1], ion)
+        return _ion_constraints(V_full, logs_, ion)
 
     g = constraints(full[1:-1, 0], logs)
-    # Two outputs of NP + 2 inputs: reverse mode, two passes (forward mode took NP; M3).
-    dg_dV, D = jax.jacrev(constraints, argnums=(0, 1))(full[1:-1, 0], logs)  # 2 × NP, 2 × 2
-    # A species without a mobile region: its normalisation is held (an identity row).
-    D = D + jnp.diag(jnp.where(jnp.array([ion["a_total"], ion["c_total"]]) > 0, 0.0, 1.0))
-    W = jnp.zeros((y.shape[0], 3, 2)).at[:, 0, :].set(dg_dV.T)
+    # K outputs of NP + K inputs: reverse mode, K passes (forward mode took NP; M3).
+    dg_dV, D = jax.jacrev(constraints, argnums=(0, 1))(full[1:-1, 0], logs)  # K × NP, K × K
+    # A slot without ions: its normalisation is held (an identity row).
+    D = D + jnp.diag(_held(ion))
+    W = jnp.zeros((y.shape[0], 3, logs.shape[0])).at[:, 0, :].set(dg_dV.T)
 
     X = _block_thomas(A, B, C, jnp.concatenate([-F[..., None], U], axis=-1))
     XF, XU = X[..., 0], X[..., 1:]
@@ -826,21 +852,19 @@ def _on_points(s):
     return {k: v for k, v in s.items() if k not in ("ti", "ct")}
 
 
-_P_AXES = (0, 0, 0, 0, None, 0, 0, 0, None, None)
+_P_AXES = (0, 0, 0, 0, None, 0, 0, 0, 0, 0)
 _poisson_jac = jax.vmap(jax.jacfwd(_poisson_row, argnums=(0, 1, 2)), in_axes=_P_AXES)
 _poisson_val = jax.vmap(_poisson_row, in_axes=_P_AXES)
 
 
 def _ion_logs(V_full, ion):
-    """The normalisations that put each mobile species' total into its region at `V`."""
-
-    def species(mask, total, sign):
-        dens = mask * jnp.exp(sign * V_full / ion["Vt"])
-        number = jnp.sum(0.5 * (dens[1:] + dens[:-1]) * mask[1:] * mask[:-1] * ion["hL"])
-        return jnp.where(total > 0, jnp.log(jnp.where(total > 0, total, 1.0) / number), 0.0)
-
-    return jnp.stack([species(ion["a_mask"], ion["a_total"], 1.0),
-                      species(ion["c_mask"], ion["c_total"], -1.0)])  # fmt: skip
+    """The normalisations that put each slot's total into its region at `V` (`_slots`)."""
+    masks, totals, sign = _slots(ion)
+    dens = masks * jnp.exp(sign[:, None] * V_full / ion["Vt"])
+    pair = masks[:, 1:] * masks[:, :-1]
+    number = jnp.sum(0.5 * (dens[:, 1:] + dens[:, :-1]) * pair * ion["hL"], axis=1)
+    number = jnp.where(totals > 0, number, 1.0)
+    return jnp.where(totals > 0, jnp.log(jnp.where(totals > 0, totals, 1.0) / number), 0.0)
 
 
 @jax.jit
@@ -849,7 +873,7 @@ def _poisson_step(y, bounds, s, ion, Vt):
     mobile ions' normalisations are re-fitted to it (held during the step)."""
     full = jnp.concatenate([bounds[0][None], y, bounds[1][None]])
     V = full[:, 0]
-    la, lc = _ion_logs(V, ion)
+    la, lc = _point_logs(_ion_logs(V, ion), ion)
     args = (_on_points(s), Vt, full[:-2], full[1:-1], full[2:], la, lc)
     F = _poisson_val(V[:-2], V[1:-1], V[2:], *args)
     lo, mid, up = _poisson_jac(V[:-2], V[1:-1], V[2:], *args)
@@ -931,12 +955,20 @@ def _initial(dev: Device, Vint: float):
 
 
 def _ion_setup(dev: Device) -> dict:
-    """What the ions' constraints need, over the full grid."""
-    return {
-        "Vt": dev.Vt, "hL": dev.h[:-1] * dev.L,
-        "a_mask": dev.anion_mask.astype(float), "c_mask": dev.cation_mask.astype(float),
-        "a_total": dev.anion_total, "c_total": dev.cation_total,
-    }  # fmt: skip
+    """What the ions' constraints need, over the full grid: each species' mobile regions
+    (`_slots`), one slot each, or its one region's mask and total."""
+    xp = jnp if isinstance(dev.anion_total, jax.Array) else np
+
+    def slots(mask, total, masks, totals):
+        if masks is None:
+            return mask[None].astype(float), xp.reshape(xp.asarray(total, dtype=float), (1,))
+        return masks.astype(float), totals
+
+    a_slots, a_totals = slots(dev.anion_mask, dev.anion_total, dev.anion_slots, dev.anion_totals)
+    c_slots, c_totals = slots(dev.cation_mask, dev.cation_total, dev.cation_slots,
+                              dev.cation_totals)  # fmt: skip
+    return {"Vt": dev.Vt, "hL": dev.h[:-1] * dev.L, "a_slots": a_slots, "a_totals": a_totals,
+            "c_slots": c_slots, "c_totals": c_totals}  # fmt: skip
 
 
 def _freeze(s: dict, ion: dict, y, logs, bounds, Vt) -> tuple[dict, dict]:
@@ -944,12 +976,15 @@ def _freeze(s: dict, ion: dict, y, logs, bounds, Vt) -> tuple[dict, dict]:
     `fixIons` with `simss/fixed_ions.patch`: frozen after the pre-bias, in Poisson's equation
     too)."""
     V = y[:, 0]
+    la, lc = _point_logs(logs, ion)
     s = dict(s)
-    s["a_fix"] = s["a_fix"] + s["a_mask"] * jnp.exp(logs[0] + V / Vt)
-    s["c_fix"] = s["c_fix"] + s["c_mask"] * jnp.exp(logs[1] - V / Vt)
+    s["a_fix"] = s["a_fix"] + s["a_mask"] * jnp.exp(la + V / Vt)
+    s["c_fix"] = s["c_fix"] + s["c_mask"] * jnp.exp(lc - V / Vt)
     s["a_mask"] = jnp.zeros_like(s["a_mask"])
     s["c_mask"] = jnp.zeros_like(s["c_mask"])
-    ion = dict(ion, a_mask=ion["a_mask"] * 0, c_mask=ion["c_mask"] * 0, a_total=0.0, c_total=0.0)
+    ion = dict(ion)
+    for k in ("a_slots", "a_totals", "c_slots", "c_totals"):
+        ion[k] = ion[k] * 0
     return s, ion
 
 

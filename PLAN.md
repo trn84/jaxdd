@@ -145,7 +145,7 @@ separate arrays, would spare a third of the blocks' writes and reads.
 Order: Stage B in JAX (done); then the kernel for the physics that has settled. A first
 measurement before deciding: the Newton step of Stage A's physics without ions as one CUDA
 kernel on devices without ions, against the JAX step's time on the A100. The fused kernel is not
-needed for the steady state; it is decided with Stage C's speed (section 4.1, step 8).
+needed for the steady state; it is decided with Stage C's speed (section 4.1, step 7).
 
 ### 2.4 M7: what fits still need
 
@@ -273,30 +273,28 @@ steady state at `t = 0` is today's solver.
 - **Gradients** by forward tangents step by step, each one by the implicit function at its
   step, as M7's fits take them; no reverse pass through time (it would hold every state).
 
-**Steps**, each validated against ZimT 5.36 at `tolPois = tolDens = 1e-9`:
+**Steps**, each validated against ZimT 5.36 at `tolPois = tolDens = 1e-9` (`zimt` in the image
+`jaxdd/simss:5.36`, its input read by `read_tvg`; [simss/README.md](simss/README.md)):
 
-1. **The reference.** `zimt` in the image `jaxdd/simss:5.36` (built from `ZimT/zimt.pas`
-   of the same tag) beside `simss`; `read_tvg` (ZimT's checks as `ValueError`); `check_supported`
-   for ZimT's inputs. Done when a ZimT case runs in the image and its input is read.
-2. **Electrons and holes in time**, no traps, no ions, `Vext` given: the time terms, the
+1. **Electrons and holes in time**, no traps, no ions, `Vext` given: the time terms, the
    displacement current, both forms of the current, the scan over steps, batched.
    Done when a light step at short circuit (photocurrent) and a fast voltage sweep match
    ZimT within the validation criteria, single and batched.
-3. **Traps in time**: the occupations as state, their update and the integrated
+2. **Traps in time**: the occupations as state, their update and the integrated
    recombination, bulk and interface, neutral and charged. Done when a light step with deep
    traps (filling, then emptying in the dark) matches ZimT.
-4. **Mobile ions in time**: the 5×5 blocks, region ends and contacts as ZimT writes them, the
+3. **Mobile ions in time**: the 5×5 blocks, region ends and contacts as ZimT writes them, the
    rescaling as a slot per region, the ions' currents. Done when hysteresis (forward and
    back at two scan rates) with ions in the absorber and in a region of several layers
    matches ZimT, batched with devices without ions.
-5. **`oc` and `R_series`**: `Vint` as an unknown. Done when photovoltage after a light pulse
+4. **`oc` and `R_series`**: `Vint` as an unknown. Done when photovoltage after a light pulse
    at open circuit and a sweep with series resistance match ZimT, and `oc` at `t = 0`
    matches SimSS's `Voc`.
-6. **Stopping, failures, output**: `Track` and `failureMode` per device, the `tJFile` columns.
+5. **Stopping, failures, output**: `Track` and `failureMode` per device, the `tJFile` columns.
    Done when every input ZimT 5.36 takes runs on jaxdd or is refused by name.
-7. **Gradients through time**: tangents of a transient in its parameters. Done when they match
+6. **Gradients through time**: tangents of a transient in its parameters. Done when they match
    finite differences, and a fit of a transient recovers its parameters.
-8. **Speed**: a transient batch on the A100 (steps per second, Newton steps per time step, the
+7. **Speed**: a transient batch on the A100 (steps per second, Newton steps per time step, the
    5×5 step's cost against the 3×3 one). Done when its numbers are in the handbook; with them
    the fused kernel is decided (section 7).
 
@@ -389,5 +387,5 @@ microseconds per evaluation are needed.
 
 | Decision | When | With |
 |---|---|---|
-| The fused kernel as an optional mode (2.3) | after Stage C's step 8 (4.1) | the applications' needs (section 5) and a first measurement of a Stage A kernel |
+| The fused kernel as an optional mode (2.3) | after Stage C's step 7 (4.1) | the applications' needs (section 5) and a first measurement of a Stage A kernel |
 | The steric ion model and its `N_max` | when a source for `N_max` is found | its users: results with and without it differ at high ion density |

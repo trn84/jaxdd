@@ -67,6 +67,11 @@ layers (2e22 and 1e22 m⁻³ in the ETL, 5e21 and 3e22 in the HTL, mobilities 1e
 none in the absorber, which they may not enter: two regions per species; SimSS 5.36 at
 `tolPois = tolDens = 1e-9`, which converges up to 0.95 V.
 
+`zimt_steady_light/`: `thin_l1_light` as a ZimT 5.36 input (ZimT's own `simulation_setup.txt`
+with every parameter it shares with SimSS taken from `thin_l1_light`, `tolPois = tolDens = 1e-9`,
+`failureMode = 0`), its `tVG.txt` seven steady states (`t = 0` on every line) from −0.2 to 1.1 V,
+the last at `G_frac = 0.5`; its `tj.dat` from ZimT 5.36 (`--entrypoint zimt`).
+
 `held_thin_light/`: `steady_1e17_thin_light` with 8e22 anions per m³ instead of 1e23 (a net
 charge of 2e22 m⁻³) held from the start (`fixIons = 1`, `preCond = 0`): run by SimSS 5.36 with
 [`simss/fixed_ions.patch`](../../simss/fixed_ions.patch) at `tolPois = tolDens = 1e-9`.

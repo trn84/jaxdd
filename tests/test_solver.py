@@ -11,7 +11,14 @@ import numpy as np
 import pytest
 
 from jaxdd.device import build_device, make_grid
-from jaxdd.simss_input import check_supported, read_setup, setup_from_texts, simss_voltages
+from jaxdd.simss_input import (
+    Setup,
+    check_supported,
+    read_setup,
+    read_tvg,
+    setup_from_texts,
+    simss_voltages,
+)
 from jaxdd.solver import bernoulli, bernoulli_simss, solve_jv
 
 DATA = Path(__file__).parent / "data"
@@ -347,6 +354,55 @@ def test_voltages_from_experimental_data_and_simss_checks(tmp_path) -> None:
     for values, match in bad:
         with pytest.raises(ValueError, match=match):
             simss_voltages(setup(**values))
+
+
+def test_zimt_steady_states_reproduce_zimt() -> None:
+    """ZimT 5.36's input read (`read_tvg`, a ZimT setup built into a device) and its steady
+    states (`t = 0` at each line, a return to the steady state each time) solved by the
+    steady-state solver: ZimT's `Jext` to 1e-9 of its scale, at two light intensities."""
+    import dataclasses
+
+    case = DATA / "zimt_steady_light"
+    setup = read_setup(case / "simulation_setup.txt")
+    check_supported(setup)
+    tvg = read_tvg(setup)
+    assert np.all(tvg.t == 0) and np.all(tvg.dti == 0) and not tvg.oc.any()
+    ref = np.genfromtxt(case / "tj.dat", names=True)
+    assert np.array_equal(ref["Vext"], tvg.Vext) and np.array_equal(ref["G_frac"], tvg.G_frac)
+    dev = build_device(setup)
+    J = [solve_jv(dataclasses.replace(dev, G_frac=g), np.array([v]), bernoulli_name="simss").J[0]
+         for v, g in zip(tvg.Vext, tvg.G_frac, strict=True)]  # fmt: skip
+    assert np.max(np.abs(np.array(J) - ref["Jext"])) < 1e-9 * np.max(np.abs(ref["Jext"]))
+
+
+def test_tvg_as_zimt_reads_it() -> None:
+    """`read_tvg`: lines before the header skipped, `oc`, the time steps (forward, or back to
+    0), the end at the first empty line, extra columns ignored; ZimT's checks as `ValueError`."""
+
+    def tvg(text):
+        return read_tvg(Setup(raw={"T": "295", "tVGFile": "tVG.txt"}, layers=(),
+                              files={"tVG.txt": text}))  # fmt: skip
+
+    r = tvg("a comment\nt\tVext  G_frac Track\n0 oc 1 0\n1e-6 0.5 1 1 extra\n3e-6 OC 0 3\n"
+            "0 0 1 2\n\n5e-6 0 1 0\n")  # fmt: skip
+    assert np.array_equal(r.t, [0, 1e-6, 3e-6, 0])
+    assert np.array_equal(r.oc, [True, False, True, False]) and r.Vext[1] == 0.5
+    assert np.isnan(r.Vext[0]) and np.array_equal(r.track, [0, 1, 3, 2])
+    assert np.allclose(r.dti, [0, 1e6, 5e5, 0]) and np.array_equal(r.G_frac, [1, 1, 0, 1])
+    bad = [
+        ("0 0 1 0\n", "header"),
+        ("t Vext G_frac Track\n1e-6 0 1 0\n", "steady-state"),
+        ("t Vext G_frac Track\n", "steady-state"),
+        ("t Vext G_frac Track\n0 0 1 0\n2e-6 0 1 0\n1e-6 0 1 0\n", "positive"),
+        ("t Vext G_frac Track\n0 0 1 0\n1e-6 0 1 4\n", "reading"),
+        ("t Vext G_frac Track\n0 0 1 0\n1e-6 x 1 0\n", "reading"),
+        ("t Vext G_frac Track\n0 0 1\n", "reading"),
+        ("t Vext G_frac Track\n0 0 1 0\n1e-6 0 1 2\n", "Track=1"),
+        ("t Vext G_frac Track\n0 1e3 1 0\n", "too large"),
+    ]
+    for text, match in bad:
+        with pytest.raises(ValueError, match=match):
+            tvg(text)
 
 
 @pytest.mark.parametrize("case", ["frozen_1e17_x1_thin_light", "steady_1e17_thin_light"])

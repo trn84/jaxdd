@@ -432,7 +432,7 @@ def device_parameters(
     # `fixIons` without `preCond`: SIMsalabim holds the ions from the start where
     # `Init_Pot_Dens_Ions_Traps` puts them, each layer's own density at each of its points, so
     # the mobile ones are fixed ions as the immobile are (SimSS with `simss/fixed_ions.patch`).
-    held = bool(setup.i("fixIons")) and not bool(setup.i("preCond"))
+    held = bool(setup.i("fixIons", 0)) and not bool(setup.i("preCond", 0))
     problems = ion_region_problems(setup)
     if problems:
         raise NotImplementedError("; ".join(problems))
@@ -455,7 +455,7 @@ def device_parameters(
         anion_fixed=flags(lambda ly: ly.f("N_anion") != 0 and (ly.f("mu_anion") == 0 or held)),
         cation_mobile=region("cation") >= 0, cation_region=region("cation"),
         cation_fixed=flags(lambda ly: ly.f("N_cation") != 0 and (ly.f("mu_cation") == 0 or held)),
-        pre_cond=bool(setup.i("preCond")), fix_ions=bool(setup.i("fixIons")),
+        pre_cond=bool(setup.i("preCond", 0)), fix_ions=bool(setup.i("fixIons", 0)),
         int_traps=np.array([float(ly.raw.get("N_t_int", "0")) != 0 for ly in layers[:-1]]
                            + [False]) | int_file,
         int_trap_type=np.array([int(float(ly.raw.get("intTrapType", "0"))) for ly in layers]),
@@ -559,12 +559,12 @@ def device_parameters(
 
     params = {name: np.array([value(ly, name) for ly in layers]) for name in LAYER_PARAMETERS}
     params.update(
-        T=setup.f("T"), G_frac=setup.f("G_frac"),
+        T=setup.f("T"), G_frac=setup.f("G_frac", 1.0),
         # 'sfb' (`Structure.sfb`) is computed in `device_arrays`; the value here is unused.
         W_L=0.0 if structure.sfb[0] else setup.f("W_L"),
         W_R=0.0 if structure.sfb[1] else setup.f("W_R"),
         **{k: float(setup.raw.get(k, "-1")) for k in SURFACE_PARAMETERS},
-        V_pre=setup.f("Vpre"), gen_x=table[:, 0].copy(), gen_G=table[:, 1].copy(),
+        V_pre=setup.f("Vpre", 0.0), gen_x=table[:, 0].copy(), gen_G=table[:, 1].copy(),
         R_series=float(setup.raw.get("R_series", "0")),
         R_shunt=float(setup.raw.get("R_shunt", "-1")),
         **extra,

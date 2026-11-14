@@ -18,7 +18,10 @@ from pathlib import Path
 
 import numpy as np
 
+from jaxdd.constants import K_B, Q
+
 __all__ = [
+    "TVG",
     "Layer",
     "Setup",
     "check_supported",
@@ -27,6 +30,7 @@ __all__ = [
     "parse_parameters",
     "read_parameter_file",
     "read_setup",
+    "read_tvg",
     "setup_from_texts",
     "simss_voltages",
 ]
@@ -74,11 +78,15 @@ class Setup:
     directory: Path | None = None
     files: Mapping[str, str] | None = None
 
-    def f(self, name: str) -> float:
+    def f(self, name: str, default: float | None = None) -> float:
+        """The parameter `name` as a number; `default` where the input has none (a parameter
+        only SimSS or only ZimT reads)."""
+        if default is not None and name not in self.raw:
+            return float(default)
         return float(self.raw[name])
 
-    def i(self, name: str) -> int:
-        return int(float(self.raw[name]))
+    def i(self, name: str, default: int | None = None) -> int:
+        return int(self.f(name, default))
 
     def text(self, name: str) -> str:
         """The text of the file the parameter `name` names."""
@@ -136,6 +144,77 @@ def simss_voltages(setup: Setup) -> np.ndarray:
         d = acc - vmax
         V = acc - d * np.exp((1 - np.arange(njv) / (njv - 1)) * np.log((acc - vmin) / d))
     return V[::-1].copy() if vscan == -1 else V
+
+
+#: ln of the largest extended float (FPC's on x86-64), SIMsalabim's `myReal`: its bound on V/Vt.
+_LN_MAX_REAL = 11356.523406294143
+
+
+@dataclass(frozen=True)
+class TVG:
+    """ZimT's time steps (`tVGFile`): at each time `t` (s) the voltage `Vext` (V; NaN where
+    `oc`, the open circuit), `G_frac` and `track` (0–3, ZimT's automatic stop). `dti` is
+    1/Δt from the step before, 0 at `t = 0` (a steady state: the first step, or a return
+    to it). ZimT takes Δt from the last step it accepted, so where it skips a failed step
+    (`failureMode = 2`) the next one is longer than here."""
+
+    t: np.ndarray
+    Vext: np.ndarray
+    oc: np.ndarray
+    G_frac: np.ndarray
+    track: np.ndarray
+    dti: np.ndarray
+
+
+def read_tvg(setup: Setup) -> TVG:
+    """ZimT 5.36's `tVGFile` (`Open_and_Read_tVG_file`, `Read_tVG`): lines before the header
+    `t Vext G_frac Track` are skipped, then one step per line, up to the end or the first
+    empty line; columns beyond the fourth are ignored. ZimT's checks raise `ValueError`: the
+    header, a first step at `t = 0`, times that go forward or back to 0, a voltage within
+    SIMsalabim's range, `Track` one of 0–3 and a 1 before any 2 or 3."""
+    name = setup.raw["tVGFile"]
+    lines = iter(setup.text("tVGFile").splitlines())
+    for line in lines:
+        if "".join(line.lower().split())[:16] == "tvextg_fractrack":
+            break
+    else:
+        raise ValueError(f"Could not find correct header 't Vext G_frac Track' in {name}.")
+    vti = Q / (K_B * setup.f("T"))
+    rows, previous, reference = [], 0.0, False
+    for line in lines:
+        fields = line.split()
+        if not fields:
+            break
+        try:
+            t, v, g, track = (fields + [""] * 4)[:4]
+            t, g = float(t), float(g)
+            oc = v.lower() == "oc"
+            v = np.nan if oc else float(v)
+            if track not in ("0", "1", "2", "3"):
+                raise ValueError
+        except ValueError:
+            raise ValueError(
+                f"Error while reading from file {name}; offending line: {line!r}"
+            ) from None
+        if t > previous:
+            dti = 1 / (t - previous)
+        elif t == 0:
+            dti = 0.0
+        else:
+            raise ValueError("Time steps must either be positive, or you should go back to t=0 "
+                             f"(steady-state); at t = {t}")  # fmt: skip
+        if not oc and abs(v * vti) > 1.95 * _LN_MAX_REAL:
+            raise ValueError(f"V is too {'small' if v < 0 else 'large'}; at t = {t}")
+        reference |= track == "1"
+        if not reference and track in ("2", "3"):
+            raise ValueError("Error in tVGFile: before setting Track=2 or 3, you need to have at "
+                             "least one Track=1")  # fmt: skip
+        rows.append((t, v, oc, g, int(track), dti))
+        previous = t
+    if not rows or rows[0][0] != 0:
+        raise ValueError("tVGFile did not specify steady-state (t=0)")
+    t, v, oc, g, track, dti = (np.array(c) for c in zip(*rows, strict=True))
+    return TVG(t=t, Vext=v, oc=oc.astype(bool), G_frac=g, track=track, dti=dti)
 
 
 def ion_regions(setup: Setup, species: str) -> list[tuple[int, int, bool]]:

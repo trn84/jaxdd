@@ -93,6 +93,11 @@ so that the solver is never the larger error in what is computed from it.
   and gold, and on a 20/500/10 nm stack between glass, 150 nm ITO and silver, the profile on the
   grid is SimSS's within 4e-12 and the curves within 2e-7 and 6e-7 of SimSS's scale; a uniform
   profile (`genProfile = none`) within 2.4e-6.
+- **ZimT's input and its steady states** (2026-11-15): a ZimT 5.36 input (`tests/data/
+  zimt_steady_light`, `thin_l1_light` in ZimT's format) read with its `tVGFile` (`read_tvg`, ZimT's
+  checks) and built into a device; its seven steady states (`t = 0` on every line, at two light
+  intensities) within 1.6e-10 of ZimT's scale by the steady-state solver: ZimT's `t = 0` is
+  SimSS's steady state.
 - **Two mobile regions of a species** (2026-11-14): anions and cations mobile in both
   transport layers of a p-i-n cell, the absorber closed to them (`tests/data/two_regions_light`),
   each region its own normalisation: within 6.8e-7 of SimSS's scale where it converged, by both
@@ -262,6 +267,8 @@ convergence", and a rerun at tight tolerances. The cases where SimSS was wrong s
 | `test_voltages_are_simss_own` | `simss_voltages` against the voltages of every SimSS run in `tests/data` |
 | `test_logarithmic_downward_scan_reproduces_simss` | `Vdist = 2`, `Vscan = -1` (`tests/data/logv_light`): SimSS's voltages and curve, to 2e-6 of its scale |
 | `test_voltages_from_experimental_data_and_simss_checks` | `useExpData` (`expJV`'s voltages, in the file's order) and SimSS's checks on the voltage parameters |
+| `test_zimt_steady_states_reproduce_zimt` | a ZimT input read and built, its steady states (`tests/data/zimt_steady_light`) to 1e-9 of ZimT's scale |
+| `test_tvg_as_zimt_reads_it` | `read_tvg` as ZimT reads its `tVGFile`, and ZimT's checks on it |
 | `test_benchmark.py` | `benchmarks/run.py` hands SimSS exactly the devices jaxdd solves |
 
 `tests/data/` holds SimSS 5.36 runs, inputs and `JV.dat` unchanged, each described in

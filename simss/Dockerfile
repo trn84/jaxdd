@@ -1,13 +1,15 @@
-# SimSS 5.36 (SIMsalabim, https://github.com/kostergroup/SIMsalabim, LGPL-3.0), the reference
-# jaxdd is validated against, built as two binaries:
+# SimSS and ZimT 5.36 (SIMsalabim, https://github.com/kostergroup/SIMsalabim, LGPL-3.0), the
+# references jaxdd is validated against, built as three binaries:
 #
 #   simss              the release, unchanged
 #   simss_fixed_ions   the release with fixed_ions.patch: with `fixIons`, Poisson's equation
 #                      leaves the frozen ions alone (see README.md here)
+#   zimt               ZimT, the transient program, the release unchanged
 #
 #   docker build -t jaxdd/simss:5.36 simss
 #   docker run --rm -v "$PWD/run:/work" jaxdd/simss:5.36 simulation_setup.txt
 #   docker run --rm -v "$PWD/run:/work" --entrypoint simss_fixed_ions jaxdd/simss:5.36 simulation_setup.txt
+#   docker run --rm -v "$PWD/run:/work" --entrypoint zimt jaxdd/simss:5.36 simulation_setup.txt
 #
 # The tag is pinned: a different SIMsalabim version is a different reference.
 
@@ -20,6 +22,8 @@ RUN git clone --depth 1 --branch "$SIMSALABIM_TAG" \
         https://github.com/kostergroup/SIMsalabim.git /opt/SIMsalabim
 WORKDIR /opt/SIMsalabim/SimSS
 RUN fpc -O3 -Fu../Units simss.pas
+WORKDIR /opt/SIMsalabim/ZimT
+RUN fpc -O3 -Fu../Units zimt.pas
 COPY fixed_ions.patch /opt/fixed_ions.patch
 WORKDIR /opt
 RUN cp -r SIMsalabim SIMsalabim-fixed-ions \
@@ -34,6 +38,7 @@ LABEL org.opencontainers.image.source="https://github.com/kostergroup/SIMsalabim
       org.opencontainers.image.licenses="LGPL-3.0-or-later"
 COPY --from=build /opt/SIMsalabim/SimSS/simss /usr/local/bin/simss
 COPY --from=build /opt/SIMsalabim-fixed-ions/SimSS/simss /usr/local/bin/simss_fixed_ions
+COPY --from=build /opt/SIMsalabim/ZimT/zimt /usr/local/bin/zimt
 COPY --from=build /opt/SIMsalabim/COPYING.txt /opt/SIMsalabim/COPYING.LESSER.txt /usr/share/doc/simsalabim/
 WORKDIR /work
 ENTRYPOINT ["simss"]

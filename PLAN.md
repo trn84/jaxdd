@@ -11,14 +11,16 @@ the handbook.
 Since Stage B's last commit each mobile ion region is a slot of its own (one normalisation each,
 [docs/solver.md](docs/solver.md)); a device with one region per species keeps the former layout
 (K = 2), one with more makes the bordered system wider and the block sweep take more right-hand
-sides. Measured on the CPU only so far. On the RTX 4070 Ti SUPER, once the GPU is free:
+sides. Measured on the CPU only so far (`validation/slots.py`: a paid Newton step with two
+regions per species 1.23× one with one). On an A100 (`benchmarks/apptainer.sh`, every default
+step, the `slots` step among them) and on the RTX 4070 Ti SUPER once the sampler is done:
 
 1. `validation/bench.py` and `validation/breakdown.py` against the numbers in
    [docs/hardware.md](docs/hardware.md) and [docs/solver.md](docs/solver.md): K = 2 should take
    the time it took before.
-2. A batch of devices with two regions per species (`tests/data/two_regions_light` varied)
-   through the Pallas sweep: the same curves as the scan, and the time per Newton step against
-   K = 2.
+2. `validation/slots.py`: devices with two regions per species (`tests/data/two_regions_light`
+   varied) through the sweep kernel, the same curves as the scan, and the time per paid Newton
+   step against their twins with one region per species.
 
 ### 1.3 M8: the MI50 cards
 

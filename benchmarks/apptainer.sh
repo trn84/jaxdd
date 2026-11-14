@@ -27,6 +27,8 @@
 #   bench      validation/bench.py 65536 16384: curves per second
 #   hard       validation/hard.py 16384 16384: a hard workload (frozen ions over a wide range,
 #              light and dark), two passes against one, the Newton steps a batch pays
+#   slots      validation/slots.py 16384 4096: devices with two mobile ion regions per species
+#              against one, through the sweep kernel and the scan (about 5 min)
 #   run        benchmarks/run.py: GPU at batch 4096 and 16384, jaxdd on this job's CPU cores;
 #              writes benchmarks/results/<label>.json for benchmarks/plot.py
 #   chunk      validation/chunk.py on the batch file CHUNK (a real workload built elsewhere and
@@ -54,7 +56,7 @@ SIF="${SIF:-$ROOT/cuda129.sif}"
 IMAGE="${IMAGE:-docker://nvidia/cuda:12.9.1-base-ubuntu24.04}"
 VENV="${VENV:-$ROOT/.venvct}"
 LOG="$ROOT/benchmarks/apptainer.log"
-STEPS="${STEPS:-info tests breakdown bench hard run}"
+STEPS="${STEPS:-info tests breakdown bench hard slots run}"
 
 say() { printf '\n== %s  %s\n' "$(date '+%F %T')" "$*"; }
 
@@ -105,6 +107,9 @@ if [ "${1:-}" = "--inside" ]; then
             hard)
                 "$py" validation/hard.py 16384 16384
                 ;;
+            slots)
+                "$py" validation/slots.py 16384 4096
+                ;;
             run)
                 # No SimSS in the container: jaxdd on the GPU and on this job's cores only.
                 "$py" benchmarks/run.py --label "$LABEL" --skip simss,accuracy \
@@ -125,7 +130,7 @@ if [ "${1:-}" = "--inside" ]; then
                 done
                 ;;
             *)
-                echo "unknown step $step (info tests breakdown bench hard run chunk sample)"
+                echo "unknown step $step (info tests breakdown bench hard slots run chunk sample)"
                 ;;
         esac || echo "!! step $step failed (exit $?); going on"
     done

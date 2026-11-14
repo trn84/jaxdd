@@ -6,33 +6,19 @@ the handbook.
 
 ## 1 Open now
 
-### 1.2 Speed: the Newton step
+### 1.2 Speed: the ion slots on the GPU
 
-The lockstep's tail is gone on the hardest grid known: on 16 384 devices of the 250 nm grid with
-ions no voltage takes more than 12 Newton steps and none fails ([docs/batching.md](docs/batching.md)),
-since the scan runs outwards from the pre-bias and the Jacobian is assembled by intervals
-([docs/solver.md](docs/solver.md)); `solve_batch` makes two passes by default, and on an
-NVIDIA GPU the block sweep is one Pallas kernel instead of a scan's ~1450 kernel launches
-(`jaxdd.sweep`). On the RTX 4070 Ti SUPER those devices took 116 s with the Jacobian by rows
-(two passes, limit 25) and take 24.5 s now; on an A100-SXM4-40GB 9.0 s (64 s before, on an
-A100 80 GB PCIe; `validation/chunk.py`). On the A100 the benchmark runs at 2800
-curves/s (batch 16 384; 2140 at 4096), the hard workload (`validation/hard.py`) at 1425 in one
-pass and 1547 in two; a Newton step of 16 384 devices there is 20 ms: the assembly 9.1, the block sweep 7.2, the
-current 2.7, the ion constraint 1.3 (`validation/breakdown.py`).
+Since Stage B's last commit each mobile ion region is a slot of its own (one normalisation each,
+[docs/solver.md](docs/solver.md)); a device with one region per species keeps the former layout
+(K = 2), one with more makes the bordered system wider and the block sweep take more right-hand
+sides. Measured on the CPU only so far. On the RTX 4070 Ti SUPER, once the GPU is free:
 
-Next:
-
-- The assembly is now the largest part (9.1 of 20 ms on the A100). Each interval's fluxes
-  and each transcendental are computed once (the compiled program has 18 kernels for it, none
-  repeating another's work); what is left is memory traffic: the blocks have 36 entries per
-  grid point of which 24 are structurally non-zero (`A` and `C` 5 of 9 each, the right-hand
-  sides 5 of 9), and the kernel reads all 36. A kernel that takes the 24, as separate arrays,
-  would spare a third of the blocks' writes and reads; it is a step towards the fused kernel
-  below and wants the same decision.
-
-A fused kernel for the whole step stays the large lever (from the A100's bandwidth an estimated
-10⁴–3·10⁴ curves/s, 4–10× today's), as an optional mode beside the JAX solver (section 2.3).
-It is not needed for the steady state; decide it with Stage C (section 4).
+1. `validation/bench.py` and `validation/breakdown.py` against the numbers in
+   [docs/hardware.md](docs/hardware.md) and [docs/solver.md](docs/solver.md): K = 2 should take
+   the time it took before.
+2. A batch of devices with two regions per species (`tests/data/two_regions_light` varied)
+   through the Pallas sweep: the same curves as the scan, and the time per Newton step against
+   K = 2.
 
 ### 1.3 M8: the MI50 cards
 
@@ -116,7 +102,8 @@ second solver: chosen like `JAXDD_SWEEP` today, with the JAX solver as reference
 What it would solve:
 
 - **Memory traffic**, today's limit (36 block entries per grid point written by the assembly and
-  read by the sweep): the 4–10× estimated in section 1.2.
+  read by the sweep): from the A100's bandwidth an estimated 10⁴–3·10⁴ curves/s, 4–10× the
+  2800 of today.
 - **The lockstep**, mostly: each thread iterates its device to convergence on its own, so a
   device waits for the slowest of its warp (32), not of the batch. On the 250 nm ion grid the
   batch pays 4.59 Newton steps per voltage where 2.76 are needed.
@@ -146,9 +133,17 @@ jaxdd is pure Python today; and little gain on consumer cards, whose FP64 rate (
 RTX 4070 Ti SUPER) becomes the limit once memory traffic is gone. On the A100, H100 and MI50
 FP64 is fast.
 
-Order: Stage B in JAX; then the kernel for the physics that has
-settled. A first measurement before deciding: the Newton step of Stage A's physics without ions
-as one CUDA kernel on devices without ions, against the JAX step's time on the A100.
+A smaller step on the way, with the same decision: the assembly is the largest part of the
+Newton step (9.1 of 20 ms at 16 384 devices on the A100). Each interval's fluxes and each
+transcendental are computed once already; what is left is memory traffic: the blocks have 36
+entries per grid point of which 24 are structurally non-zero (`A` and `C` 5 of 9 each, the
+right-hand sides 5 of 9), and the sweep kernel reads all 36. A kernel that takes the 24, as
+separate arrays, would spare a third of the blocks' writes and reads.
+
+Order: Stage B in JAX (done); then the kernel for the physics that has settled. A first
+measurement before deciding: the Newton step of Stage A's physics without ions as one CUDA
+kernel on devices without ions, against the JAX step's time on the A100. The fused kernel is not
+needed for the steady state; it is decided with Stage C's plan (sections 4 and 7).
 
 ### 2.4 M7: what fits still need
 
@@ -221,7 +216,7 @@ inputs it refuses are SimSS's ionic regions that SimSS solves against what they 
 
 - **Stage C: transients (ZimT).** Time-dependent drift-diffusion with mobile ions: scan-rate
   hysteresis, transient photocurrent and photovoltage, impedance. Its own plan, to be written
-  next. This is where a fused kernel is most likely needed (section 1.2).
+  next. This is where a fused kernel is most likely needed (section 2.3).
 
 Not planned: a line-by-line port of SIMsalabim (its one-device Gummel structure does not batch),
 a GUI. SimSS stays the reference jaxdd is validated against.
@@ -295,7 +290,7 @@ microseconds per evaluation are needed.
 
 | Risk | Effect | Mitigation |
 |---|---|---|
-| The slowest lane | one stubborn device sets a batch's pace | section 1.2; difficulty-sorted batches; two passes |
+| The slowest lane | one stubborn device sets a batch's pace | two passes; difficulty-sorted batches; the fused kernel (2.3) |
 | Convergence on new physics (Stage B, steric ions) | the hard devices fail first | each module validated on exactly those devices; flag, never guess |
 | ROCm on gfx906 | the MI50 may never run it | not on the critical path; three ways in (1.3), the last independent of XLA's ROCm support |
 | Scope creep towards a full SIMsalabim | months | every addition its own decision, module by module, each released when validated |

@@ -260,6 +260,11 @@ S           ← D − Wᵀ·X_U                     # K×K Schur complement
 
 Without free ions `U` is zero, `D` the identity, and this reduces to `δy = J⁻¹·(−F)`. The same
 code runs either way, which matters for a batch that mixes devices with and without ions.
+More regions cost little: with two per species (K = 4, nine right-hand sides instead of five) a
+Newton step of 4096 devices on an A100-SXM4-40GB takes 1.11× one with one per species through
+the sweep kernel (13.2 against 11.9 ms; 1.29× through the scan), the kernel's curves the scan's
+to 1.2e-12 (`validation/slots.py`, 2026-11-15). With one region per species the step is what it
+was before regions had slots of their own (20.5 ms at 16 384 devices, 2780 curves/s).
 
 ### The block Thomas sweep
 

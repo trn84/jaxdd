@@ -93,6 +93,16 @@ so that the solver is never the larger error in what is computed from it.
   and gold, and on a 20/500/10 nm stack between glass, 150 nm ITO and silver, the profile on the
   grid is SimSS's within 4e-12 and the curves within 2e-7 and 6e-7 of SimSS's scale; a uniform
   profile (`genProfile = none`) within 2.4e-6.
+- **Traps in time** (2026-11-15, Stage C): light on and off at short circuit with the
+  absorber's traps neutral (`tests/data/zimt_traps_photo_light`, `thin_l1_light` itself), charged
+  as acceptors (`zimt_acceptor_photo_light`) and three levels from a trap file with two at an
+  interface (`zimt_trapfiles_photo_light`), and a sweep to 1.2 V and back with charged interface
+  traps (`zimt_iface_sweep_light`), against ZimT 5.36 at tolerances of 1e-12: within 1.2e-10,
+  4.1e-10, 1.1e-10 and 3.7e-11 of ZimT's scale, single and in one batch with the devices without
+  traps. Traps that followed their steady state at once would be 5.3e-3, 5.9e-2, 4.3e-2 and
+  (the interface traps alone) 3.5e-2 of the scale off: the occupations' dynamics are what these
+  cases test. At short circuit the interface traps' dynamics move the current by 5e-6 only,
+  hence the sweep for them.
 - **Transients of electrons and holes** (2026-11-15, Stage C): `thin_l1_light` without its
   traps, against ZimT 5.36 at tolerances of 1e-12 (at 1e-9 ZimT itself moves by 1.7e-7 of the
   scale in the first picoseconds), 240 steps each: light on and off at short circuit over six
@@ -276,8 +286,9 @@ convergence", and a rerun at tight tolerances. The cases where SimSS was wrong s
 | `test_logarithmic_downward_scan_reproduces_simss` | `Vdist = 2`, `Vscan = -1` (`tests/data/logv_light`): SimSS's voltages and curve, to 2e-6 of its scale |
 | `test_voltages_from_experimental_data_and_simss_checks` | `useExpData` (`expJV`'s voltages, in the file's order) and SimSS's checks on the voltage parameters |
 | `test_transients_of_electrons_and_holes_reproduce_zimt` | the four ZimT cases without traps, to 1e-9 of ZimT's scale |
-| `test_transients_in_a_batch_reproduce_zimt` | the four as one batch, each device with its own steps |
-| `test_transients_refuse_what_they_lack` | traps, mobile ions, the open circuit and series resistance refused by name |
+| `test_transients_with_traps_reproduce_zimt` | the four ZimT cases with traps (neutral, charged, a trap file, interface), to 1e-9 |
+| `test_transients_in_a_batch_reproduce_zimt` | all eight as one batch, each device with its own steps |
+| `test_transients_refuse_what_they_lack` | mobile ions, the open circuit and series resistance refused by name |
 | `test_zimt_steady_states_reproduce_zimt` | a ZimT input read and built, its steady states (`tests/data/zimt_steady_light`) to 1e-9 of ZimT's scale |
 | `test_tvg_as_zimt_reads_it` | `read_tvg` as ZimT reads its `tVGFile`, and ZimT's checks on it |
 | `test_benchmark.py` | `benchmarks/run.py` hands SimSS exactly the devices jaxdd solves |

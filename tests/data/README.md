@@ -80,6 +80,11 @@ another µs; `_surface` with `S_n_L = 20` and `S_p_R = 50` m/s. Sweep: under lig
 1.2 V in 100 ns and back in another 100 ns (120 steps each way); `_diff` with
 `currDiffInt = 1`. Their `tj.dat` from ZimT 5.36.
 
+`zimt_traps_photo_light/`, `zimt_acceptor_photo_light/`, `zimt_trapfiles_photo_light/`: the photo
+steps of `zimt_photo_light` for `thin_l1_light` with its traps, `bulk_acceptor_light` and
+`trapfiles_light`; `zimt_iface_sweep_light/`: the sweep of `zimt_sweep_light` for
+`iface_charged_light`. ZimT 5.36 at `tolPois = tolDens = 1e-12`.
+
 `held_thin_light/`: `steady_1e17_thin_light` with 8e22 anions per m³ instead of 1e23 (a net
 charge of 2e22 m⁻³) held from the start (`fixIons = 1`, `preCond = 0`): run by SimSS 5.36 with
 [`simss/fixed_ions.patch`](../../simss/fixed_ions.patch) at `tolPois = tolDens = 1e-9`.

@@ -339,9 +339,25 @@ J_D[i] = ε[i]·dti·((V[i+1] − V[i]) − (V_prev[i+1] − V_prev[i])) / (L·h
 ```
 
 to the average; the differential form is unchanged (ZimT's `Calc_Curr_Diff` has no time term).
-So far electrons and holes with the voltage given; traps, mobile ions, the open circuit and
-series resistance in time are the next steps of Stage C ([PLAN.md](../PLAN.md) §4.1), refused
-until then (`transient_problems`).
+
+**Traps** add no unknowns: each level's occupation is state carried from step to step. Over a
+step it follows `df/dt = b − a·f` with `a = C_n·(n + n_t0) + C_p·(p + p_t0)` and
+`b = C_n·n + C_p·p_t0` from the densities at the step's end (for an interface level both
+points' densities and both sides' `n_t0`, `p_t0`), solved exactly from the occupation before
+(ZimT's `Calc_f_tb`, `Calc_Trap_Filling_Charge`):
+
+```
+f  = b/a + (f_prev − b/a)·e^(−a·Δt)                     the charge (Poisson) takes this
+f̄  = b/a + (f_prev − b/a)·(1 − e^(−a·Δt))/(a·Δt)        the capture takes this, its mean
+R_n = C_n·N_t·(n − (n + n_t0)·f̄)     R_p = C_p·N_t·((p + p_t0)·f̄ − p_t0)
+```
+
+(`solver._trap_step`; ZimT's `Calc_Recombination_n/p` integrate the ODE's capture over the
+step). With `dti = 0` both are `b/a` and the rates the steady state's SRH; over a step the two
+carriers recombine at different rates while the traps fill or empty, so each continuity
+equation and each carrier's current take their own. Mobile ions, the open circuit and series
+resistance in time are the next steps of Stage C ([PLAN.md](../PLAN.md) §4.1), refused until
+then (`transient_problems`).
 
 ## Constants
 

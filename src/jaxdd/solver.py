@@ -399,15 +399,63 @@ def _with_contacts(full, s, Vt, B=bernoulli):
     return full.at[0].set(left).at[-1].set(right)
 
 
-def _time_terms(s: dict, full_prev, dti) -> dict:
+def _time_terms(s: dict, full_prev, dti, f_bulk=None, f_iface=None) -> dict:
     """The stencils for one time step of length `1/dti` from the state `full_prev` (NP + 2 × 3,
     contacts included) before it: `s["tr"]`, each interior point's `dti` and its densities
     before the step, so that the continuity equations get `−fac·dti·(n − n_prev)` (ZimT's
-    `Cont_Eq_Elec/Holes`, implicit Euler, Selberherr 6-4.32). `dti = 0` is the steady state."""
+    `Cont_Eq_Elec/Holes`, implicit Euler, Selberherr 6-4.32). `dti = 0` is the steady state.
+    With the traps' occupations before the step, `f_bulk` (like `s["Nt"]`) and `f_iface` (like
+    the interface traps' `Nt`, on the edges), the traps follow the step too (`_trap_step`)."""
     NP = full_prev.shape[0] - 2
     tr = {"dti": jnp.broadcast_to(dti, (NP,)), "n": jnp.exp(full_prev[1:-1, 1]),
           "p": jnp.exp(full_prev[1:-1, 2])}  # fmt: skip
-    return dict(s, tr=tr)
+    if f_bulk is not None:
+        tr["fb"] = f_bulk
+    s = dict(s, tr=tr)
+    if f_iface is not None and "ti" in s:
+        s["ti"] = dict(s["ti"], f_old=f_iface, dti=jnp.broadcast_to(dti, (NP + 1,)))
+    return s
+
+
+def _trap_step(Cn, Cp, nt0, pt0, n, p, f_old, dti):
+    """A trap level's occupation over a time step (ZimT's `Calc_f_tb`): `df/dt = b − a·f` with
+    `a = C_n·(n + n_t0) + C_p·(p + p_t0)`, `b = C_n·n + C_p·p_t0` from the densities at the step's
+    end, solved exactly from `f_old`. `(f̄, f)`: its mean over the step, which the capture rates
+    take (ZimT's `Calc_Recombination_n/p`, the ODE's integral over the step), and its value at
+    the end, which the charge takes. With `dti = 0` (the steady state) both are `b/a`."""
+    a = Cn * (n + nt0) + Cp * (p + pt0)
+    a = jnp.where(a > 0, a, 1.0)
+    steady = (Cn * n + Cp * pt0) / a
+    moving = dti > 0
+    x = a / jnp.where(moving, dti, 1.0)  # a·Δt
+    end = jnp.where(moving, jnp.exp(-x), 0.0)
+    mean = jnp.where(moving, -jnp.expm1(-x) / x, 0.0)
+    return steady + (f_old - steady) * mean, steady + (f_old - steady) * end
+
+
+def _bulk_rates(n, p, s):
+    """Each carrier's recombination `(R_n, R_p)`: direct and through the bulk traps. In the
+    steady state both `_recombination`; over a time step (`s["tr"]` with the traps'
+    occupations `fb`) each carrier's capture by the occupation's mean over the step
+    (`_trap_step`), so that the two differ while the traps fill or empty."""
+    tr = s.get("tr")
+    if tr is None or "fb" not in tr:
+        R = _recombination(n, p, s)
+        return R, R
+    nl, pl, Cn, Cp, dti = _per_level(s["Nt"], n, p, s["Cn"], s["Cp"], tr["dti"])
+    mean, _ = _trap_step(Cn, Cp, s["nt0"], s["pt0"], nl, pl, tr["fb"], dti)
+    traps = s["Nt"] > 0
+    Rn = jnp.where(traps, s["Nt"] * Cn * (nl - (nl + s["nt0"]) * mean), 0.0)
+    Rp = jnp.where(traps, s["Nt"] * Cp * ((pl + s["pt0"]) * mean - s["pt0"]), 0.0)
+    direct = s["kd"] * (n * p - s["ni2"])
+    return direct + _summed(s["Nt"], Rn, n), direct + _summed(s["Nt"], Rp, n)
+
+
+def _bulk_occupation(n, p, s):
+    """The bulk traps' occupation at the end of a time step (`_trap_step`), like `s["Nt"]`."""
+    tr = s["tr"]
+    nl, pl, Cn, Cp, dti = _per_level(s["Nt"], n, p, s["Cn"], s["Cp"], tr["dti"])
+    return _trap_step(Cn, Cp, s["nt0"], s["pt0"], nl, pl, tr["fb"], dti)[1]
 
 
 def _per_level(levels, *values):
@@ -437,6 +485,8 @@ def _trap_charge(n, p, s):
     nl, pl, Cn, Cp = _per_level(s["tq"], n, p, s["Cn"], s["Cp"])
     q = s["tq"] > 0
     f = (Cn * nl + Cp * s["pt0"]) / jnp.where(q, Cn * (nl + s["nt0"]) + Cp * (pl + s["pt0"]), 1.0)
+    if "tr" in s and "fb" in s["tr"]:  # at the end of a time step (`_trap_step`)
+        f = _bulk_occupation(n, p, s)
     return _summed(s["tq"], jnp.where(q, s["tq"] * (s["tcwe"] - f), 0.0), n)
 
 
@@ -451,20 +501,39 @@ def _interface_edges(nL, nR, pL, pR, ti):
     nL, nR, pL, pR, Cn, Cp, iw, charge, cwe = _per_level(
         Nt, nL, nR, pL, pR, ti["Cn"], ti["Cp"], ti["iw"], ti["charge"], ti["cwe"])  # fmt: skip
     an, bp = Cn * Nt, Cp * Nt
-    a = an * (nL + nR)
-    b = bp * (pL + pR)
-    c = an * (ti["nt0_lo"] + ti["nt0_hi"])
-    d = bp * (ti["pt0_lo"] + ti["pt0_hi"])
     traps = Nt > 0
-    inv = jnp.where(traps, 1.0 / jnp.where(traps, a + b + c + d, 1.0), 0.0)
-    full, empty = (a + d) * inv, (b + c) * inv  # occupied, empty share
+    if "f_old" in ti:  # over a time step (`_trap_step`): captured by the mean, charged by the end
+        dti = _per_level(Nt, ti["dti"])[0]
+        full, end = _trap_step(Cn, Cp, ti["nt0_lo"] + ti["nt0_hi"], ti["pt0_lo"] + ti["pt0_hi"],
+                               nL + nR, pL + pR, ti["f_old"], dti)  # fmt: skip
+        full, end = jnp.where(traps, full, 0.0), jnp.where(traps, end, 0.0)
+        empty = jnp.where(traps, 1.0 - full, 0.0)
+    else:
+        a = an * (nL + nR)
+        b = bp * (pL + pR)
+        c = an * (ti["nt0_lo"] + ti["nt0_hi"])
+        d = bp * (ti["pt0_lo"] + ti["pt0_hi"])
+        inv = jnp.where(traps, 1.0 / jnp.where(traps, a + b + c + d, 1.0), 0.0)
+        full = end = (a + d) * inv  # the occupied share
+        empty = (b + c) * inv
     return tuple(_summed(Nt, v, like) for v in (
         iw * an * (nL * empty - ti["nt0_lo"] * full),
         iw * an * (nR * empty - ti["nt0_hi"] * full),
         iw * bp * (pL * full - ti["pt0_lo"] * empty),
         iw * bp * (pR * full - ti["pt0_hi"] * empty),
-        charge * (cwe - full) * 0.5 * Nt * iw,
+        charge * (cwe - end) * 0.5 * Nt * iw,
     ))  # fmt: skip
+
+
+def _interface_occupation(n, p, ti):
+    """The interface traps' occupation at the end of a time step (`_trap_step`), on the edges of
+    the full grid (`n`, `p` there), like `ti["Nt"]`."""
+    Nt = ti["Nt"]
+    nL, nR, pL, pR, Cn, Cp, dti = _per_level(Nt, n[:-1], n[1:], p[:-1], p[1:], ti["Cn"],
+                                             ti["Cp"], ti["dti"])  # fmt: skip
+    end = _trap_step(Cn, Cp, ti["nt0_lo"] + ti["nt0_hi"], ti["pt0_lo"] + ti["pt0_hi"], nL + nR,
+                     pL + pR, ti["f_old"], dti)[1]  # fmt: skip
+    return jnp.where(Nt > 0, end, 0.0)
 
 
 def _interface_points(n, p, ti):
@@ -546,9 +615,9 @@ def _row(left, mid, right, s, Vt, g_frac, la, lc, B=bernoulli):
         one = {k: v[None] for k, v in s.items()}  # the point as an array of one
         kd, g_fac = (r[0] for r in _point_rates(V[None, 0], V[None, 1], V[None, 2], one))
         s = dict(s, kd=kd)
-    net = s["G"] * g_frac * g_fac - _recombination(n[1], p[1], s)
-    elec = lo_n * n[0] + m_n * n[1] + up_n * n[2] + s["fac"] * net
-    hole = lo_p * p[0] + m_p * p[1] + up_p * p[2] + s["fac"] * net
+    Rn, Rp = _bulk_rates(n[1], p[1], s)
+    elec = lo_n * n[0] + m_n * n[1] + up_n * n[2] + s["fac"] * (s["G"] * g_frac * g_fac - Rn)
+    hole = lo_p * p[0] + m_p * p[1] + up_p * p[2] + s["fac"] * (s["G"] * g_frac * g_fac - Rp)
     if "tr" in s:  # a time step (`_time_terms`)
         elec = elec - s["fac"] * s["tr"]["dti"] * (n[1] - s["tr"]["n"])
         hole = hole - s["fac"] * s["tr"]["dti"] * (p[1] - s["tr"]["p"])
@@ -634,12 +703,16 @@ def _assemble(full, s, Vt, g_frac, la, lc, B=bernoulli):
         s = dict(s, kd=kd)
         # R is linear in k_direct, the generation in its factor.
         dnet_V = tuple(s["G"] * g_frac * dg - (nm * pm - s["ni2"]) * dk for dk, dg in tangents)
-    R, dR_n = jax.jvp(lambda a: _recombination(a, pm, s), (nm,), (nm,))
-    _, dR_p = jax.jvp(lambda b: _recombination(nm, b, s), (pm,), (pm,))
-    net = s["G"] * g_frac * g_fac - R
-    dnet = jnp.stack([zm if dnet_V is None else dnet_V[1], -dR_n, -dR_p], -1)
-    elec = hm[:, 0] * Fn[1:] - hp[:, 0] * Fn[:-1] + fac * net
-    hole = hp[:, 0] * Fp[:-1] - hm[:, 0] * Fp[1:] + fac * net
+    # Each carrier's rate (`_bulk_rates`; equal in the steady state) and its derivatives in
+    # (ln n, ln p).
+    (Rn, Rp), (dRn_n, dRp_n) = jax.jvp(lambda a: _bulk_rates(a, pm, s), (nm,), (nm,))
+    _, (dRn_p, dRp_p) = jax.jvp(lambda b: _bulk_rates(nm, b, s), (pm,), (pm,))
+    gen = s["G"] * g_frac * g_fac
+    dV_mid = zm if dnet_V is None else dnet_V[1]
+    dnet_n = jnp.stack([dV_mid, -dRn_n, -dRn_p], -1)
+    dnet_p = jnp.stack([dV_mid, -dRp_n, -dRp_p], -1)
+    elec = hm[:, 0] * Fn[1:] - hp[:, 0] * Fn[:-1] + fac * (gen - Rn)
+    hole = hp[:, 0] * Fp[:-1] - hm[:, 0] * Fp[1:] + fac * (gen - Rp)
     anion = s["a_mask"] * jnp.exp(la + Vm / Vt)
     cation = s["c_mask"] * jnp.exp(lc - Vm / Vt)
     poisson = (
@@ -661,8 +734,8 @@ def _assemble(full, s, Vt, g_frac, la, lc, B=bernoulli):
     A = jnp.stack([P_A * sP, -hp * dFn0[:-1] * sC, hp * dFp0[:-1] * sC], -2)
     Bb = jnp.stack([
         P_B * sP,
-        (-hp * dFn1[:-1] + hm * dFn0[1:] + fac[:, None] * dnet) * sC,
-        (hp * dFp1[:-1] - hm * dFp0[1:] + fac[:, None] * dnet) * sC,
+        (-hp * dFn1[:-1] + hm * dFn0[1:] + fac[:, None] * dnet_n) * sC,
+        (hp * dFp1[:-1] - hm * dFp0[1:] + fac[:, None] * dnet_p) * sC,
     ], -2)  # fmt: skip
     C = jnp.stack([P_C * sP, hm * dFn1[1:] * sC, -hm * dFp1[1:] * sC], -2)
     if dnet_V is not None:  # the neighbours' potentials in the rates: the V columns of A and C

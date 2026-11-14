@@ -35,6 +35,7 @@ from jaxdd.solver import (
     STALL_STEPS,
     STEP_CAPS,
     _assemble,
+    _bulk_rates,
     _contact_branch,
     _field_mobilities,
     _held,
@@ -214,15 +215,17 @@ def _current(d, full, g_frac, B=bernoulli):
         kd, g_fac = _point_rates(V[:-2], V[1:-1], V[2:], d["s"])
         rec = dict(rec, kd=rec["kd"].at[1:-1].set(kd))
         G = G.at[1:-1].multiply(g_fac)
-    R = _recombination(n, p, rec)
-    R_int = (jnp.zeros_like(R), jnp.zeros_like(R))
+    tr = d.get("tr")
+    if tr is not None and "fb" in tr:  # over a time step: each carrier's capture (`_bulk_rates`)
+        Rn, Rp = _bulk_rates(n, p, dict(rec, tr={"dti": tr["dti"], "fb": tr["fb"]}))
+    else:
+        Rn = Rp = _recombination(n, p, rec)
+    R_int = (jnp.zeros_like(Rn), jnp.zeros_like(Rn))
     if "ti" in d["s"]:
         R_int = _interface_points(n, p, d["s"]["ti"])[:2]
     dx = jnp.diff(x[: NP + 1])
 
-    tr = d.get("tr")
-
-    def carrier(sn, Vg, dens, mu, R_i, before):
+    def carrier(sn, Vg, dens, mu, R, R_i, before):
         U = R + R_i - G * g_frac
         U = U.at[0].set(0.0).at[-1].set(0.0)
         if tr is not None:  # the contacts' too: a finite surface recombination moves them
@@ -249,8 +252,8 @@ def _current(d, full, g_frac, B=bernoulli):
 
     mu_n, mu_p = _field_mobilities(d["mu_n"], d["mu_p"], V, d["s"])
     before_n, before_p = (None, None) if tr is None else (tr["n"], tr["p"])
-    Jn = carrier(-1.0, V + d["offset_n"], n, mu_n, R_int[0], before_n)
-    Jp = carrier(1.0, V + d["offset_p"], p, mu_p, R_int[1], before_p)
+    Jn = carrier(-1.0, V + d["offset_n"], n, mu_n, Rn, R_int[0], before_n)
+    Jp = carrier(1.0, V + d["offset_p"], p, mu_p, Rp, R_int[1], before_p)
     total = Jn + Jp
     if tr is not None:  # the displacement current on each interval
         dV, dV_before = jnp.diff(V), jnp.diff(tr["V"])

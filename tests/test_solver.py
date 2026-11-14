@@ -408,6 +408,8 @@ def test_tvg_as_zimt_reads_it() -> None:
 
 ZIMT_CASES = ["zimt_photo_light", "zimt_sweep_light", "zimt_sweep_diff_light",
               "zimt_photo_surface_light"]  # fmt: skip
+ZIMT_TRAP_CASES = ["zimt_traps_photo_light", "zimt_acceptor_photo_light",
+                   "zimt_trapfiles_photo_light", "zimt_iface_sweep_light"]  # fmt: skip
 
 
 def _zimt_case(case):
@@ -432,13 +434,30 @@ def test_transients_of_electrons_and_holes_reproduce_zimt(case: str) -> None:
     assert np.max(np.abs(r.J_ext[0] - ref["Jext"])) < 1e-9 * np.max(np.abs(ref["Jext"]))
 
 
-def test_transients_in_a_batch_reproduce_zimt() -> None:
-    """The four ZimT cases as one batch, each device with its own steps (the integral form beside
-    the differential one, infinite surface recombination beside finite): each within 1e-9."""
+@pytest.mark.parametrize("case", ZIMT_TRAP_CASES)
+def test_transients_with_traps_reproduce_zimt(case: str) -> None:
+    """Traps in time: ZimT 5.36's `Jext` to 1e-9 of its scale through light on and off at short
+    circuit with the absorber's traps neutral, charged (acceptors), and three levels from a
+    trap file with two at an interface, and a sweep to 1.2 V and back with charged interface
+    traps. Each case's traps following their steady state at once would be 5e-3 to 6e-2 of the
+    scale off (the occupations' dynamics are what is tested)."""
     from jaxdd.batch import prepare
     from jaxdd.transient import solve_transient
 
-    cases = [_zimt_case(c) for c in ZIMT_CASES]
+    setup, tvg, ref = _zimt_case(case)
+    r = solve_transient(prepare([build_device(setup)]), tvg, bernoulli_name="simss")
+    assert r.converged.all()
+    assert np.max(np.abs(r.J_ext[0] - ref["Jext"])) < 1e-9 * np.max(np.abs(ref["Jext"]))
+
+
+def test_transients_in_a_batch_reproduce_zimt() -> None:
+    """The ZimT cases as one batch, each device with its own steps (the integral form beside
+    the differential one, infinite surface recombination beside finite, devices with traps of
+    one level and of several beside devices without): each within 1e-9."""
+    from jaxdd.batch import prepare
+    from jaxdd.transient import solve_transient
+
+    cases = [_zimt_case(c) for c in ZIMT_CASES + ZIMT_TRAP_CASES]
     batch = prepare([build_device(setup) for setup, _, _ in cases])
     r = solve_transient(batch, [tvg for _, tvg, _ in cases], bernoulli_name="simss")
     assert r.converged.all()
@@ -447,12 +466,11 @@ def test_transients_in_a_batch_reproduce_zimt() -> None:
 
 
 def test_transients_refuse_what_they_lack() -> None:
-    """Traps, mobile ions, the open circuit and series resistance: refused by name (Stage C's
-    next steps)."""
+    """Mobile ions, the open circuit and series resistance: refused by name (Stage C's next
+    steps)."""
     from jaxdd.transient import transient_problems
 
-    lacking = [("thin_l1_light", "bulk traps"), ("iface_charged_light", "interface"),
-               ("steady_1e17_thin_light", "mobile ions"), ("resist_light", "R_series")]  # fmt: skip
+    lacking = [("steady_1e17_thin_light", "mobile ions"), ("resist_light", "R_series")]
     for case, what in lacking:
         dev = build_device(read_setup(DATA / case / "simulation_setup.txt"))
         assert any(what in p for p in transient_problems(dev)), case
@@ -1164,7 +1182,8 @@ def test_a_dark_scan_with_a_density_far_below_the_floor_converges() -> None:
 @pytest.mark.parametrize(
     "case",
     ["thin_l1_light", "frozen_1e17_x1_thin_light", "steady_1e17_thin_light", "bulk_acceptor_light",
-     "fieldmob_light", "langevin_field_light", "braun_light", "zimt_photo_light"],
+     "fieldmob_light", "langevin_field_light", "braun_light", "zimt_photo_light",
+     "zimt_acceptor_photo_light"],
 )  # fmt: skip
 def test_the_jacobian_by_edges_is_autodiff_of_the_rows(case: str, bern: str) -> None:
     """`_assemble` (each interval's fluxes once, assembled by hand) gives `_kernels`' residual,
@@ -1186,8 +1205,9 @@ def test_the_jacobian_by_edges_is_autodiff_of_the_rows(case: str, bern: str) -> 
     ion = {k: jnp.asarray(v) if isinstance(v, np.ndarray) else v
            for k, v in _ion_setup(dev).items()}  # fmt: skip
     la, lc = S._point_logs(S._ion_logs(full[:, 0], ion), ion)
-    if case.startswith("zimt"):
-        s = S._time_terms(s, jnp.asarray(y0), 1e9)
+    if case.startswith("zimt"):  # a step of 1 ns, the traps' occupations before it at random
+        f_bulk = jnp.asarray(rng.uniform(0, 1, np.shape(s["Nt"])))
+        s = S._time_terms(s, jnp.asarray(y0), 1e9, f_bulk)
     B = BERNOULLI[bern]
     row_val, row_jac, row_ions = _kernels(B)
     args = (full[:-2], full[1:-1], full[2:], s, dev.Vt, dev.G_frac, la, lc)

@@ -5,10 +5,14 @@ Each step is one Newton solve of the whole system with implicit Euler in time (Z
 `Main_Solver` with `dti = 1/Δt`): the same residual as the steady state with
 `−fac·dti·(n − n_prev)` in each continuity equation (`solver._time_terms`), from the state of the
 step before; `dti = 0` is the steady state, so the first step (`t = 0`) and any return to it are
-steady states. The current adds each density's change to the integral form's integrand and the
-displacement current (`batch._current`). The steps are a `lax.scan`, the devices `vmap`.
+steady states. The traps' occupations are state carried from step to step, each level's
+solved exactly over the step from the densities at its end (`solver._trap_step`, ZimT's
+`Calc_f_tb`); each carrier's capture takes the occupation's mean over the step, so that
+electrons and holes recombine at different rates while traps fill or empty. The current adds
+each density's change to the integral form's integrand and the displacement current
+(`batch._current`). The steps are a `lax.scan`, the devices `vmap`.
 
-So far: electrons and holes, the voltage given (`Vint = Vext`). Traps, mobile ions, the open
+So far: electrons, holes and traps, the voltage given (`Vint = Vext`). Mobile ions, the open
 circuit and series resistance are the next steps of Stage C and refused here by name.
 """
 
@@ -27,6 +31,8 @@ from jaxdd.simss_input import TVG
 from jaxdd.solver import (
     BERNOULLI,
     ION_LOG_CAP,
+    _bulk_occupation,
+    _interface_occupation,
     _ion_logs,
     _time_terms,
     _with_contacts,
@@ -48,13 +54,9 @@ class TransientResult:
 
 
 def transient_problems(dev: Device, tvg: TVG | None = None) -> list[str]:
-    """What `solve_transient` does not take yet, by name: traps, mobile ions, the open circuit
-    and series resistance (Stage C's next steps)."""
+    """What `solve_transient` does not take yet, by name: mobile ions, the open circuit and
+    series resistance (Stage C's next steps)."""
     problems = []
-    if np.any(np.asarray(dev.srh_Nt) > 0) or dev.trap_charge is not None:
-        problems.append("bulk traps (N_t_bulk > 0)")
-    if dev.interface is not None:
-        problems.append("interface traps (N_t_int > 0)")
     if np.any(dev.anion_mask) or np.any(dev.cation_mask):
         problems.append("mobile ions")
     if dev.R_series > 0:
@@ -72,19 +74,36 @@ def _solve_one(d, dti, V, G_frac, B, tol, max_iter):
     y = _poisson_solve(_initial(d0, V[0])[1:-1], d0, s0, ion0, V[0], max_iter)
     bounds = _bounds(d0, V[0])
     logs = _ion_logs(jnp.concatenate([bounds[0][:1], y[:, 0], bounds[1][:1]]), ion0)
+    # The steady state at the first step (t = 0), as `batch._solve_one` finds it: with charged
+    # bulk traps from the solution with them neutral. The first step then starts from it.
+    if "tq" in s0:
+        neutral = dict(s0, tq=jnp.zeros_like(s0["tq"]))
+        y_n, logs_n, _, ok_n, _ = _newton_solve(y, logs, d0, neutral, ion0, V[0], G_frac[0], B,
+                                                tol, max_iter)  # fmt: skip
+        y, logs = jnp.where(ok_n, y_n, y), jnp.where(ok_n, logs_n, logs)
+    y_s, logs_s, _, ok_s, _ = _newton_solve(y, logs, d0, s0, ion0, V[0], G_frac[0], B, tol,
+                                            max_iter)  # fmt: skip
+    y, logs = jnp.where(ok_s, y_s, y), jnp.where(ok_s, logs_s, logs)
     caps = step_caps(d["Vt"])
+    traps = "ti" in s
 
     def full_of(y, Vint):  # the contacts' densities as the current takes them (`_with_contacts`)
         b = _bounds(d, Vint)
         return _with_contacts(jnp.concatenate([b[0][None], y, b[1][None]]), s, d["Vt"], B)
 
+    def stencils(before, dti_k, fb, fi):
+        """The step's stencils and device: the state before it, the traps' occupations."""
+        s_k = _time_terms(s, before, dti_k, fb, fi if traps else None)
+        pad = jnp.zeros_like(fb[:1])
+        tr = {"dti": dti_k, "n": jnp.exp(before[:, 1]), "p": jnp.exp(before[:, 2]),
+              "V": before[:, 0], "fb": jnp.concatenate([pad, fb, pad])}  # fmt: skip
+        return s_k, dict(d, s=s_k, tr=tr)
+
     def step(carry, x):
-        y, logs, y_prev, logs_prev, V_now, dti_now, first = carry
+        y, logs, y_prev, logs_prev, V_now, dti_now, fb, fi, first = carry
         dti_k, V_k, G_k = x
         before = full_of(y, V_now)
-        s_k = _time_terms(s, before, dti_k)
-        d_k = dict(d, s=s_k, tr={"dti": dti_k, "n": jnp.exp(before[:, 1]),
-                                 "p": jnp.exp(before[:, 2]), "V": before[:, 0]})  # fmt: skip
+        s_k, d_k = stencils(before, dti_k, fb, fi)
         # The start: the last two states extrapolated linearly in time (ZimT's
         # `Extrapolate_Solution`, in V and ln n), held to one Newton step's caps; none from or
         # into a steady state.
@@ -95,14 +114,22 @@ def _solve_one(d, dti, V, G_frac, B, tol, max_iter):
         y_new, logs_new, J, ok, it = _newton_solve(
             guess, logs_guess, d_k, s_k, ion, V_k, G_k, B, tol, max_iter, False
         )
+        # The traps' occupations at the step's end, from its solution.
+        after = full_of(y_new, V_k)
+        fb_new = _bulk_occupation(jnp.exp(after[1:-1, 1]), jnp.exp(after[1:-1, 2]), s_k)
+        fi_new = (_interface_occupation(jnp.exp(after[:, 1]), jnp.exp(after[:, 2]), s_k["ti"])
+                  if traps else fi)  # fmt: skip
         # ZimT's failureMode 1 (its default): a step not converged is kept if it is finite.
         keep = jnp.all(jnp.isfinite(y_new)) & jnp.all(jnp.isfinite(logs_new))
-        new = jax.tree_util.tree_map(lambda a, b: jnp.where(keep, a, b),
-                                     (y_new, logs_new, y, logs, V_k, dti_k),
-                                     (y, logs, y_prev, logs_prev, V_now, dti_now))  # fmt: skip
+        new = (y_new, logs_new, y, logs, V_k, dti_k, fb_new, fi_new)
+        old = (y, logs, y_prev, logs_prev, V_now, dti_now, fb, fi)
+        new = jax.tree_util.tree_map(lambda a, b: jnp.where(keep, a, b), new, old)
         return (*new, jnp.array(False)), (J, ok, it)
 
-    start = (y, logs, y, logs, V[0], jnp.asarray(0.0), jnp.array(True))
+    # Before the first step (t = 0, a steady state) the occupations do not matter.
+    fb0 = jnp.zeros_like(s["Nt"])
+    fi0 = jnp.zeros_like(s["ti"]["Nt"]) if traps else jnp.zeros(())
+    start = (y, logs, y, logs, V[0], jnp.asarray(0.0), fb0, fi0, jnp.array(True))
     _, (J, ok, its) = jax.lax.scan(step, start, (dti, V, G_frac))
     return J, ok, its
 

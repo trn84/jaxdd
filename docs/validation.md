@@ -149,9 +149,12 @@ so that the solver is never the larger error in what is computed from it.
   fit's rms misfit). All three samples, 128 walkers and 3000 steps each, the first 1000
   discarded: 4.2 h on an A100-SXM4-40GB (0.75–0.96 s per batch of 64 × 5 curves). Acceptance
   0.05–0.07, autocorrelation times 103–246 steps, so the 2000 steps kept hold 8–10 of the longest
-  and 1000–1300 independent samples: quantiles to a few percent, the tails rougher. The 0.2 Cl
-  sample run on the RTX 4070 Ti SUPER with 64 walkers (1.5 h, 0.92 s per batch of 32 × 5)
-  gives the same medians and widths to within that noise. Median and 16–84 % half-width:
+  and 1000–1300 independent samples: quantiles to a few percent, the tails rougher. A second,
+  independent run of each sample on the RTX 4070 Ti SUPER (64 walkers, another seed; 1.5–1.9 h
+  each, 0.89–1.12 s per batch of 32 × 5) gives the same posteriors: for 0.1 and 0.6 Cl every
+  median within 0.13 half-widths of the A100's and every half-width within 8 % (25 % for the
+  HTL's mobility in 0.6 Cl, held by its bound in a quarter of the samples), from 520 and 680
+  independent samples. Median and 16–84 % half-width:
 
   | | 0.1 Cl | 0.2 Cl | 0.6 Cl | bounds |
   |---|---|---|---|---|

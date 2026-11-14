@@ -36,13 +36,13 @@ from jaxdd.solver import (
     STEP_CAPS,
     _assemble,
     _contact_branch,
-    _direct_rate,
     _field_mobilities,
     _interface_points,
     _ion_constraints,
     _ion_logs,
     _ion_setup,
     _on_points,
+    _point_rates,
     _poisson_jac,
     _poisson_val,
     _recombination,
@@ -124,6 +124,17 @@ def prepare(devices: list[Device]) -> dict:
         for t in trees:
             for k in ("kln", "klp", "klb"):
                 t["s"].setdefault(k, np.zeros_like(t["s"]["hm"]))
+    braun = {"br_romberg" in t["s"] for t in trees if "br_on" in t["s"]}
+    if len(braun) > 1:
+        raise ValueError("a batch takes one Braun rule (build_device's braun)")
+    if braun:  # field-dependent generation; the others none
+        for t in trees:
+            for k in ("br_on", "br_P0", "br_lpre", "br_bq", "br_cF", "br_lkf"):
+                t["s"].setdefault(k, np.zeros_like(t["s"]["hm"]))
+            for k in ("br_kind", "br_cE"):
+                t["s"].setdefault(k, np.ones_like(t["s"]["hm"]))
+            if True in braun:
+                t["s"].setdefault("br_romberg", np.zeros_like(t["s"]["hm"]))
     if any("tq" in t["s"] for t in trees):  # charged bulk traps; the others none
         for t in trees:
             t["s"].setdefault("tq", np.zeros_like(t["s"]["Nt"]))
@@ -179,10 +190,11 @@ def _current(d, full, g_frac, B=bernoulli):
     V, n, p = full[:, 0], jnp.exp(full[:, 1]), jnp.exp(full[:, 2])
     Vt, x, h, L = d["Vt"], d["x"], d["h"], d["L"]
     NP = x.shape[0] - 2
-    rec = d["rec"]
-    if "kln" in d["s"]:  # Langevin in the field at `V`
-        kd = _direct_rate(V[:-2], V[1:-1], V[2:], d["s"])
+    rec, G = d["rec"], d["G"]
+    if "kln" in d["s"] or "br_on" in d["s"]:  # the rates in the field at `V`
+        kd, g_fac = _point_rates(V[:-2], V[1:-1], V[2:], d["s"])
         rec = dict(rec, kd=rec["kd"].at[1:-1].set(kd))
+        G = G.at[1:-1].multiply(g_fac)
     R = _recombination(n, p, rec)
     R_int = (jnp.zeros_like(R), jnp.zeros_like(R))
     if "ti" in d["s"]:
@@ -190,7 +202,7 @@ def _current(d, full, g_frac, B=bernoulli):
     dx = jnp.diff(x[: NP + 1])
 
     def carrier(sn, Vg, dens, mu, R_i):
-        U = R + R_i - d["G"] * g_frac
+        U = R + R_i - G * g_frac
         U = U.at[0].set(0.0).at[-1].set(0.0)
         ev = jnp.exp(sn * Vg[: NP + 1] / Vt)
         int_u = jnp.concatenate([jnp.zeros(1), jnp.cumsum(0.5 * dx * (U[:NP] + U[1 : NP + 1]))])

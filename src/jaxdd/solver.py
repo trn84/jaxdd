@@ -196,7 +196,129 @@ def _stencils(dev: Device, xp=np) -> dict[str, jnp.ndarray]:
     if dev.langevin_field is not None:  # Langevin in the field (`Device.langevin_field`)
         lf = dev.langevin_field
         out.update(kln=lf["n"][i], klp=lf["p"][i], klb=lf["before"][i])
+    if dev.braun is not None:  # field-dependent generation (`Device.braun`)
+        out.update({f"br_{k}": v[i] for k, v in dev.braun.items() if k != "romberg"})
+        if dev.braun["romberg"]:  # SimSS's integration: the key's presence is the switch
+            out["br_romberg"] = xp.zeros(NP)
     return out
+
+
+#: Braun's distance distributions (`thermLengDist` 2–5) in `u = r/a`, each normalised on
+#: (0, ∞): Gaussian, exponential, r²·exponential, r⁴·Gaussian (`Diss_Prob_Gauss`, …).
+def _distributions(u):
+    return jnp.stack([
+        4 / jnp.sqrt(jnp.pi) * u**2 * jnp.exp(-(u**2)),
+        jnp.exp(-u),
+        u**2 * jnp.exp(-u) / 2,
+        8 * u**4 * jnp.exp(-(u**2)) / (3 * jnp.sqrt(jnp.pi)),
+    ])  # fmt: skip
+
+
+#: SIMsalabim's limits of the integral over the distance, in `a` (`LowerLimBraun`,
+#: `UpperLimBraun`), and its Romberg integration's relative tolerance and most iterations
+#: (`TolRomb`, `MaxRombIt`).
+BRAUN_LIMITS = (0.01, 20.0)
+ROMBERG_TOL, ROMBERG_MAX_IT = 0.01, 15
+
+
+def _gauss_in_log(panels=16, nodes=32):
+    """Gauss–Legendre in `ln u` over `BRAUN_LIMITS`, `panels` equal panels of `nodes` each: the
+    nodes `u` and the weights of `du`. To 1e-14 against an adaptive quadrature up to 1e8 V/m
+    over ε_r 3.5–24, a 0.3–3 nm, k_f/k 1e18–1e27 (docs/model.md)."""
+    x, w = np.polynomial.legendre.leggauss(nodes)
+    edges = np.linspace(*np.log(BRAUN_LIMITS), panels + 1)
+    t = (0.5 * np.diff(edges)[:, None] * x + 0.5 * (edges[1:] + edges[:-1])[:, None]).ravel()
+    wt = np.repeat(0.5 * np.diff(edges), nodes) * np.tile(w, panels)
+    return np.exp(t), wt * np.exp(t)
+
+
+_BRAUN_U, _BRAUN_W = _gauss_in_log()
+
+
+def _log_bessel(b, simss):
+    """ln of Braun's `J₁(2√(−2b))/√(−2b) = 2·I₁(z)/z`, `z = √(8b)`; or of SimSS's series of it
+    to x¹¹ (`NumericalUtils.Bessel`)."""
+    if simss:
+        r = 1.0 + b / 66
+        for c in (55, 45, 36, 28, 21, 15, 10, 6, 3):
+            r = 1.0 + b / c * r
+        return jnp.log(1.0 + b * r)
+    small = b < 1e-6
+    z = jnp.sqrt(8 * jnp.where(small, 1.0, b))
+    full = jnp.log(2 * jax.scipy.special.i1e(z) / z) + z
+    return jnp.where(small, b - b * b / 6, full)  # ln(1 + b + b²/3 + …)
+
+
+def _dissociation(dV, kd, s):
+    """Braun's dissociation probability at the interior points (`Calc_Dissociation`), from the
+    potential difference over the point's two neighbours `dV` and the recombination strength
+    `kd` (its `k_direct`, Langevin's or not): `k_d/(k_d + k_f)` with
+    `k_d = 3·kd/(4π·r³)·exp(−E_B/V_T)·J(b)`, `E_B = q/(4π·ε·r)`, averaged over the distance
+    distribution (`kind` 2–5) or at `r = a` (1). In logarithms: `exp(−E_B/V_T)` underflows
+    where SimSS's 10-byte reals do not."""
+    simss = "br_romberg" in s
+    b = s["br_bq"] * jnp.abs(dV * s["br_cF"])
+    pos = kd > 0
+    base = (jnp.log(jnp.where(pos, kd, 1.0)) + s["br_lpre"] + _log_bessel(b, simss)
+            - s["br_lkf"])  # fmt: skip
+
+    def prob(u):  # points × len(u)
+        return jax.nn.sigmoid(base[:, None] - 3 * jnp.log(u) - s["br_cE"][:, None] / u)
+
+    one_hot = (s["br_kind"][:, None] == jnp.arange(2, 6)) & (s["br_on"][:, None] > 0)
+    if simss:
+        avg = _romberg(lambda u: prob(u) * (one_hot @ _distributions(u)), BRAUN_LIMITS)
+    else:
+        avg = prob(jnp.asarray(_BRAUN_U)) @ (_distributions(jnp.asarray(_BRAUN_U))
+                                            * jnp.asarray(_BRAUN_W)).T  # fmt: skip
+        avg = jnp.sum(avg * one_hot, axis=-1)
+    delta = prob(jnp.ones(1))[:, 0]
+    return jnp.where(pos, jnp.where(s["br_kind"] == 1, delta, avg), 0.0)
+
+
+def _romberg(f, limits):
+    """SIMsalabim's `RombergIntegrationValues` of `f` (points × nodes) over `limits`, for every
+    point at once and each stopped as it stops: at the first iteration whose estimate and the
+    one before each differ from their predecessor by at most `ROMBERG_TOL` (relative), or at
+    `ROMBERG_MAX_IT`. A level is computed only while some point still needs it."""
+    lo, hi = limits
+    H = hi - lo
+    T = 0.5 * H * jnp.sum(f(jnp.array([lo, hi])), axis=-1)
+    row = [T]
+    out, done, d_old = T, jnp.zeros(T.shape, bool), jnp.ones_like(T)
+    for i in range(2, ROMBERG_MAX_IT + 1):
+        h = H / 2 ** (i - 2)
+        u = lo + (np.arange(1, 2 ** (i - 2) + 1) - 0.5) * h
+
+        def level(T=T, row=row, u=u, h=h, i=i):
+            T_new = 0.5 * (T + h * jnp.sum(f(jnp.asarray(u)), axis=-1))
+            new = [T_new]
+            for j in range(2, i + 1):
+                new.append(new[-1] + (new[-1] - row[j - 2]) / (4 ** (j - 1) - 1))
+            return new
+
+        new = jax.lax.cond(jnp.all(done), lambda row=row, i=i: row + [row[-1]] * (i - len(row)),
+                           level)  # fmt: skip
+        # relative, absolute where the estimate is 0 (as SIMsalabim)
+        d_new = jnp.abs(new[-1] - row[-1]) / jnp.where(new[-1] == 0, 1.0, jnp.abs(new[-1]))
+        stop = ~done & (d_new <= ROMBERG_TOL) & (d_old <= ROMBERG_TOL)
+        out = jnp.where(done, out, new[-1])
+        done = done | stop
+        d_old = d_new
+        T, row = new[0], new
+    return out
+
+
+def _point_rates(Vl, Vm, Vr, s):
+    """`k_direct` and the generation's factor at interior points from their own and their
+    neighbours' potentials: `_direct_rate`, and with Braun's field-dependent generation
+    (`fieldDepG`) `k_direct·(1 − P)` and `P0 + (1 − P0)·P`, `P` the dissociation probability
+    (SIMsalabim's `Calc_Recombination_n`, `Calc_Dissociation`); else 1."""
+    kd = _direct_rate(Vl, Vm, Vr, s)
+    if "br_on" not in s:
+        return kd, jnp.ones_like(Vm)
+    P = s["br_on"] * _dissociation(Vr - Vl, kd, s)
+    return kd * (1 - P), 1 + s["br_on"] * (s["br_P0"] - 1) + (1 - s["br_P0"]) * P
 
 
 def _direct_rate(Vl, Vm, Vr, s):
@@ -407,9 +529,12 @@ def _row(left, mid, right, s, Vt, g_frac, la, lc, B=bernoulli):
     lo_p = s["hp"] * mup_m * Vt * B(gp[1] - gp[0])
     up_p = s["hm"] * mup_p * Vt * B(gp[1] - gp[2])
     m_p = -(s["hm"] * mup_p * Vt * B(gp[2] - gp[1]) + s["hp"] * mup_m * Vt * B(gp[0] - gp[1]))
-    if "kln" in s:
-        s = dict(s, kd=_direct_rate(V[0], V[1], V[2], s))
-    net = s["G"] * g_frac - _recombination(n[1], p[1], s)
+    g_fac = 1.0
+    if "kln" in s or "br_on" in s:  # the rates in the field
+        one = {k: v[None] for k, v in s.items()}  # the point as an array of one
+        kd, g_fac = (r[0] for r in _point_rates(V[None, 0], V[None, 1], V[None, 2], one))
+        s = dict(s, kd=kd)
+    net = s["G"] * g_frac * g_fac - _recombination(n[1], p[1], s)
     elec = lo_n * n[0] + m_n * n[1] + up_n * n[2] + s["fac"] * net
     hole = lo_p * p[0] + m_p * p[1] + up_p * p[2] + s["fac"] * net
     return jnp.stack([poisson * s["sP"], elec * s["sC"], hole * s["sC"]])
@@ -483,18 +608,21 @@ def _assemble(full, s, Vt, g_frac, la, lc, B=bernoulli):
     Vm, nm, pm = V[1:-1], n[1:-1], p[1:-1]
     hm, hp, fac = s["hm"][:, None], s["hp"][:, None], s["fac"]
     zm = jnp.zeros_like(Vm)
-    dR_V = None
-    if "kln" in s:  # Langevin in the field: the rate's derivative in the three potentials
-        Vl, Vr = V[:-2], V[2:]
-        kd, dk = zip(*(jax.jvp(lambda *a: _direct_rate(*a, s), (Vl, Vm, Vr), t)
-                       for t in ((jnp.ones_like(Vm), zm, zm), (zm, jnp.ones_like(Vm), zm),
-                                 (zm, zm, jnp.ones_like(Vm)))), strict=True)  # fmt: skip
-        s = dict(s, kd=kd[0])
-        dR_V = tuple((nm * pm - s["ni2"]) * d for d in dk)  # R is linear in k_direct
+    dnet_V, g_fac = None, 1.0
+    if "kln" in s or "br_on" in s:  # the rates in the field, and their derivatives in the
+        # three potentials (one forward pass each)
+        Vl, Vr, one = V[:-2], V[2:], jnp.ones_like(Vm)
+        rates, tangents = zip(*(jax.jvp(lambda *a: _point_rates(*a, s), (Vl, Vm, Vr), t)
+                                for t in ((one, zm, zm), (zm, one, zm), (zm, zm, one))),
+                              strict=True)  # fmt: skip
+        kd, g_fac = rates[0]
+        s = dict(s, kd=kd)
+        # R is linear in k_direct, the generation in its factor.
+        dnet_V = tuple(s["G"] * g_frac * dg - (nm * pm - s["ni2"]) * dk for dk, dg in tangents)
     R, dR_n = jax.jvp(lambda a: _recombination(a, pm, s), (nm,), (nm,))
     _, dR_p = jax.jvp(lambda b: _recombination(nm, b, s), (pm,), (pm,))
-    net = s["G"] * g_frac - R
-    dnet = jnp.stack([zm if dR_V is None else -dR_V[1], -dR_n, -dR_p], -1)
+    net = s["G"] * g_frac * g_fac - R
+    dnet = jnp.stack([zm if dnet_V is None else dnet_V[1], -dR_n, -dR_p], -1)
     elec = hm[:, 0] * Fn[1:] - hp[:, 0] * Fn[:-1] + fac * net
     hole = hp[:, 0] * Fp[:-1] - hm[:, 0] * Fp[1:] + fac * net
     anion = s["a_mask"] * jnp.exp(la + Vm / Vt)
@@ -522,12 +650,12 @@ def _assemble(full, s, Vt, g_frac, la, lc, B=bernoulli):
         (hp * dFp1[:-1] - hm * dFp0[1:] + fac[:, None] * dnet) * sC,
     ], -2)  # fmt: skip
     C = jnp.stack([P_C * sP, hm * dFn1[1:] * sC, -hm * dFp1[1:] * sC], -2)
-    if dR_V is not None:  # the neighbours' potentials in the rate: the V columns of A and C
+    if dnet_V is not None:  # the neighbours' potentials in the rates: the V columns of A and C
 
-        def column(d):  # rows (Poisson, electrons, holes): −fac·∂R/∂V, scaled
-            return jnp.stack([zm, -fac * d * s["sC"], -fac * d * s["sC"]], -1)
+        def column(d):  # rows (Poisson, electrons, holes): fac·∂(G − R)/∂V, scaled
+            return jnp.stack([zm, fac * d * s["sC"], fac * d * s["sC"]], -1)
 
-        A, C = A.at[:, :, 0].add(column(dR_V[0])), C.at[:, :, 0].add(column(dR_V[2]))
+        A, C = A.at[:, :, 0].add(column(dnet_V[0])), C.at[:, :, 0].add(column(dnet_V[2]))
     if "ti" in s:  # interface traps: their charge in Poisson, their capture in continuity
         X, own, up, down = _interface_terms(n, p, s["ti"])
         scale = jnp.stack([Q * s["sP"], -fac * s["sC"], -fac * s["sC"]], -1)  # rows (Q, Rn, Rp)
@@ -739,8 +867,11 @@ def _current(dev: Device, V, n, p, g_frac) -> float:
     NP = len(x) - 2
     s_all = {key: np.zeros(NP + 2) for key in ("kd", "ni2", "Nt", "Cn", "Cp", "nt0", "pt0")}
     kd = np.asarray(dev.k_direct, dtype=float).copy()
-    if dev.langevin_field is not None:  # Langevin in the converged field
-        kd[1:-1] = np.asarray(_direct_rate(V[:-2], V[1:-1], V[2:], _stencils(dev)))
+    G = np.asarray(dev.G, dtype=float).copy()
+    if dev.langevin_field is not None or dev.braun is not None:  # the rates in the field
+        rates = _point_rates(V[:-2], V[1:-1], V[2:], _stencils(dev))
+        kd[1:-1] = np.asarray(rates[0])
+        G[1:-1] *= np.asarray(rates[1])
     s_all.update(kd=kd, ni2=dev.ni**2, Nt=dev.srh_Nt, Cn=dev.srh_Cn,
                  Cp=dev.srh_Cp, nt0=dev.srh_nt0, pt0=dev.srh_pt0)  # fmt: skip
     R = np.asarray(_recombination(n, p, s_all))
@@ -749,7 +880,7 @@ def _current(dev: Device, V, n, p, g_frac) -> float:
         R_int = tuple(np.asarray(r) for r in _interface_points(n, p, dev.interface)[:2])
 
     def carrier(sn, Vg, dens, mu, R_i):
-        U = R + R_i - dev.G * g_frac
+        U = R + R_i - G * g_frac
         U[0] = U[-1] = 0.0
         dx = np.diff(x[: NP + 1])
         ev = np.exp(sn * Vg[: NP + 1] / Vt)

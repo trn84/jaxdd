@@ -205,6 +205,13 @@ potential gains `±F·k·d√|ΔV|/dΔV`. `√|x|` has no derivative at 0: `solv
 at |ΔV| ≥ 1e-12 V (0 at 0). Only the Jacobian sees that floor; the residual, and so the
 solution, is exact, and Newton needs as many steps as with a constant mobility.
 
+Where the rates follow the field (Langevin with a field-dependent mobility, Braun's
+generation; [model.md](model.md)), `solver._point_rates` gives each point's `k_direct` and its
+generation's factor from its own and its two neighbours' potentials, and `jax.jvp` of it in
+each of the three gives `∂(G − R)/∂V` for the potential's column of `B[i]`, `A[i]` and `C[i]`.
+With `braun="simss"` the Romberg integration computes a level only while some point still
+needs it (`lax.cond`); on `braun_light` a scan takes 76 s on a CPU, the exact rule 2 s.
+
 The reference is `solver._row`, the three residuals of one point from its three neighbours as
 SIMsalabim writes them, and `jax.jacfwd` of it in its three neighbour arguments: `_assemble`
 equals it to 1e-11 (tests). It was the solver's assembly before; two things replaced it.

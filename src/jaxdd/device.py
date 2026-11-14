@@ -249,6 +249,14 @@ class Device:
     # `mob_field` on the interval after the point, or before it where `before` is 1 (the
     # layer's own interval at its last point, `langevin="layer"`). None without.
     langevin_field: dict | None = None
+    # Field-dependent generation (SIMsalabim's `fieldDepG`, Braun's dissociation), per point:
+    # `on` 1 in its layers (not on the electrodes), `P0`, the distribution `kind`
+    # (`thermLengDist` 1–5), and for `solver._dissociation` `lpre = ln(3/(4π·a³))`,
+    # `cE = q/(4π·ε·a·V_T)` (the binding energy over `V_T` at `r = a`), `bq = q/(8π·ε·V_T²)`
+    # (Braun's `b` per V/m), `cF = 1/(x[i+1] − x[i−1])` (the field's central difference) and
+    # `lkf = ln k_f`; `romberg` 1 for SimSS's integration and Bessel series (`BRAUN_RULES`).
+    # None without.
+    braun: dict | None = None
     # Finite surface recombination at the contacts (SIMsalabim's `S_n_L`, `S_p_L`, `S_n_R`,
     # `S_p_R`, m/s, negative for infinite): `S` the four, `a` the first and last interval's
     # `V_T·μ/(L·h)` for electrons and holes in the same order, `both` 1 where the condition holds
@@ -290,6 +298,9 @@ class Structure:
     langevin: np.ndarray = None  # per layer: `useLangevin`, `k_direct` from the mobilities
     langevin_mobility: str = "layer"  # `LANGEVIN_MOBILITIES`
     mob_dep: np.ndarray = None  # per layer × (electrons, holes): `mobnDep`, `mobpDep` = 1
+    field_dep_g: np.ndarray = None  # per layer: `fieldDepG` = 1
+    therm_leng_dist: np.ndarray = None  # per layer: `thermLengDist`, 1–5
+    braun_rule: str = "exact"  # `BRAUN_RULES`
     #: The generation: "file" (a profile, `gen_x`, `gen_G`), "none" (uniform, each layer's
     #: `G_ehp`) or "calc" (the transfer-matrix method, `optics.optical_data`).
     gen_mode: str = "file"
@@ -310,6 +321,12 @@ SURFACE_MODELS = ("extraction", "robin")
 #: (docs/differences.md §8).
 LANGEVIN_MOBILITIES = ("layer", "simss")
 
+#: How Braun's dissociation probability is averaged over the distance distribution: "exact"
+#: (Gauss–Legendre in ln r, 512 nodes, to round-off) or "simss" (SimSS 5.36's Romberg
+#: integration to 1 % and its Bessel series to x¹¹, to reproduce its numbers;
+#: docs/differences.md §9).
+BRAUN_RULES = ("exact", "simss")
+
 #: The surface recombination velocities, in `S` order (`Device.surface`).
 SURFACE_PARAMETERS = ("S_n_L", "S_p_L", "S_n_R", "S_p_R")
 
@@ -318,6 +335,7 @@ LAYER_PARAMETERS = (
     "L", "eps_r", "E_c", "E_v", "N_c", "N_D", "N_A", "mu_n", "mu_p", "nu_int_n", "nu_int_p",
     "gamma_n", "gamma_p", "k_direct", "preLangevin", "N_t_bulk", "C_n_bulk", "C_p_bulk",
     "E_t_bulk", "N_anion", "N_cation", "N_t_int", "E_t_int", "C_n_int", "C_p_int", "G_ehp",
+    "P0", "a", "k_f",
 )  # fmt: skip
 
 
@@ -362,8 +380,13 @@ def _sfb(N_A, N_D, E_c, E_v, N_c, Vt, xp=np):
     return xp.where(net > 0, E_v - Vt * xp.log(N_c / safe), n_type)
 
 
-def device_parameters(setup: Setup, grid_split: str = "exact", surface: str = "extraction",
-                      langevin: str = "layer") -> tuple[Structure, dict]:  # fmt: skip
+def device_parameters(
+    setup: Setup,
+    grid_split: str = "exact",
+    surface: str = "extraction",
+    langevin: str = "layer",
+    braun: str = "exact",
+) -> tuple[Structure, dict]:
     """A SIMsalabim input (Stage A, `check_supported` first) as its `Structure` and its
     parameters: a dict of `LAYER_PARAMETERS`, each an array over the layers, and `T`, `W_L`,
     `W_R`, `G_frac`, `V_pre`, the generation profile's file (`gen_x`, `gen_G`) and the external
@@ -372,7 +395,8 @@ def device_parameters(setup: Setup, grid_split: str = "exact", surface: str = "e
     (m⁻²), used on the layers whose file names them; the surface recombination velocities
     `S_n_L`, `S_p_L`, `S_n_R`, `S_p_R` (m/s, negative infinite), acting as `surface` says
     (`SURFACE_MODELS`); `langevin` which mobilities the Langevin rate takes
-    (`LANGEVIN_MOBILITIES`). `grid_split`
+    (`LANGEVIN_MOBILITIES`); `braun` how the field-dependent generation's dissociation
+    probability is integrated (`BRAUN_RULES`). `grid_split`
     as in `build_device`. Changing a parameter keeps the structure: a trap density set on a
     layer without traps, or an ion density on a layer without ions, does nothing; the points
     per layer stay those of the input's thicknesses."""
@@ -381,6 +405,8 @@ def device_parameters(setup: Setup, grid_split: str = "exact", surface: str = "e
         raise ValueError(f"surface {surface!r}: one of {SURFACE_MODELS}")
     if langevin not in LANGEVIN_MOBILITIES:
         raise ValueError(f"langevin {langevin!r}: one of {LANGEVIN_MOBILITIES}")
+    if braun not in BRAUN_RULES:
+        raise ValueError(f"braun {braun!r}: one of {BRAUN_RULES}")
     if setup.i("leftElec") not in (-1, 1):
         raise ValueError("leftElec must be -1 (the left electrode the cathode) or 1 (the anode)")
     NP, grad = setup.i("NP"), setup.f("grad")
@@ -413,6 +439,9 @@ def device_parameters(setup: Setup, grid_split: str = "exact", surface: str = "e
         langevin_mobility=langevin,
         mob_dep=np.array([[int(float(ly.raw.get(k, "0"))) for k in ("mobnDep", "mobpDep")]
                           for ly in layers]),
+        field_dep_g=flags(lambda ly: int(float(ly.raw.get("fieldDepG", "0"))) == 1),
+        therm_leng_dist=np.array([int(float(ly.raw.get("thermLengDist", "1"))) for ly in layers]),
+        braun_rule=braun,
         left_elec=setup.i("leftElec"),
     )  # fmt: skip
     # SIMsalabim's checks: each work function within its layer's gap.
@@ -420,9 +449,18 @@ def device_parameters(setup: Setup, grid_split: str = "exact", surface: str = "e
         if not sfb and not ly.f("E_c") <= setup.f(k) <= ly.f("E_v"):
             raise ValueError(f"{k} = {setup.f(k)} eV: outside the gap of its layer "
                              f"({ly.f('E_c')} to {ly.f('E_v')} eV)")  # fmt: skip
-    # SIMsalabim's: `mobnDep`, `mobpDep` 0 or 1.
+    # SIMsalabim's: `mobnDep`, `mobpDep` 0 or 1; for the generation, `0 ≤ P0 < 1` (0 without
+    # `fieldDepG`), `thermLengDist` 1–5 and `k_f > 0`, here also `a > 0`, where it is used.
     if not np.isin(structure.mob_dep, (0, 1)).all():
         raise ValueError(f"mobnDep, mobpDep: 0 or 1, got {structure.mob_dep.tolist()}")
+    for k, ly in enumerate(layers, start=1):
+        P0, on = float(ly.raw.get("P0", "0")), structure.field_dep_g[k - 1]
+        if not 0 <= P0 < 1 or (P0 != 0 and not on):
+            raise ValueError(f"layer {k}: P0 = {P0} (0 ≤ P0 < 1, and 0 without fieldDepG)")
+        if structure.therm_leng_dist[k - 1] not in (1, 2, 3, 4, 5):
+            raise ValueError(f"layer {k}: thermLengDist {structure.therm_leng_dist[k - 1]}")
+        if on and not (ly.f("k_f") > 0 and ly.f("a") > 0):
+            raise ValueError(f"layer {k}: fieldDepG needs k_f > 0 and a > 0")
     extra = {}
     if bulk_file.any():
         extra["bulk_trap_E"], extra["bulk_trap_N"] = _level_table(
@@ -474,6 +512,9 @@ def device_parameters(setup: Setup, grid_split: str = "exact", surface: str = "e
         "nu_int_p",
         "gamma_n",
         "gamma_p",
+        "P0",
+        "a",
+        "k_f",
         "C_n_bulk",
         "C_p_bulk",
         "E_t_bulk",
@@ -678,6 +719,21 @@ def device_arrays(structure: Structure, p: dict, xp=np) -> Device:
             "a": xp.stack([a_L * mu_n[0], a_L * mu_p[0], a_R * mu_n[NP], a_R * mu_p[NP]]),
             "both": xp.asarray(1.0 if st.surface == "robin" else 0.0),
         }
+    braun = None
+    if st.field_dep_g is not None and st.field_dep_g.any():  # SIMsalabim's `Calc_Dissociation`
+        on = interior & st.field_dep_g[lid]
+        eps = p["eps_r"][lid] * EPS_0
+        a = xp.where(on, p["a"][lid], 1e-9)  # a safe value where unused, for the gradients
+        # x[i+1] − x[i−1], from the spacing (the difference of x loses digits)
+        dx = xp.concatenate([xp.ones(1), total * (h[:-2] + h[1:-1]), xp.ones(1)])
+        braun = {
+            "on": on.astype(float), "P0": xp.where(on, p["P0"][lid], 0.0),
+            "kind": xp.asarray(st.therm_leng_dist[lid], dtype=float),
+            "lpre": xp.log(3 / (4 * np.pi * a**3)), "cE": Q / (4 * np.pi * eps * a * Vt),
+            "bq": Q / (8 * np.pi * eps * Vt**2), "cF": 1 / dx,
+            "lkf": xp.log(xp.where(on, p["k_f"][lid], 1.0)),
+            "romberg": float(st.braun_rule == "simss"),
+        }  # fmt: skip
     mob_field = None
     if st.mob_dep is not None and st.mob_dep.any():  # SIMsalabim's `Calc_Elec_Mob`, `Calc_Hole_Mob`
         dep = xp.asarray(st.mob_dep[lid]) & ~iface[:, None]
@@ -709,15 +765,16 @@ def device_arrays(structure: Structure, p: dict, xp=np) -> Device:
         pre_cond=st.pre_cond, V_pre=p["V_pre"], fix_ions=st.fix_ions, interface=interface,
         R_series=p.get("R_series", 0.0), R_shunt=p.get("R_shunt", -1.0), left_elec=st.left_elec,
         trap_charge=trap_charge, trap_cwe=trap_cwe, surface=surface,
-        mob_field=mob_field, langevin_field=langevin_field,
+        mob_field=mob_field, langevin_field=langevin_field, braun=braun,
     )  # fmt: skip
 
 
 def build_device(setup: Setup, grid_split: str = "exact", surface: str = "extraction",
-                 langevin: str = "layer") -> Device:  # fmt: skip
+                 langevin: str = "layer", braun: str = "exact") -> Device:  # fmt: skip
     """The device of a SIMsalabim input (Stage A, `check_supported` first), in NumPy. `grid_split`
     "simss" shares the grid points among the layers as SimSS's 10-byte reals do
     (`layer_points`; docs/differences.md §5), for a comparison point by point; `surface` how
     finite surface recombination at the contacts acts (`SURFACE_MODELS`); `langevin` which
-    mobilities the Langevin rate takes (`LANGEVIN_MOBILITIES`)."""
-    return device_arrays(*device_parameters(setup, grid_split, surface, langevin))
+    mobilities the Langevin rate takes (`LANGEVIN_MOBILITIES`); `braun` how Braun's dissociation
+    probability is integrated (`BRAUN_RULES`)."""
+    return device_arrays(*device_parameters(setup, grid_split, surface, langevin, braun))

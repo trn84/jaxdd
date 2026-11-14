@@ -203,8 +203,10 @@ What jaxdd solves today ("Stage A") is in [docs/overview.md](docs/overview.md). 
   circuit; the generation profile by the transfer-matrix method, differentiable in the
   thicknesses, and uniform; the left electrode as the anode; the contacts' finite surface
   recombination and `sfb` work functions; Langevin recombination; the field-dependent mobility,
-  also with Langevin in the same layer ([docs/model.md](docs/model.md)). Next: the field-dependent
-  generation (`fieldDepG`, Braun's dissociation).
+  also with Langevin in the same layer; the field-dependent generation (Braun's dissociation)
+  ([docs/model.md](docs/model.md)). Left, still refused by name: ions in a region across
+  layers or in more than one layer, `fixIons` without `preCond`, `Vdist` = 2 (SimSS's other
+  voltage steps) and `currDiffInt` = 1 (its other current).
   At the end, a SimSS input runs on jaxdd or is refused with the missing feature named.
 - **Stage C: transients (ZimT).** Time-dependent drift-diffusion with mobile ions: scan-rate
   hysteresis, transient photocurrent and photovoltage, impedance. Its own plan when Stage B is

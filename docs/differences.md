@@ -198,6 +198,25 @@ With field-dependent mobilities as well (`langevin_field_light`) the same points
 field-dependent mobility the layer's last interval, in its field, at its last point); SimSS's
 with `langevin="simss"`, within 1.4e-10 and 1.5e-10 of SimSS on the two devices.
 
+## 9 Braun's dissociation probability: Romberg to 1 % and a cut Bessel series
+
+**What.** SIMsalabim's `Calc_Dissociation` averages Braun's probability over the distance
+distribution by `RombergIntegrationValues` with a relative tolerance of 1 % (`TolRomb`), its
+stopping rule comparing two successive estimates only. It starts from the two ends of the
+interval, 0.01 to 20 times `a`, where the Gaussian distribution has almost no weight: early
+estimates agree with each other before the grid resolves the distribution. Its `Bessel` is
+the series of `J(b) = 2·I₁(√(8b))/√(8b)` cut after `b¹¹`.
+
+**How large.** On the probability itself (`a` 0.3–1.5 nm, `ε_r` 3.5–24, fields up to 1e8 V/m):
+the integral up to 4.6e-3 relative off (Gaussian, `ε_r` 24, `a` 1 nm, `k_f` 1e6), the series up
+to 2 % at `b` = 32 (`ε_r` 3.5 and 1e8 V/m). On `tests/data/braun_light` with `a` 1 nm and `k_f`
+1e6: J_sc 8.6e-4 off, the curve 2.6e-5 of its scale. On `braun_light` as it is (`a` 0.5 nm,
+`k_f` 1e9) the two agree to 6e-9.
+
+**jaxdd.** Gauss–Legendre in `ln r`, 512 nodes, to 1e-14, and the exact `J` (`braun="exact"`,
+the default); SimSS's Romberg integration, stopped point by point as SimSS stops it, and its
+series with `braun="simss"`, within 2.1e-10 of SimSS on `braun_light`.
+
 ## Not differences
 
 Reproduced on purpose, because they are part of the discrete equations SimSS defines:

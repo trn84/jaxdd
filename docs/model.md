@@ -182,6 +182,30 @@ The generation profile (`Init_Generation_Profile`) comes in one of three ways, a
   (`spectrum`); zero in layers with `layerGen = 0`. In JAX (`batch.device_tree`) it is
   differentiable in the layers' thicknesses, which move the optics as well as the grid.
 
+### Field-dependent generation (`Calc_Dissociation`, Braun)
+
+In a layer with `fieldDepG = 1` light makes bound pairs at a distance `r` that dissociate with
+Braun's probability (C. Braun, J. Chem. Phys. 80, 4157 (1984)):
+
+```
+P(r, F) = k_d / (k_d + k_f),   k_d = 3·k/(4π·r³) · exp(−E_B/V_T) · J(b)
+E_B = q/(4π·ε·r),   b = q·|F|/(8π·ε·V_T²),   J(b) = 2·I₁(√(8b))/√(8b)
+```
+
+with `k` the point's recombination strength (its `k_direct`, or Langevin's), `k_f` the pairs'
+decay rate and `F` the field at the point, `(V[i+1] − V[i−1])/(x[i+1] − x[i−1])`. `P` is
+averaged over the distance's distribution about the length `a` (`thermLengDist`: 1 a delta at
+`a`, 2 a Gaussian, 3 an exponential, 4 r²·exponential, 5 r⁴·Gaussian), over `r` from 0.01 `a`
+to 20 `a` as SIMsalabim. At the point, the generation becomes `(P0 + (1 − P0)·P)·G` and the
+direct recombination `(1 − P)·k·(n·p − n_i²)`: a pair that recombines may dissociate again.
+`P0` is the share of pairs that are free at once.
+
+jaxdd averages by Gauss–Legendre in `ln r` (16 panels of 32 nodes), to 1e-14 against an
+adaptive quadrature up to 1e8 V/m; `E_B/V_T` reaches 1000 at the small distances, so `P` is taken
+in logarithms (`solver._dissociation`). SimSS integrates by Romberg to 1 % and cuts `J` after
+`b¹¹`; `build_device(..., braun="simss")` does the same ([differences.md](differences.md) §9).
+Generation and recombination then depend on the potential at the point's two neighbours.
+
 ## Contacts and the applied voltage
 
 The work functions set the boundary values of the potential and the equilibrium densities

@@ -424,6 +424,148 @@ def test_a_mobility_model_other_than_0_or_1_is_refused() -> None:
         build_device(setup_from_texts(bad))
 
 
+def test_the_field_dependent_generation_reproduces_simss() -> None:
+    """Stage B: Braun's field-dependent generation (`fieldDepG`) in all three layers, a
+    Gaussian distance distribution in the absorber (`P0` 0.1), an exponential in the first
+    layer and a delta function in the last (k_f 1e9, a 0.5–0.6 nm), which halves J_sc. With
+    SimSS's Romberg integration and Bessel series (`braun="simss"`) within 1e-9 of SimSS's
+    scale at its tolerances of 1e-9; exact (the default) within 1e-7, its integration that
+    close on this device (docs/differences.md §9). Every third voltage, for time."""
+    setup = read_setup(DATA / "braun_light" / "simulation_setup.txt")
+    check_supported(setup)
+    ref = np.genfromtxt(DATA / "braun_light" / "JV.dat", names=True)[::3]
+    scale = np.max(np.abs(ref["Jext"]))
+    for rule, tol in (("simss", 1e-9), ("exact", 1e-7)):
+        res = solve_jv(build_device(setup, braun=rule), ref["Vint"], bernoulli_name="simss")
+        assert res.converged.all()
+        assert np.max(np.abs(res.J - ref["Jext"])) < tol * scale, rule
+
+
+def _braun_stencils(eps_r, a, k_f, kind, romberg=False):
+    """`_dissociation`'s stencils for one point of each kind given, at `T` 295 K."""
+    from jaxdd.constants import EPS_0, K_B, Q
+
+    Vt, eps, n = K_B * 295 / Q, eps_r * EPS_0, len(kind)
+    s = {"br_on": np.ones(n), "br_kind": np.asarray(kind, float),
+         "br_lpre": np.full(n, np.log(3 / (4 * np.pi * a**3))),
+         "br_cE": np.full(n, Q / (4 * np.pi * eps * a * Vt)),
+         "br_bq": np.full(n, Q / (8 * np.pi * eps * Vt**2)), "br_cF": np.ones(n),
+         "br_lkf": np.full(n, np.log(k_f))}  # fmt: skip
+    if romberg:
+        s["br_romberg"] = np.zeros(n)
+    return {k: jnp.asarray(v) for k, v in s.items()}, Vt, eps
+
+
+@pytest.mark.parametrize("F", [0.0, 1e7, 1e8])
+@pytest.mark.parametrize(("eps_r", "a", "k_f"), [(24.1, 1e-9, 1e6), (3.5, 1.5e-9, 1e5),
+                                                 (3.5, 3e-10, 1e4)])  # fmt: skip
+def test_the_dissociation_probability_is_braun_integrated(eps_r, a, k_f, F) -> None:
+    """Invariant: `_dissociation` (exact) is Braun's probability averaged over each distance
+    distribution, against an adaptive quadrature to 1e-12, with the exact Bessel function; and
+    SimSS's rule (`br_romberg`) is a direct port of its `RombergIntegrationValues` and series
+    `Bessel` to round-off."""
+    integrate = pytest.importorskip("scipy.integrate")
+    from scipy.special import i1
+
+    from jaxdd.constants import Q
+    from jaxdd.solver import BRAUN_LIMITS, _dissociation
+
+    k = 1e-17
+    dens = {2: lambda u: 4 / np.sqrt(np.pi) * u**2 * np.exp(-(u**2)), 3: lambda u: np.exp(-u),
+            4: lambda u: u**2 * np.exp(-u) / 2,
+            5: lambda u: 8 * u**4 * np.exp(-(u**2)) / (3 * np.sqrt(np.pi))}  # fmt: skip
+
+    def p_delta(u, Vt, eps, bessel):
+        b = Q * F / (8 * np.pi * eps * Vt**2)
+        kd = 3 * k / (4 * np.pi * (a * u) ** 3) * np.exp(-Q / (4 * np.pi * eps * a * u * Vt))
+        kd = kd * bessel(b)
+        return kd / (kd + k_f)
+
+    def exact_bessel(b):
+        z = np.sqrt(8 * b)
+        return 2 * i1(z) / z if b > 0 else 1.0
+
+    def simss_bessel(x):
+        r = 1 + x / 66
+        for c in (55, 45, 36, 28, 21, 15, 10, 6, 3):
+            r = 1 + x / c * r
+        return 1 + x * r
+
+    def romberg(f, lo, hi, tol=0.01, max_it=15):  # SIMsalabim's, line by line
+        h = hi - lo
+        prev, i, d_new, d_old = [(f(lo) + f(hi)) / 2 * h], 1, 1.0, 1.0
+        while (d_new > tol or d_old > tol) and i < max_it:
+            d_old, i = d_new, i + 1
+            s = sum(f(lo + (m - 0.5) * h) for m in range(1, 2 ** (i - 2) + 1))
+            row = [0.5 * (prev[0] + h * s)]
+            for j in range(2, i + 1):
+                row.append(row[j - 2] + (row[j - 2] - prev[j - 2]) / (4 ** (j - 1) - 1))
+            h, d_new, prev = h / 2, abs((row[i - 1] - prev[i - 2]) / row[i - 1]), row
+        return prev[i - 1]
+
+    kinds = [1, 2, 3, 4, 5]
+    for romberg_rule in (False, True):
+        s, Vt, eps = _braun_stencils(eps_r, a, k_f, kinds, romberg_rule)
+        got = np.asarray(_dissociation(jnp.full(5, F), jnp.full(5, k), s))
+        bessel = simss_bessel if romberg_rule else exact_bessel
+        for idx, kind in enumerate(kinds):
+
+            def g(u, kind=kind, Vt=Vt, eps=eps, bessel=bessel):
+                return dens[kind](u) * p_delta(u, Vt, eps, bessel)
+
+            if kind == 1:
+                want = p_delta(1.0, Vt, eps, bessel)
+            elif romberg_rule:
+                want = romberg(g, *BRAUN_LIMITS)
+            else:
+                want = integrate.quad(g, *BRAUN_LIMITS, epsabs=0, epsrel=1e-13, limit=2000,
+                                      points=list(np.geomspace(0.02, 10, 40)))[0]  # fmt: skip
+            assert abs(got[idx] - want) < 1e-12 * max(want, 1e-3), (romberg_rule, kind)
+
+
+def test_the_gradient_in_the_braun_parameters_is_finite_differences() -> None:
+    """The curve's derivative in the absorber's `a`, `k_f` and `P0`, through `device_tree` and
+    the converged solution, against central finite differences."""
+    from jaxdd.batch import device_tree, solve_batch
+    from jaxdd.device import device_parameters
+
+    structure, params = device_parameters(read_setup(DATA / "braun_light" /
+                                                     "simulation_setup.txt"))  # fmt: skip
+    V = np.round(np.arange(-0.1, 1.0 + 1e-9, 0.1), 6)
+    w = jnp.asarray(np.random.default_rng(0).normal(size=len(V)))
+
+    def loss(x):
+        moved = {k: jnp.asarray(params[k]).at[1].multiply(1 + x * c)
+                 for k, c in (("a", 0.5), ("k_f", -1.0), ("P0", 2.0))}  # fmt: skip
+        batch = jax.tree_util.tree_map(lambda v: v[None], device_tree(structure, params | moved))
+        J, ok, _ = solve_batch(batch, V, strict=True)
+        return jnp.sum(w * jnp.where(ok[0], J[0], 0.0))
+
+    _, by_jvp = jax.jvp(loss, (0.0,), (1.0,))
+    h = 1e-4
+    fd = (float(loss(h)) - float(loss(-h))) / (2 * h)
+    assert abs(float(by_jvp) - fd) < 1e-6 * abs(fd)
+
+
+def test_field_dependent_generation_inputs_are_checked() -> None:
+    """As SIMsalabim: `0 ≤ P0 < 1`, 0 without `fieldDepG`, `thermLengDist` 1–5, `k_f > 0`; a
+    batch takes one Braun rule."""
+    from jaxdd.batch import prepare
+    from jaxdd.simss_input import setup_from_texts
+
+    texts = _texts("braun_light")
+    for name, value in (("P0", "1"), ("thermLengDist", "6"), ("k_f", "0")):
+        bad = dict(texts, **{"L2_parameters.txt": _put(texts["L2_parameters.txt"], name, value)})
+        with pytest.raises(ValueError, match=name):
+            build_device(setup_from_texts(bad))
+    off = dict(texts, **{"L2_parameters.txt": _put(texts["L2_parameters.txt"], "fieldDepG", "0")})
+    with pytest.raises(ValueError, match="P0"):
+        build_device(setup_from_texts(off))
+    setup = setup_from_texts(texts)
+    with pytest.raises(ValueError, match="Braun rule"):
+        prepare([build_device(setup), build_device(setup, braun="simss")])
+
+
 def test_series_and_shunt_resistance_are_simss_external_circuit() -> None:
     """Stage B: SimSS's external circuit, `J_ext = J + V_int/R_shunt`, `V_ext = V_int +
     J_ext·R_series`, with 2e-4 and 0.3 Ω m² (the series resistance moves the voltage by 1.8 V at
@@ -518,7 +660,7 @@ def test_a_batch_mixes_devices_with_and_without_interface_traps() -> None:
 
     cases = ["thin_l1_light", "iface_charged_light", "iface_ions_light", "bulk_acceptor_light",
              "trapfiles_light", "surface_light", "fieldmob_light",
-             "langevin_field_light"]  # fmt: skip
+             "langevin_field_light", "braun_light"]  # fmt: skip
     devices = [build_device(read_setup(DATA / c / "simulation_setup.txt")) for c in cases]
     V = np.round(np.arange(-0.2, 1.3 + 1e-9, 0.1), 6)
     J, ok, _ = solve_batch(prepare(devices), V, bernoulli_name="simss")
@@ -685,7 +827,7 @@ def test_a_dark_scan_with_a_density_far_below_the_floor_converges() -> None:
 @pytest.mark.parametrize(
     "case",
     ["thin_l1_light", "frozen_1e17_x1_thin_light", "steady_1e17_thin_light", "bulk_acceptor_light",
-     "fieldmob_light", "langevin_field_light"],
+     "fieldmob_light", "langevin_field_light", "braun_light"],
 )  # fmt: skip
 def test_the_jacobian_by_edges_is_autodiff_of_the_rows(case: str, bern: str) -> None:
     """`_assemble` (each interval's fluxes once, assembled by hand) gives `_kernels`' residual,
@@ -926,7 +1068,7 @@ def test_the_bordered_system_and_its_transpose_are_solved() -> None:
      "frozen_thick_htl_dark", "iface_ions_light", "pin_iface_light", "resist_light",
      "calc_light", "none_light", "pin_anode_left_light", "bulk_acceptor_light",
      "trapfiles_light", "surface_light", "langevin_light", "fieldmob_light",
-     "langevin_field_light"],
+     "langevin_field_light", "braun_light"],
 )  # fmt: skip
 def test_the_device_in_jax_is_numpys(case: str) -> None:
     """`batch.device_tree` (the device in `jax.numpy` from its structure and parameters) gives

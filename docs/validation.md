@@ -81,6 +81,11 @@ so that the solver is never the larger error in what is computed from it.
   as well (the rate in the field of its interval, moving the curve by another 2.5 %): within
   1.5e-10 with SimSS's mobilities, 6.2e-5 with each point's own layer's
   ([differences.md](differences.md) §8).
+- **Field-dependent generation** (2026-11-14): Braun's dissociation in all three layers of the
+  1 nm stack, a Gaussian distance distribution in the absorber (`P0` 0.1), an exponential and a
+  delta function in the transport layers, which halves J_sc: within 2.1e-10 of SimSS's scale
+  with its Romberg integration and Bessel series, 6.1e-9 with the exact ones, the default
+  ([differences.md](differences.md) §9), at most 16 Newton steps per voltage.
 - **Series and shunt resistance** (2026-11-13): 2e-4 and 0.3 Ω m² on the 1 nm stack, the
   series resistance moving the voltage by 1.8 V at the top of the scan: `J_ext` within 2.2e-6 of
   SimSS's scale, `V_ext` within 4 µV.

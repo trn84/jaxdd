@@ -117,16 +117,13 @@ def setup_from_texts(files: Mapping[str, str], setup: str = "simulation_setup.tx
 #: traps, neutral or charged, one level or several from a trap file; series and shunt
 #: resistance; the generation profile; the left electrode as the anode; finite surface
 #: recombination at the contacts and 'sfb' work functions; Langevin recombination; the
-#: field-dependent mobility): the values a supported input must have. Ions are supported in one
-#: layer per region, steady (free at every voltage) or held after a pre-bias (`preCond`,
-#: `fixIons`, as SimSS with `simss/fixed_ions.patch`: Poisson leaves them). Anything else is
-#: refused by name, never approximated.
+#: field-dependent mobility and generation): the values a supported input must have. Ions are
+#: supported in one layer per region, steady (free at every voltage) or held after a pre-bias
+#: (`preCond`, `fixIons`, as SimSS with `simss/fixed_ions.patch`: Poisson leaves them).
+#: Anything else is refused by name, never approximated.
 _SETUP_REQUIRED = {
     "Vdist": 1.0,
     "currDiffInt": 2.0,
-}
-_LAYER_REQUIRED = {
-    "fieldDepG": 0.0,
 }
 
 
@@ -140,11 +137,6 @@ def check_supported(setup: Setup) -> None:
     if float(setup.raw.get("R_series", 0)) < 0 or float(setup.raw.get("R_shunt", -1)) == 0:
         problems.append("R_series < 0 or R_shunt = 0 (SimSS refuses both)")
     for k, layer in enumerate(setup.layers, start=1):
-        problems += [
-            f"layer {k}: {name} = {layer.raw.get(name)} (supported: {value:g})"
-            for name, value in _LAYER_REQUIRED.items()
-            if float(layer.raw.get(name, value)) != value
-        ]
         if layer.i("ionsMayEnter") and k > 1 and setup.layers[k - 2].i("ionsMayEnter"):
             problems.append(f"layers {k - 1}–{k}: an ionic region across layers")
     mobile = any(ly.f("N_anion") * ly.f("mu_anion") > 0 or ly.f("N_cation") * ly.f("mu_cation") > 0

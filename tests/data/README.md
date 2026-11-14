@@ -72,6 +72,14 @@ with every parameter it shares with SimSS taken from `thin_l1_light`, `tolPois =
 `failureMode = 0`), its `tVG.txt` seven steady states (`t = 0` on every line) from −0.2 to 1.1 V,
 the last at `G_frac = 0.5`; its `tj.dat` from ZimT 5.36 (`--entrypoint zimt`).
 
+`zimt_photo_light/`, `zimt_photo_surface_light/`, `zimt_sweep_light/`, `zimt_sweep_diff_light/`:
+`thin_l1_light` without its absorber's traps (`N_t_bulk = 0`), as ZimT 5.36 inputs (as
+`zimt_steady_light`, at `tolPois = tolDens = 1e-12`), 241 steps each. Photo: in the dark at
+`t = 0`, the light on at short circuit from 1 ps to 1 µs (120 steps, logarithmic), then off for
+another µs; `_surface` with `S_n_L = 20` and `S_p_R = 50` m/s. Sweep: under light from 0 to
+1.2 V in 100 ns and back in another 100 ns (120 steps each way); `_diff` with
+`currDiffInt = 1`. Their `tj.dat` from ZimT 5.36.
+
 `held_thin_light/`: `steady_1e17_thin_light` with 8e22 anions per m³ instead of 1e23 (a net
 charge of 2e22 m⁻³) held from the start (`fixIons = 1`, `preCond = 0`): run by SimSS 5.36 with
 [`simss/fixed_ions.patch`](../../simss/fixed_ions.patch) at `tolPois = tolDens = 1e-9`.

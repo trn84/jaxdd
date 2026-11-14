@@ -317,6 +317,32 @@ J_n[i] = −q·μ_n[i]·V_T·(n[i+1]·B((Vgn[i+1] − Vgn[i])/V_T) − n[i]·B((
 two forms differ by the discretisation's and the convergence's error; at SimSS's tolerances of
 1e-9 the differential one agrees with SimSS to 2e-11 of the current's scale.
 
+## Transients (ZimT's `Main_Solver` with `dti > 0`)
+
+ZimT 5.36 solves a list of time steps `(t, Vext, G_frac)` (its `tVGFile`, read by `read_tvg`),
+each from the state of the step before, by implicit Euler with `dti = 1/Δt` (Selberherr
+6-4.32). In each continuity equation's control volume, the same `fac` the generation has,
+
+```
+… + fac·(G − R) − fac·dti·(n − n_prev) = 0          (likewise for holes)
+```
+
+and `dti = 0` is the steady state, so the first step (`t = 0`, which ZimT requires) and any
+return to it are steady states. jaxdd adds these terms to the residual and its Jacobian
+(`solver._time_terms`) and solves each step by Newton as it solves a voltage
+(`jaxdd.transient`). The current takes each density's change into the integral form's
+integrand, `R − G + dti·(n − n_prev)` (at the contacts too, where finite surface recombination
+moves them), and adds the displacement current on each interval,
+
+```
+J_D[i] = ε[i]·dti·((V[i+1] − V[i]) − (V_prev[i+1] − V_prev[i])) / (L·h[i])
+```
+
+to the average; the differential form is unchanged (ZimT's `Calc_Curr_Diff` has no time term).
+So far electrons and holes with the voltage given; traps, mobile ions, the open circuit and
+series resistance in time are the next steps of Stage C ([PLAN.md](../PLAN.md) §4.1), refused
+until then (`transient_problems`).
+
 ## Constants
 
 SIMsalabim's, not CODATA's: `q = 1.6022e-19 C`, `k = 1.3807e-23 J/K`, `ε₀ = 8.8542e-12 F/m`. A

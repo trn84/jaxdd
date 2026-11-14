@@ -399,6 +399,17 @@ def _with_contacts(full, s, Vt, B=bernoulli):
     return full.at[0].set(left).at[-1].set(right)
 
 
+def _time_terms(s: dict, full_prev, dti) -> dict:
+    """The stencils for one time step of length `1/dti` from the state `full_prev` (NP + 2 × 3,
+    contacts included) before it: `s["tr"]`, each interior point's `dti` and its densities
+    before the step, so that the continuity equations get `−fac·dti·(n − n_prev)` (ZimT's
+    `Cont_Eq_Elec/Holes`, implicit Euler, Selberherr 6-4.32). `dti = 0` is the steady state."""
+    NP = full_prev.shape[0] - 2
+    tr = {"dti": jnp.broadcast_to(dti, (NP,)), "n": jnp.exp(full_prev[1:-1, 1]),
+          "p": jnp.exp(full_prev[1:-1, 2])}  # fmt: skip
+    return dict(s, tr=tr)
+
+
 def _per_level(levels, *values):
     """`values` with a trailing axis where the trap arrays carry levels (`levels` has more axes
     than `values[0]`): a trap file's several levels, summed by the caller."""
@@ -538,6 +549,9 @@ def _row(left, mid, right, s, Vt, g_frac, la, lc, B=bernoulli):
     net = s["G"] * g_frac * g_fac - _recombination(n[1], p[1], s)
     elec = lo_n * n[0] + m_n * n[1] + up_n * n[2] + s["fac"] * net
     hole = lo_p * p[0] + m_p * p[1] + up_p * p[2] + s["fac"] * net
+    if "tr" in s:  # a time step (`_time_terms`)
+        elec = elec - s["fac"] * s["tr"]["dti"] * (n[1] - s["tr"]["n"])
+        hole = hole - s["fac"] * s["tr"]["dti"] * (p[1] - s["tr"]["p"])
     return jnp.stack([poisson * s["sP"], elec * s["sC"], hole * s["sC"]])
 
 
@@ -671,6 +685,12 @@ def _assemble(full, s, Vt, g_frac, la, lc, B=bernoulli):
         A, Bb, C = A + block(down), Bb + block(own), C + block(up)
     if "ct" in s:  # the contacts' dependence on the first and last point (`_contact_ends`)
         Bb = Bb.at[0].add(_mm(A[0], J_left)).at[-1].add(_mm(C[-1], J_right))
+    if "tr" in s:  # a time step (`_time_terms`): implicit Euler in each control volume
+        tr = s["tr"]
+        elec = elec - fac * tr["dti"] * (nm - tr["n"])
+        hole = hole - fac * tr["dti"] * (pm - tr["p"])
+        Bb = Bb.at[:, 1, 1].add(-fac * tr["dti"] * nm * s["sC"])
+        Bb = Bb.at[:, 2, 2].add(-fac * tr["dti"] * pm * s["sC"])
     F = jnp.stack([poisson * s["sP"], elec * s["sC"], hole * s["sC"]], -1)
     U = jnp.stack([
         jnp.stack([-Q * anion * s["sP"], zm, zm], -1),

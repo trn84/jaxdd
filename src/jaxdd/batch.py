@@ -80,7 +80,7 @@ def _device_tree(dev: Device, xp=np) -> dict:
         "s": _stencils(dev, xp),
         "ion": _ion_setup(dev),
         "Vt": dev.Vt, "g_frac": dev.G_frac, "L": dev.L,
-        "x": dev.x, "h": dev.h, "N_c": dev.N_c, "ni": dev.ni, "E_c": dev.E_c,
+        "x": dev.x, "h": dev.h, "eps": dev.eps, "N_c": dev.N_c, "ni": dev.ni, "E_c": dev.E_c,
         "V0": dev.V0, "VL": dev.VL, "W_L": dev.W_L, "W_R": dev.W_R,
         "ln_n_left": xp.log(dev.n_left), "ln_n_right": xp.log(dev.n_right),
         "ln_p_left": xp.log(dev.p_left), "ln_p_right": xp.log(dev.p_right),
@@ -202,7 +202,9 @@ def _initial(d, Vint):
 def _current(d, full, g_frac, B=bernoulli):
     """SIMsalabim's `Calc_Curr_Int` for both carriers, or `Calc_Curr_Diff` where `curr_diff`
     is 1, averaged (`Calc_All_Currents`); the contacts' densities of finite surface
-    recombination from `full`'s neighbours (Bernoulli function `B`)."""
+    recombination from `full`'s neighbours (Bernoulli function `B`). With `d["tr"]`, a time
+    step from the state before it (`transient`): the change of each density in the integral
+    form's integrand, and the displacement current (`Calc_Displacement_Curr`)."""
     full = _with_contacts(full, d["s"], d["Vt"], B)
     V, n, p = full[:, 0], jnp.exp(full[:, 1]), jnp.exp(full[:, 2])
     Vt, x, h, L = d["Vt"], d["x"], d["h"], d["L"]
@@ -218,9 +220,13 @@ def _current(d, full, g_frac, B=bernoulli):
         R_int = _interface_points(n, p, d["s"]["ti"])[:2]
     dx = jnp.diff(x[: NP + 1])
 
-    def carrier(sn, Vg, dens, mu, R_i):
+    tr = d.get("tr")
+
+    def carrier(sn, Vg, dens, mu, R_i, before):
         U = R + R_i - G * g_frac
         U = U.at[0].set(0.0).at[-1].set(0.0)
+        if tr is not None:  # the contacts' too: a finite surface recombination moves them
+            U = U + tr["dti"] * (dens - before)
         ev = jnp.exp(sn * Vg[: NP + 1] / Vt)
         int_u = jnp.concatenate([jnp.zeros(1), jnp.cumsum(0.5 * dx * (U[:NP] + U[1 : NP + 1]))])
         single = jnp.sum(0.5 * dx * (ev[:-1] / mu[:NP] + ev[1:] / mu[1 : NP + 1]))
@@ -242,11 +248,16 @@ def _current(d, full, g_frac, B=bernoulli):
         return jnp.where(d["iface"], jnp.roll(J, 1) + through, J)
 
     mu_n, mu_p = _field_mobilities(d["mu_n"], d["mu_p"], V, d["s"])
-    Jn = carrier(-1.0, V + d["offset_n"], n, mu_n, R_int[0])
-    Jp = carrier(1.0, V + d["offset_p"], p, mu_p, R_int[1])
+    before_n, before_p = (None, None) if tr is None else (tr["n"], tr["p"])
+    Jn = carrier(-1.0, V + d["offset_n"], n, mu_n, R_int[0], before_n)
+    Jp = carrier(1.0, V + d["offset_p"], p, mu_p, R_int[1], before_p)
+    total = Jn + Jp
+    if tr is not None:  # the displacement current on each interval
+        dV, dV_before = jnp.diff(V), jnp.diff(tr["V"])
+        total = total + d["eps"][: NP + 1] * (dV - dV_before) * tr["dti"] / (L * h[: NP + 1])
     hh = h[: NP + 1]
     # With the anode on the left SIMsalabim turns every current's sign.
-    return -d["left_elec"] * (jnp.sum(hh * (Jn + Jp)) / jnp.sum(hh))
+    return -d["left_elec"] * (jnp.sum(hh * total) / jnp.sum(hh))
 
 
 def _poisson_solve(y, d, s, ion, Vint, max_iter):

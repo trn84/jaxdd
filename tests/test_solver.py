@@ -1,5 +1,6 @@
 """jaxdd against SimSS, and the properties of its pieces."""
 
+import dataclasses
 import os
 import subprocess
 import sys
@@ -403,6 +404,61 @@ def test_tvg_as_zimt_reads_it() -> None:
     for text, match in bad:
         with pytest.raises(ValueError, match=match):
             tvg(text)
+
+
+ZIMT_CASES = ["zimt_photo_light", "zimt_sweep_light", "zimt_sweep_diff_light",
+              "zimt_photo_surface_light"]  # fmt: skip
+
+
+def _zimt_case(case):
+    setup = read_setup(DATA / case / "simulation_setup.txt")
+    return setup, read_tvg(setup), np.genfromtxt(DATA / case / "tj.dat", names=True)
+
+
+@pytest.mark.parametrize("case", ZIMT_CASES)
+def test_transients_of_electrons_and_holes_reproduce_zimt(case: str) -> None:
+    """Stage C's first step (`jaxdd.transient`): ZimT 5.36's `Jext` through 240 steps to 1e-9 of
+    its scale (ZimT at tolerances of 1e-12): light on and off at short circuit over six decades
+    of time, and a sweep to 1.2 V and back in 2 × 100 ns whose displacement current is half
+    the scale, in the integral and the differential form, with finite surface recombination."""
+    from jaxdd.batch import prepare
+    from jaxdd.transient import solve_transient, transient_problems
+
+    setup, tvg, ref = _zimt_case(case)
+    dev = build_device(setup)
+    assert transient_problems(dev, tvg) == []
+    r = solve_transient(prepare([dev]), tvg, bernoulli_name="simss")
+    assert r.converged.all()
+    assert np.max(np.abs(r.J_ext[0] - ref["Jext"])) < 1e-9 * np.max(np.abs(ref["Jext"]))
+
+
+def test_transients_in_a_batch_reproduce_zimt() -> None:
+    """The four ZimT cases as one batch, each device with its own steps (the integral form beside
+    the differential one, infinite surface recombination beside finite): each within 1e-9."""
+    from jaxdd.batch import prepare
+    from jaxdd.transient import solve_transient
+
+    cases = [_zimt_case(c) for c in ZIMT_CASES]
+    batch = prepare([build_device(setup) for setup, _, _ in cases])
+    r = solve_transient(batch, [tvg for _, tvg, _ in cases], bernoulli_name="simss")
+    assert r.converged.all()
+    for k, (_, _, ref) in enumerate(cases):
+        assert np.max(np.abs(r.J_ext[k] - ref["Jext"])) < 1e-9 * np.max(np.abs(ref["Jext"]))
+
+
+def test_transients_refuse_what_they_lack() -> None:
+    """Traps, mobile ions, the open circuit and series resistance: refused by name (Stage C's
+    next steps)."""
+    from jaxdd.transient import transient_problems
+
+    lacking = [("thin_l1_light", "bulk traps"), ("iface_charged_light", "interface"),
+               ("steady_1e17_thin_light", "mobile ions"), ("resist_light", "R_series")]  # fmt: skip
+    for case, what in lacking:
+        dev = build_device(read_setup(DATA / case / "simulation_setup.txt"))
+        assert any(what in p for p in transient_problems(dev)), case
+    setup, tvg, _ = _zimt_case("zimt_photo_light")
+    oc = dataclasses.replace(tvg, oc=np.ones_like(tvg.oc))
+    assert any("open circuit" in p for p in transient_problems(build_device(setup), oc))
 
 
 @pytest.mark.parametrize("case", ["frozen_1e17_x1_thin_light", "steady_1e17_thin_light"])
@@ -1108,12 +1164,13 @@ def test_a_dark_scan_with_a_density_far_below_the_floor_converges() -> None:
 @pytest.mark.parametrize(
     "case",
     ["thin_l1_light", "frozen_1e17_x1_thin_light", "steady_1e17_thin_light", "bulk_acceptor_light",
-     "fieldmob_light", "langevin_field_light", "braun_light"],
+     "fieldmob_light", "langevin_field_light", "braun_light", "zimt_photo_light"],
 )  # fmt: skip
 def test_the_jacobian_by_edges_is_autodiff_of_the_rows(case: str, bern: str) -> None:
     """`_assemble` (each interval's fluxes once, assembled by hand) gives `_kernels`' residual,
     Jacobian blocks and ion columns (`jacfwd` of each row) to round-off, at a perturbed state
-    whose neighbouring potentials differ from nothing to many V_T, free ions included."""
+    whose neighbouring potentials differ from nothing to many V_T, free ions included; for a
+    ZimT case with the time terms of a step of 1 ns from the unperturbed state."""
     from jaxdd import solver as S
     from jaxdd.solver import BERNOULLI, _assemble, _ion_setup, _kernels, _stencils
 
@@ -1129,6 +1186,8 @@ def test_the_jacobian_by_edges_is_autodiff_of_the_rows(case: str, bern: str) -> 
     ion = {k: jnp.asarray(v) if isinstance(v, np.ndarray) else v
            for k, v in _ion_setup(dev).items()}  # fmt: skip
     la, lc = S._point_logs(S._ion_logs(full[:, 0], ion), ion)
+    if case.startswith("zimt"):
+        s = S._time_terms(s, jnp.asarray(y0), 1e9)
     B = BERNOULLI[bern]
     row_val, row_jac, row_ions = _kernels(B)
     args = (full[:-2], full[1:-1], full[2:], s, dev.Vt, dev.G_frac, la, lc)

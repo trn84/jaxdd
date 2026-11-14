@@ -57,9 +57,10 @@ General in structure: any number of layers, each with its own parameters.
 | Recombination | direct (`k_direct`, or Langevin's from the mobilities, `useLangevin`, Stage B); bulk SRH through one trap level per layer or several from a trap file (`bulkTrapFile`), neutral or charged (`bulkTrapType`; Stage B) |
 | Generation | a profile from a file, uniform per layer (`genProfile = none`), or by the transfer-matrix method from n,k data and a spectrum (`calc`, Stage B); scaled by `G_frac`; field-dependent by Braun's dissociation (`fieldDepG`, all five distance distributions; Stage B) |
 | Ions | anions and cations, mobile in regions of one layer or several adjacent ones (`ionsMayEnter`), any number per species: free at every voltage, or settled at a pre-bias and frozen (`preCond`, `fixIons`, as SimSS with [`simss/fixed_ions.patch`](../simss/README.md)), or held from the start (`fixIons` alone); immobile ions as fixed charge |
-| Voltages | the caller's; SimSS's own from the setup by `simss_voltages` (uniform or logarithmic towards `Vacc`, `Vdist = 1` or `2`; up or down, `Vscan`; or `expJV`'s, `useExpData`); ZimT's time steps by `read_tvg` (its steady states, `t = 0`, solved today; the transients are Stage C) |
+| Voltages | the caller's; SimSS's own from the setup by `simss_voltages` (uniform or logarithmic towards `Vacc`, `Vdist = 1` or `2`; up or down, `Vscan`; or `expJV`'s, `useExpData`); ZimT's time steps by `read_tvg` |
 | Current | SIMsalabim's integral form (`currDiffInt = 2`) or its differential form (`currDiffInt = 1`), averaged over the device (Stage B) |
 | Output | `J(V)` and a `converged` flag per device and voltage; the number of Newton steps |
+| Transients | Stage C, begun: ZimT's time steps for electrons and holes with the voltage given (`jaxdd.transient.solve_transient`, implicit Euler, the displacement current, either form of the current, batched with steps of their own per device); without traps, mobile ions, the open circuit and series resistance, which it refuses by name (`transient_problems`) |
 
 Everything else is **refused by name**, never approximated: `check_supported` raises
 `NotImplementedError` listing each parameter outside this scope (two of SimSS's ionic regions it

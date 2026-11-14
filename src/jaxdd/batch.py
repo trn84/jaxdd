@@ -107,7 +107,33 @@ def prepare(devices: list[Device]) -> dict:
     if with_traps:  # the others with none: zero on every edge
         for t in trees:
             t["s"].setdefault("ti", {k: np.zeros_like(v) for k, v in with_traps[0].items()})
+    if any("tq" in t["s"] for t in trees):  # charged bulk traps; the others none
+        for t in trees:
+            t["s"].setdefault("tq", np.zeros_like(t["s"]["Nt"]))
+            t["s"].setdefault("tcwe", np.zeros_like(t["s"]["Nt"]))
+    _pad_levels(trees)
     return jax.tree_util.tree_map(lambda *leaves: jnp.asarray(np.stack(leaves)), *trees)
+
+
+def _pad_levels(trees: list[dict]) -> None:
+    """Trap levels to one count across a batch: an array over points (one level) or points ×
+    levels (a trap file), padded with levels of density 0, which do nothing."""
+    groups = (("s", ("Nt", "nt0", "pt0", "tq", "tcwe")), ("rec", ("Nt", "nt0", "pt0")),
+              ("ti", ("Nt", "nt0_lo", "pt0_lo", "nt0_hi", "pt0_hi")))  # fmt: skip
+    for group, keys in groups:
+        dicts = [t["s"].get("ti") if group == "ti" else t[group] for t in trees]
+        if dicts[0] is None:
+            continue
+        K = max(np.shape(d[k])[1] if np.ndim(d[k]) == 2 else 1 for d in dicts for k in keys
+                if k in d)  # fmt: skip
+        if K == 1:
+            continue
+        for d in dicts:
+            for k in keys:
+                if k in d:
+                    a = np.asarray(d[k])
+                    a = a[:, None] if a.ndim == 1 else a
+                    d[k] = np.pad(a, ((0, 0), (0, K - a.shape[1])))
 
 
 def _bounds(d, Vint):
@@ -447,6 +473,12 @@ def _solve_one(d, voltages, B, tol, max_iter, start_iter, strict):
     y = _poisson_solve(_initial(d0, first0)[1:-1], d0, s0, ion0, first0, start_iter)
     bounds = _bounds(d0, first0)
     logs = _ion_logs(jnp.concatenate([bounds[0][:1], y[:, 0], bounds[1][:1]]), ion0)
+    if "tq" in s0:  # charged bulk traps: from the solution with them neutral (`solver.solve_jv`)
+        neutral = dict(s0, tq=jnp.zeros_like(s0["tq"]))
+        y_n, logs_n, _, ok_n, _ = _newton_solve(
+            y, logs, d0, neutral, ion0, first0, d0["g_frac"], B, tol, start_iter, strict
+        )
+        y, logs = jnp.where(ok_n, y_n, y), jnp.where(ok_n, logs_n, logs)
     y, logs, _, pre_ok, _ = _newton_solve(
         y, logs, d, s, ion, first, g_frac, B, tol, start_iter, strict
     )

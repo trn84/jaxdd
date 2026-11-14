@@ -30,6 +30,13 @@ of C60-like ETL, 500 nm absorber with free ions, 10 nm of TaTm-like HTL, the par
 generation), 4.6e14 and 5e13 m⁻² of donor traps at its interfaces; SimSS 5.36 at
 `tolPois = tolDens = 1e-9`, which converges up to 0.975 V and no further.
 
+`bulk_acceptor_light/`: `thin_l1_light` with its absorber's traps (3.9e21 m⁻³ at 4.8 eV)
+charged, as acceptors (`bulkTrapType = -1`; Stage B). `trapfiles_light/`: `thin_l1_light` with
+three donor levels in the absorber from `bulk_traps.txt` (1e21, 2e21 and 1e21 m⁻³ at 4.5, 4.8
+and 5.1 eV), two acceptor levels at the left interface from `int_traps.txt` (1.5e14 m⁻² each at
+4.6 and 5.0 eV) and one donor level of 3e14 m⁻² at 4.7 eV at the right interface. Both SimSS
+5.36 at `tolPois = tolDens = 1e-9`.
+
 `resist_light/`: `thin_l1_light` with a series resistance of 2e-4 Ω m² and a shunt of 0.3 Ω m²
 (Stage B); SimSS 5.36.
 

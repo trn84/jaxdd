@@ -155,6 +155,21 @@ def test_jv_with_interface_traps_reproduces_simss(case: str, tol: float) -> None
     assert np.max(np.abs(res.J - ref["Jext"])) < tol * scale
 
 
+@pytest.mark.parametrize("case", ["bulk_acceptor_light", "trapfiles_light"])
+def test_jv_with_charged_bulk_traps_and_trap_files_reproduces_simss(case: str) -> None:
+    """Stage B, bulk traps: the absorber's 3.9e21 m⁻³ at mid-gap as acceptors, and three donor
+    levels from a trap file with two acceptor levels from an interface trap file at one
+    interface and one donor level at the other (SimSS at tolerances of 1e-9). The traps' charge
+    moves these curves by 4–5 % of their scale; jaxdd is within 1e-9 of it."""
+    setup = read_setup(DATA / case / "simulation_setup.txt")
+    check_supported(setup)
+    ref = np.genfromtxt(DATA / case / "JV.dat", names=True)
+    res = solve_jv(build_device(setup), ref["Vint"], bernoulli_name="simss")
+    assert res.converged.all() and res.iterations.max() <= 8
+    scale = np.max(np.abs(ref["Jext"]))
+    assert np.max(np.abs(res.J - ref["Jext"])) < 1e-9 * scale
+
+
 def test_series_and_shunt_resistance_are_simss_external_circuit() -> None:
     """Stage B: SimSS's external circuit, `J_ext = J + V_int/R_shunt`, `V_ext = V_int +
     J_ext·R_series`, with 2e-4 and 0.3 Ω m² (the series resistance moves the voltage by 1.8 V at
@@ -241,11 +256,13 @@ def test_the_gradient_through_the_optics_is_finite_differences() -> None:
 
 
 def test_a_batch_mixes_devices_with_and_without_interface_traps() -> None:
-    """`prepare` gives the devices without interface traps zero traps on every edge: each curve
-    of a mixed batch is the one-device solver's."""
+    """`prepare` gives the devices without interface traps zero traps on every edge, those
+    without charged bulk traps none, and every device the most trap levels of any (the others
+    of density 0): each curve of a mixed batch is the one-device solver's."""
     from jaxdd.batch import prepare, solve_batch
 
-    cases = ["thin_l1_light", "iface_charged_light", "iface_ions_light"]
+    cases = ["thin_l1_light", "iface_charged_light", "iface_ions_light", "bulk_acceptor_light",
+             "trapfiles_light"]  # fmt: skip
     devices = [build_device(read_setup(DATA / c / "simulation_setup.txt")) for c in cases]
     V = np.round(np.arange(-0.2, 1.3 + 1e-9, 0.1), 6)
     J, ok, _ = solve_batch(prepare(devices), V, bernoulli_name="simss")
@@ -255,7 +272,9 @@ def test_a_batch_mixes_devices_with_and_without_interface_traps() -> None:
         assert np.max(np.abs(np.asarray(J[k]) - single.J)) < 1e-6 * np.max(np.abs(single.J))
 
 
-@pytest.mark.parametrize("case", ["iface_charged_light", "iface_ions_light", "pin_iface_light"])
+@pytest.mark.parametrize(
+    "case", ["iface_charged_light", "iface_ions_light", "pin_iface_light", "trapfiles_light"]
+)
 def test_the_interface_traps_jacobian_is_autodiff(case: str) -> None:
     """`_assemble`'s blocks with interface traps (their capture in both continuity equations,
     their charge in Poisson's, both coupling the two points of an interface) are `jax.jacfwd`
@@ -408,7 +427,8 @@ def test_a_dark_scan_with_a_density_far_below_the_floor_converges() -> None:
 
 @pytest.mark.parametrize("bern", ["exact", "simss"])
 @pytest.mark.parametrize(
-    "case", ["thin_l1_light", "frozen_1e17_x1_thin_light", "steady_1e17_thin_light"]
+    "case",
+    ["thin_l1_light", "frozen_1e17_x1_thin_light", "steady_1e17_thin_light", "bulk_acceptor_light"],
 )
 def test_the_jacobian_by_edges_is_autodiff_of_the_rows(case: str, bern: str) -> None:
     """`_assemble` (each interval's fluxes once, assembled by hand) gives `_kernels`' residual,
@@ -647,7 +667,8 @@ def test_the_bordered_system_and_its_transpose_are_solved() -> None:
     "case",
     ["thin_l1_light", "frozen_1e17_x1_thin_light", "steady_1e17_thin_light",
      "frozen_thick_htl_dark", "iface_ions_light", "pin_iface_light", "resist_light",
-     "calc_light", "none_light", "pin_anode_left_light"],
+     "calc_light", "none_light", "pin_anode_left_light", "bulk_acceptor_light",
+     "trapfiles_light"],
 )  # fmt: skip
 def test_the_device_in_jax_is_numpys(case: str) -> None:
     """`batch.device_tree` (the device in `jax.numpy` from its structure and parameters) gives
@@ -751,3 +772,43 @@ def test_the_gradient_in_the_interface_traps_is_finite_differences() -> None:
     h = 1e-5
     fd = (float(loss(h)) - float(loss(-h))) / (2 * h)
     assert abs(float(by_jvp) - fd) < 1e-6 * abs(fd)
+
+
+def test_the_gradient_in_trap_file_levels_is_finite_differences() -> None:
+    """The curve's derivative in the charged levels of a bulk and an interface trap file
+    (their densities and one energy), through `device_tree` and the converged solution, against
+    central finite differences."""
+    from jaxdd.batch import device_tree, solve_batch
+    from jaxdd.device import device_parameters
+
+    structure, params = device_parameters(read_setup(DATA / "trapfiles_light" /
+                                                     "simulation_setup.txt"))  # fmt: skip
+    V = np.round(np.arange(-0.1, 1.2 + 1e-9, 0.1), 6)
+    w = jnp.asarray(np.random.default_rng(0).normal(size=len(V)))
+    bulk = jnp.array([1.0, -0.5, 0.7])
+    iface = jnp.array([0.8, -1.0])
+
+    def loss(a):
+        p = dict(params)
+        p["bulk_trap_N"] = jnp.asarray(params["bulk_trap_N"]).at[1].multiply(jnp.exp(a * bulk))
+        p["bulk_trap_E"] = jnp.asarray(params["bulk_trap_E"]).at[1, 2].add(0.05 * a)
+        p["int_trap_N"] = jnp.asarray(params["int_trap_N"]).at[0].multiply(jnp.exp(a * iface))
+        batch = jax.tree_util.tree_map(lambda v: v[None], device_tree(structure, p))
+        J, ok, _ = solve_batch(batch, V)
+        return jnp.sum(w * jnp.where(ok[0], J[0], 0.0))
+
+    _, by_jvp = jax.jvp(loss, (0.0,), (1.0,))
+    h = 1e-5
+    fd = (float(loss(h)) - float(loss(-h))) / (2 * h)
+    assert abs(float(by_jvp) - fd) < 1e-6 * abs(fd)
+
+
+def test_a_trap_level_outside_the_gap_is_refused(tmp_path) -> None:
+    """As SIMsalabim's `Init_Trapping`: every level of a trap file within its layer's gap."""
+    from jaxdd.device import device_parameters
+
+    for f in (DATA / "trapfiles_light").iterdir():
+        (tmp_path / f.name).write_text(f.read_text())
+    (tmp_path / "bulk_traps.txt").write_text("E Ntrap\n4.5 1e21\n5.7 1e21\n")
+    with pytest.raises(ValueError, match="outside the gap"):
+        device_parameters(read_setup(tmp_path / "simulation_setup.txt"))

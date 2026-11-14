@@ -183,6 +183,9 @@ class Device:
     mu_n: np.ndarray  # on the interleaved mesh: mu_n[i] between x[i] and x[i+1]
     mu_p: np.ndarray
     k_direct: np.ndarray  # 0 on the electrodes
+    # Bulk traps (SRH), 0 outside layers with traps and on the electrodes. One level: `srh_Nt`,
+    # `srh_nt0`, `srh_pt0` over the points; several (a trap file): points × levels, a level of
+    # density 0 none.
     srh_Nt: np.ndarray
     srh_Cn: np.ndarray
     srh_Cp: np.ndarray
@@ -217,7 +220,8 @@ class Device:
     V_pre: float
     fix_ions: bool
     # Interface traps (SIMsalabim's `N_t_int` of a layer: at its interface to the next), one
-    # level each, on the `NP + 1` edges: edge `e` lies between points `e` and `e + 1`, and an
+    # level each (or several from a trap file: `Nt` and the SRH densities edges × levels), on
+    # the `NP + 1` edges: edge `e` lies between points `e` and `e + 1`, and an
     # interface between the last point of a layer and the first of the next. None without any.
     # `Nt` m⁻², `Cn`, `Cp` m³/s, `nt0_lo`/`pt0_lo` (`nt0_hi`/`pt0_hi`) SRH's densities of the
     # layer on the edge's left (right), `iw` the inverse of the interface's width, `charge`
@@ -228,6 +232,10 @@ class Device:
     R_series: float = 0.0
     R_shunt: float = -1.0
     left_elec: int = -1  # SIMsalabim's `leftElec`: −1 the left electrode the cathode, 1 the anode
+    # Charged bulk traps (`bulkTrapType` ±1), shaped as `srh_Nt`: each level's density where it
+    # is charged (else 0), and its charge when empty (1 a donor, 0 an acceptor). None without.
+    trap_charge: np.ndarray | None = None
+    trap_cwe: np.ndarray | None = None
 
 
 @dataclass(frozen=True)
@@ -253,6 +261,9 @@ class Structure:
     fix_ions: bool
     int_traps: np.ndarray = None  # per layer: traps at its interface to the next (not the last)
     int_trap_type: np.ndarray = None  # per layer: -1 acceptor, 0 neutral, 1 donor
+    bulk_trap_type: np.ndarray = None  # per layer: -1 acceptor, 0 neutral, 1 donor
+    bulk_trap_file: np.ndarray = None  # per layer: the levels from `bulkTrapFile`
+    int_trap_file: np.ndarray = None  # per layer: the levels from `intTrapFile` (not the last)
     #: The generation: "file" (a profile, `gen_x`, `gen_G`), "none" (uniform, each layer's
     #: `G_ehp`) or "calc" (the transfer-matrix method, `optics.optical_data`).
     gen_mode: str = "file"
@@ -268,11 +279,45 @@ LAYER_PARAMETERS = (
 )  # fmt: skip
 
 
+def _named(layer: Layer, name: str) -> bool:
+    """Whether a layer's file parameter (`bulkTrapFile`, `intTrapFile`) names a file."""
+    return layer.raw.get(name, "none").strip().lower() != "none"
+
+
+def _trap_levels(text: str, what: str) -> tuple[np.ndarray, np.ndarray]:
+    """A trap file's levels (SIMsalabim's `Init_Traps_From_File`): a header (`E Ntrap`), then
+    each level's energy (eV) and density (m⁻³ in the bulk, m⁻² at an interface), absolute."""
+    table = np.atleast_2d(np.loadtxt(io.StringIO(text), skiprows=1))
+    if table.size == 0:
+        raise ValueError(f"{what}: no trap levels")
+    E, N = table[:, 0].copy(), table[:, 1].copy()
+    if (N == 0).any():
+        raise ValueError(f"{what}: a trap level of zero density (level {np.argmin(N != 0) + 1})")
+    return E, N
+
+
+def _level_table(layers, files, single_E, read, kind):
+    """Each layer's trap levels from its file, padded to the most any file has: `(E, N)`,
+    layers × levels, a padded level of density 0 at the file's first energy; zero rows for the
+    layers without a file (their one level is the parameter file's, `device_arrays`)."""
+    levels = {k: _trap_levels(read(layers[k], k), f"layer {k + 1}: {kind}")
+              for k in np.flatnonzero(files)}  # fmt: skip
+    K = max(len(E) for E, _ in levels.values())
+    E_tab = np.repeat(np.asarray(single_E, dtype=float)[:, None], K, axis=1)
+    N_tab = np.zeros((len(layers), K))
+    for k, (E, N) in levels.items():
+        E_tab[k] = E[0]
+        E_tab[k, : len(E)], N_tab[k, : len(N)] = E, N
+    return E_tab, N_tab
+
+
 def device_parameters(setup: Setup, grid_split: str = "exact") -> tuple[Structure, dict]:
     """A SIMsalabim input (Stage A, `check_supported` first) as its `Structure` and its
     parameters: a dict of `LAYER_PARAMETERS`, each an array over the layers, and `T`, `W_L`,
     `W_R`, `G_frac`, `V_pre`, the generation profile's file (`gen_x`, `gen_G`) and the external
-    circuit's `R_series` and `R_shunt` (Ω m², `R_shunt` ≤ 0 none). `grid_split`
+    circuit's `R_series` and `R_shunt` (Ω m², `R_shunt` ≤ 0 none). Trap files add their levels,
+    layers × levels: `bulk_trap_E`, `bulk_trap_N` (eV, m⁻³) and `int_trap_E`, `int_trap_N`
+    (m⁻²), used on the layers whose file names them. `grid_split`
     as in `build_device`. Changing a parameter keeps the structure: a trap density set on a
     layer without traps, or an ion density on a layer without ions, does nothing; the points
     per layer stay those of the input's thicknesses."""
@@ -285,25 +330,58 @@ def device_parameters(setup: Setup, grid_split: str = "exact") -> tuple[Structur
     def flags(test):
         return np.array([bool(test(ly)) for ly in layers])
 
+    bulk_file = flags(lambda ly: _named(ly, "bulkTrapFile"))
+    int_file = np.array([_named(ly, "intTrapFile") for ly in layers[:-1]] + [False])
+
     structure = Structure(
         NP=NP, i0=tuple(i0), i1=tuple(i1), lid=lid, raw=raw, norm=norm,
         layer_gen=flags(lambda ly: ly.i("layerGen")),
-        traps=flags(lambda ly: ly.f("N_t_bulk") != 0),
+        traps=flags(lambda ly: ly.f("N_t_bulk") != 0) | bulk_file,
         anion_mobile=flags(lambda ly: ly.f("N_anion") != 0 and ly.f("mu_anion") != 0),
         anion_fixed=flags(lambda ly: ly.f("N_anion") != 0 and ly.f("mu_anion") == 0),
         cation_mobile=flags(lambda ly: ly.f("N_cation") != 0 and ly.f("mu_cation") != 0),
         cation_fixed=flags(lambda ly: ly.f("N_cation") != 0 and ly.f("mu_cation") == 0),
         pre_cond=bool(setup.i("preCond")), fix_ions=bool(setup.i("fixIons")),
         int_traps=np.array([float(ly.raw.get("N_t_int", "0")) != 0 for ly in layers[:-1]]
-                           + [False]),
+                           + [False]) | int_file,
         int_trap_type=np.array([int(float(ly.raw.get("intTrapType", "0"))) for ly in layers]),
+        bulk_trap_type=np.array([int(float(ly.raw.get("bulkTrapType", "0"))) for ly in layers]),
+        bulk_trap_file=bulk_file, int_trap_file=int_file,
         left_elec=setup.i("leftElec"),
     )  # fmt: skip
+    extra = {}
+    if bulk_file.any():
+        extra["bulk_trap_E"], extra["bulk_trap_N"] = _level_table(
+            layers, bulk_file, [float(ly.raw.get("E_t_bulk", "0")) for ly in layers],
+            lambda ly, k: setup.read(ly.raw["bulkTrapFile"].strip(), "bulkTrapFile"),
+            "bulkTrapFile")  # fmt: skip
+    if int_file.any():
+        extra["int_trap_E"], extra["int_trap_N"] = _level_table(
+            layers, int_file, [float(ly.raw.get("E_t_int", "0")) for ly in layers],
+            lambda ly, k: setup.read(ly.raw["intTrapFile"].strip(), "intTrapFile"),
+            "intTrapFile")  # fmt: skip
+
+    def levels(k, file, kind):  # a layer's levels (energies of non-zero density) and their name
+        if file[k]:
+            E, N = extra[f"{kind}_trap_E"][k], extra[f"{kind}_trap_N"][k]
+            return E[N != 0]
+        return np.array([float(layers[k].raw.get(f"E_t_{kind}", "0"))])
+
+    # SIMsalabim's checks (`Init_Trapping`): every level within its layer's gap, an interface's
+    # within both layers' gaps (strictly).
+    for j in np.flatnonzero(structure.traps):
+        ly = layers[j]
+        e_t = levels(j, bulk_file, "bulk")
+        if not ((e_t > ly.f("E_c")) & (e_t < ly.f("E_v"))).all():
+            raise ValueError(f"layer {j + 1}: a bulk trap level outside the gap ({e_t} eV)")
+        if structure.bulk_trap_type[j] not in (-1, 0, 1):
+            raise ValueError(f"layer {j + 1}: bulkTrapType {structure.bulk_trap_type[j]}")
     for j in np.flatnonzero(structure.int_traps):
         lo, hi = layers[j], layers[j + 1]
-        E_t = lo.f("E_t_int")
-        if not max(lo.f("E_c"), hi.f("E_c")) < E_t < min(lo.f("E_v"), hi.f("E_v")):
-            raise ValueError(f"interface trap between layers {j + 1} and {j + 2} at {E_t} eV: "
+        e_t = levels(j, int_file, "int")
+        gap = max(lo.f("E_c"), hi.f("E_c")), min(lo.f("E_v"), hi.f("E_v"))
+        if not ((e_t > gap[0]) & (e_t < gap[1])).all():
+            raise ValueError(f"interface trap between layers {j + 1} and {j + 2} at {e_t} eV: "
                              "not within the gaps of both")  # fmt: skip
         if structure.int_trap_type[j] not in (-1, 0, 1):
             raise ValueError(f"layer {j + 1}: intTrapType {structure.int_trap_type[j]}")
@@ -339,6 +417,7 @@ def device_parameters(setup: Setup, grid_split: str = "exact") -> tuple[Structur
         V_pre=setup.f("Vpre"), gen_x=table[:, 0].copy(), gen_G=table[:, 1].copy(),
         R_series=float(setup.raw.get("R_series", "0")),
         R_shunt=float(setup.raw.get("R_shunt", "-1")),
+        **extra,
     )  # fmt: skip
     return structure, params
 
@@ -372,23 +451,30 @@ def _interface(st: Structure, p: dict, h, total, Vt, xp=np) -> dict:
     layer's interface traps on the edge after its last point."""
     j = np.flatnonzero(st.int_traps)  # layers with traps at their right interface
     e = np.array(st.i1)[j]  # their edges
-    E_t = p["E_t_int"][j]
+    E_t, N_t = p["E_t_int"][j], p["N_t_int"][j]
+    levels = st.int_trap_file is not None and st.int_trap_file.any()
+    if levels:  # interfaces × levels, from a trap file
+        E_t, N_t = _levels(
+            st.int_trap_file[j], p["int_trap_E"][j], p["int_trap_N"][j], E_t, N_t, xp
+        )
+
+    def col(v):  # per interface, or a column against the levels
+        return v[:, None] if levels else v
 
     def nt0(k):
-        return p["N_c"][k] * xp.exp((p["E_c"][k] - E_t) / Vt)
+        return col(p["N_c"][k]) * xp.exp((col(p["E_c"][k]) - E_t) / Vt)
 
     def pt0(k):
-        return p["N_c"][k] * xp.exp((E_t - p["E_v"][k]) / Vt)
+        return col(p["N_c"][k]) * xp.exp((E_t - col(p["E_v"][k])) / Vt)
 
     width = 0.5 * total * (0.5 * h[e + 1] + h[e] + 0.5 * h[e - 1])
     kind = st.int_trap_type[j]
-    edges = xp.zeros(st.NP + 1)
 
     def on_edges(values):
-        return _set(xp, edges, e, values)
+        return _set(xp, xp.zeros((st.NP + 1, *values.shape[1:])), e, values)
 
     return {
-        "Nt": on_edges(p["N_t_int"][j]), "Cn": on_edges(p["C_n_int"][j]),
+        "Nt": on_edges(N_t), "Cn": on_edges(p["C_n_int"][j]),
         "Cp": on_edges(p["C_p_int"][j]),
         "nt0_lo": on_edges(nt0(j)), "pt0_lo": on_edges(pt0(j)),
         "nt0_hi": on_edges(nt0(j + 1)), "pt0_hi": on_edges(pt0(j + 1)),
@@ -396,6 +482,15 @@ def _interface(st: Structure, p: dict, h, total, Vt, xp=np) -> dict:
         "charge": on_edges(np.abs(kind).astype(float)),
         "cwe": on_edges((kind == 1).astype(float)),
     }  # fmt: skip
+
+
+def _levels(from_file, E_file, N_file, E_one, N_one, xp=np):
+    """Trap levels, rows × levels: a trap file's where `from_file`, else the one level of the
+    parameter file (`E_one`, `N_one`) in the first column, the others of density 0 at its energy."""
+    first = np.arange(E_file.shape[1]) == 0
+    E = xp.where(from_file[:, None], E_file, E_one[:, None] + 0.0 * E_file)
+    N = xp.where(from_file[:, None], N_file, xp.where(first, N_one[:, None], 0.0))
+    return E, N
 
 
 def device_arrays(structure: Structure, p: dict, xp=np) -> Device:
@@ -423,11 +518,27 @@ def device_arrays(structure: Structure, p: dict, xp=np) -> Device:
         return xp.where(iface, (total * h) * p[nu_name][lid] / Vt, p[name][lid])
 
     trap = interior & st.traps[lid]
-    nt0 = p["N_c"] * xp.exp((p["E_c"] - p["E_t_bulk"]) / Vt)
-    pt0 = p["N_c"] * xp.exp((p["E_t_bulk"] - p["E_v"]) / Vt)
-    srh = {key: xp.where(trap, v[lid], 0.0) for key, v in (
-        ("Nt", p["N_t_bulk"]), ("Cn", p["C_n_bulk"]), ("Cp", p["C_p_bulk"]),
-        ("nt0", nt0), ("pt0", pt0))}  # fmt: skip
+    E_t, N_t, on = p["E_t_bulk"], p["N_t_bulk"], trap
+    levels = st.bulk_trap_file is not None and st.bulk_trap_file.any()
+    if levels:  # layers × levels, from a trap file
+        E_t, N_t = _levels(st.bulk_trap_file, p["bulk_trap_E"], p["bulk_trap_N"], E_t, N_t, xp)
+        on = trap[:, None]
+
+    def col(v):  # per layer or point, or a column against the levels
+        return v[:, None] if levels else v
+
+    nt0 = col(p["N_c"]) * xp.exp((col(p["E_c"]) - E_t) / Vt)
+    pt0 = col(p["N_c"]) * xp.exp((E_t - col(p["E_v"])) / Vt)
+    srh = {key: xp.where(where, v[lid], 0.0) for key, v, where in (
+        ("Nt", N_t, on), ("Cn", p["C_n_bulk"], trap), ("Cp", p["C_p_bulk"], trap),
+        ("nt0", nt0, on), ("pt0", pt0, on))}  # fmt: skip
+    trap_charge = trap_cwe = None
+    kind = st.bulk_trap_type if st.bulk_trap_type is not None else np.zeros(len(st.traps), int)
+    charged = st.traps & (kind != 0)
+    if charged.any():  # SIMsalabim's `Calc_Trap_Filling_Charge`: |type|·(cwe − f)·N_t per level
+        q = on & col(charged[lid])
+        trap_charge = xp.where(q, srh["Nt"], 0.0)
+        trap_cwe = xp.where(q & col(kind[lid] == 1), 1.0, 0.0) + 0.0 * srh["Nt"]
 
     if st.gen_mode == "calc":
         G = optics_generation(st.optics, x, lid, [p["L"][k] for k in range(len(st.layer_gen))],
@@ -475,6 +586,7 @@ def device_arrays(structure: Structure, p: dict, xp=np) -> Device:
         anion_fixed=ions["anion"][2], cation_fixed=ions["cation"][2],
         pre_cond=st.pre_cond, V_pre=p["V_pre"], fix_ions=st.fix_ions, interface=interface,
         R_series=p.get("R_series", 0.0), R_shunt=p.get("R_shunt", -1.0), left_elec=st.left_elec,
+        trap_charge=trap_charge, trap_cwe=trap_cwe,
     )  # fmt: skip
 
 

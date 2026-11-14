@@ -113,11 +113,12 @@ def setup_from_texts(files: Mapping[str, str], setup: str = "simulation_setup.tx
     return Setup(raw=raw, layers=_layers(raw, lambda file: files[file]), files=dict(files))
 
 
-#: Stage A (docs/overview.md, "Scope") and the modules of Stage B so far (interface traps, one
-#: level each; series and shunt resistance): the values a supported input must have. Ions are
-#: supported in one layer per region, steady (free at every voltage) or held after a pre-bias
-#: (`preCond`, `fixIons`, as SimSS with `simss/fixed_ions.patch`: Poisson leaves them). Anything
-#: else is refused by name, never approximated.
+#: Stage A (docs/overview.md, "Scope") and the modules of Stage B so far (bulk and interface
+#: traps, neutral or charged, one level or several from a trap file; series and shunt
+#: resistance; the generation profile; the left electrode as the anode): the values a supported
+#: input must have. Ions are supported in one layer per region, steady (free at every voltage)
+#: or held after a pre-bias (`preCond`, `fixIons`, as SimSS with `simss/fixed_ions.patch`:
+#: Poisson leaves them). Anything else is refused by name, never approximated.
 _SETUP_REQUIRED = {
     "S_n_L": -1.0,
     "S_p_L": -1.0,
@@ -149,16 +150,8 @@ def check_supported(setup: Setup) -> None:
             for name, value in _LAYER_REQUIRED.items()
             if float(layer.raw.get(name, value)) != value
         ]
-        if layer.f("N_t_bulk") != 0 and layer.i("bulkTrapType") != 0:
-            problems.append(
-                f"layer {k}: charged bulk traps (bulkTrapType {layer.i('bulkTrapType')})"
-            )
         if layer.i("ionsMayEnter") and k > 1 and setup.layers[k - 2].i("ionsMayEnter"):
             problems.append(f"layers {k - 1}–{k}: an ionic region across layers")
-        if layer.raw.get("bulkTrapFile", "none") != "none":
-            problems.append(f"layer {k}: bulkTrapFile = {layer.raw['bulkTrapFile']}")
-        if layer.raw.get("intTrapFile", "none") != "none" and k < len(setup.layers):
-            problems.append(f"layer {k}: intTrapFile = {layer.raw['intTrapFile']}")
     mobile = any(ly.f("N_anion") * ly.f("mu_anion") > 0 or ly.f("N_cation") * ly.f("mu_cation") > 0
                  for ly in setup.layers)  # fmt: skip
     if mobile and setup.i("fixIons") and not setup.i("preCond"):

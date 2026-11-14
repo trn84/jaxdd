@@ -61,6 +61,11 @@ so that the solver is never the larger error in what is computed from it.
   4e-7 against SimSS at tolerances of 1e-9. At its default tolerances SimSS stopped early there
   by 1.2e-4, and from 1.0 V on it does not converge at either; jaxdd converges to 1.25 V. The
   traps move these curves by up to two thirds of their scale.
+- **Charged bulk traps and trap files** (2026-11-14): the 1 nm stack's absorber traps (3.9e21
+  m⁻³ at mid-gap) as acceptors, and as three donor levels from a trap file with two acceptor
+  levels from an interface trap file at the left interface and one donor level at the right;
+  within 2.5e-10 and 1.0e-10 of SimSS's scale at its tolerances of 1e-9, at most six Newton steps
+  per voltage. The traps' charge moves these curves by 4–5 % of their scale.
 - **Series and shunt resistance** (2026-11-13): 2e-4 and 0.3 Ω m² on the 1 nm stack, the
   series resistance moving the voltage by 1.8 V at the top of the scan: `J_ext` within 2.2e-6 of
   SimSS's scale, `V_ext` within 4 µV.

@@ -141,15 +141,41 @@ def _stencils(dev: Device, xp=np) -> dict[str, jnp.ndarray]:
         "sP": 1.0 / (Q * dev.N_c[i]),
         "sC": 1.0 / (xp.maximum(dev.mu_n[i], dev.mu_p[i]) * dev.Vt * dev.N_c[i] * h[i]),
     }  # fmt: skip
+    if dev.trap_charge is not None:  # charged bulk traps, only where there are any
+        out["tq"], out["tcwe"] = dev.trap_charge[i], dev.trap_cwe[i]
     if dev.interface is not None:  # on the edges (`Device.interface`), only where there are any
         out["ti"] = dict(dev.interface)
     return out
 
 
+def _per_level(levels, *values):
+    """`values` with a trailing axis where the trap arrays carry levels (`levels` has more axes
+    than `values[0]`): a trap file's several levels, summed by the caller."""
+    if jnp.ndim(levels) > jnp.ndim(values[0]):
+        return tuple(jnp.asarray(v)[..., None] for v in values)
+    return values
+
+
+def _summed(levels, value, like):
+    return jnp.sum(value, -1) if jnp.ndim(levels) > jnp.ndim(like) else value
+
+
 def _recombination(n, p, s):
-    srh = s["Nt"] * s["Cn"] * s["Cp"] * (n * p - s["nt0"] * s["pt0"])
-    srh = srh / jnp.where(s["Nt"] > 0, s["Cn"] * (n + s["nt0"]) + s["Cp"] * (p + s["pt0"]), 1.0)
-    return s["kd"] * (n * p - s["ni2"]) + jnp.where(s["Nt"] > 0, srh, 0.0)
+    """Direct recombination and SRH through the bulk traps, summed over their levels."""
+    nl, pl, Cn, Cp = _per_level(s["Nt"], n, p, s["Cn"], s["Cp"])
+    srh = s["Nt"] * Cn * Cp * (nl * pl - s["nt0"] * s["pt0"])
+    srh = srh / jnp.where(s["Nt"] > 0, Cn * (nl + s["nt0"]) + Cp * (pl + s["pt0"]), 1.0)
+    return s["kd"] * (n * p - s["ni2"]) + _summed(s["Nt"], jnp.where(s["Nt"] > 0, srh, 0.0), n)
+
+
+def _trap_charge(n, p, s):
+    """The charged bulk traps' charge density (m⁻³, positive): `Σ |type|·(cwe − f)·N_t` over the
+    levels, `f = (C_n·n + C_p·p_t0)/(C_n·(n + n_t0) + C_p·(p + p_t0))` each level's occupancy
+    (SIMsalabim's `Calc_f_tb`, steady state)."""
+    nl, pl, Cn, Cp = _per_level(s["tq"], n, p, s["Cn"], s["Cp"])
+    q = s["tq"] > 0
+    f = (Cn * nl + Cp * s["pt0"]) / jnp.where(q, Cn * (nl + s["nt0"]) + Cp * (pl + s["pt0"]), 1.0)
+    return _summed(s["tq"], jnp.where(q, s["tq"] * (s["tcwe"] - f), 0.0), n)
 
 
 def _interface_edges(nL, nR, pL, pR, ti):
@@ -159,7 +185,10 @@ def _interface_edges(nL, nR, pL, pR, ti):
     `Calc_Recombination_n/p` and `Calc_Trap_Filling_Charge`, steady state: the traps' occupancy
     from both points' densities, each point capturing from its own; zero where there are none."""
     Nt = ti["Nt"]
-    an, bp = ti["Cn"] * Nt, ti["Cp"] * Nt
+    like = nL
+    nL, nR, pL, pR, Cn, Cp, iw, charge, cwe = _per_level(
+        Nt, nL, nR, pL, pR, ti["Cn"], ti["Cp"], ti["iw"], ti["charge"], ti["cwe"])  # fmt: skip
+    an, bp = Cn * Nt, Cp * Nt
     a = an * (nL + nR)
     b = bp * (pL + pR)
     c = an * (ti["nt0_lo"] + ti["nt0_hi"])
@@ -167,14 +196,13 @@ def _interface_edges(nL, nR, pL, pR, ti):
     traps = Nt > 0
     inv = jnp.where(traps, 1.0 / jnp.where(traps, a + b + c + d, 1.0), 0.0)
     full, empty = (a + d) * inv, (b + c) * inv  # occupied, empty share
-    iw = ti["iw"]
-    return (
+    return tuple(_summed(Nt, v, like) for v in (
         iw * an * (nL * empty - ti["nt0_lo"] * full),
         iw * an * (nR * empty - ti["nt0_hi"] * full),
         iw * bp * (pL * full - ti["pt0_lo"] * empty),
         iw * bp * (pR * full - ti["pt0_hi"] * empty),
-        ti["charge"] * (ti["cwe"] - full) * 0.5 * Nt * iw,
-    )
+        charge * (cwe - full) * 0.5 * Nt * iw,
+    ))  # fmt: skip
 
 
 def _interface_points(n, p, ti):
@@ -236,6 +264,8 @@ def _row(left, mid, right, s, Vt, g_frac, la, lc, B=bernoulli):
         + s["fac_u"] * V[2]
         - Q * (n[1] - p[1] + s["dop"] + anion - cation)
     )
+    if "tq" in s:
+        poisson = poisson + Q * _trap_charge(n[1], p[1], s)
     gn = (V + s["offn"]) / Vt
     gp = (V + s["offp"]) / Vt
     lo_n = s["hp"] * s["mun_m"] * Vt * B(gn[0] - gn[1])
@@ -321,6 +351,11 @@ def _assemble(full, s, Vt, g_frac, la, lc, B=bernoulli):
     P_A = jnp.stack([s["fac_l"], zm, zm], -1)
     P_C = jnp.stack([s["fac_u"], zm, zm], -1)
     P_B = jnp.stack([s["fac_m"] - Q * (anion + cation) / Vt, -Q * nm, Q * pm], -1)
+    if "tq" in s:  # charged bulk traps: their charge in Poisson, from the point's own densities
+        Qt, dQ_n = jax.jvp(lambda a: _trap_charge(a, pm, s), (nm,), (nm,))
+        _, dQ_p = jax.jvp(lambda b: _trap_charge(nm, b, s), (pm,), (pm,))
+        poisson = poisson + Q * Qt
+        P_B = P_B + Q * jnp.stack([zm, dQ_n, dQ_p], -1)
     sP, sC = s["sP"][:, None], s["sC"][:, None]
     A = jnp.stack([P_A * sP, -hp * dFn0[:-1] * sC, hp * dFp0[:-1] * sC], -2)
     Bb = jnp.stack([
@@ -485,6 +520,8 @@ def _poisson_row(left, mid, right, s, Vt, ref_left, ref_mid, ref_right, la, lc):
         + s["fac_u"] * V[2]
         - Q * (n - p + s["dop"] + anion - cation)
     )
+    if "tq" in s:
+        poisson = poisson + Q * _trap_charge(n, p, s)
     return poisson * s["sP"]
 
 
@@ -652,6 +689,13 @@ def solve_jv(dev: Device, voltages: np.ndarray, g_frac: float | None = None,
     logs = _ion_logs(
         jnp.concatenate([bounds_at(first)[0][:1], y[:, 0], bounds_at(first)[1][:1]]), ion
     )
+    if "tq" in s:
+        # Charged bulk traps: from the start Newton finds no way to the solution (each density
+        # step moves the traps' charge and so the potential, every step at its cap); from the
+        # solution with the traps neutral it does, in a few steps (docs/solver.md).
+        y_n, logs_n, ok, _ = settle(y, logs, dict(s, tq=jnp.zeros_like(s["tq"])), ion, first)
+        if ok:
+            y, logs = y_n, logs_n
     if dev.pre_cond:
         y, logs, ok, _ = settle(y, logs, s, ion, dev.V_pre)
         if not ok:

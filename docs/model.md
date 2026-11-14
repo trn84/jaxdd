@@ -82,12 +82,32 @@ effectively blocked.
 
 ```
 R = k_direct·(n·p − n_i²)
-  + N_t·C_n·C_p·(n·p − n_t0·p_t0) / ( C_n·(n + n_t0) + C_p·(p + p_t0) )
+  + Σ_levels N_t·C_n·C_p·(n·p − n_t0·p_t0) / ( C_n·(n + n_t0) + C_p·(p + p_t0) )
 ```
 
-the second term (SRH through one neutral trap level `E_t` of density `N_t`) only in layers
-with traps, `n_t0 = N_c·exp((E_c − E_t)/V_T)`, `p_t0 = N_c·exp((E_t − E_v)/V_T)`. Neither acts on
-the electrodes.
+the second term (SRH through the trap levels `E_t` of density `N_t`) only in layers with traps,
+`n_t0 = N_c·exp((E_c − E_t)/V_T)`, `p_t0 = N_c·exp((E_t − E_v)/V_T)`. Neither acts on the
+electrodes.
+
+### Bulk traps (`Init_Trapping`, `Calc_Trap_Filling_Charge`)
+
+A layer has one level (`N_t_bulk` m⁻³ at `E_t_bulk`) or, with `bulkTrapFile`, the levels of that
+file: a header (`E Ntrap`), then each level's energy (eV) and density (m⁻³), absolute (the file
+overrides `E_t_bulk` and `N_t_bulk`). Every level lies strictly inside its layer's gap, and no
+level of a file has density 0; SIMsalabim refuses either, and so does jaxdd. `intTrapFile` does
+the same for a layer's interface to the next (densities in m⁻²), each level as in the section
+below, their captures and charges summed.
+
+`bulkTrapType` makes the layer's levels neutral (0), donors (1, positive when empty) or
+acceptors (−1, negative when full). A charged level carries `(c − f)·N_t` into Poisson's
+equation, `c` = 1 for a donor and 0 for an acceptor, with its occupancy by electrons
+
+```
+f = (C_n·n + C_p·p_t0) / (C_n·(n + n_t0) + C_p·(p + p_t0))
+```
+
+at the point's own densities; the SRH rate above is unchanged. The charge couples only a point's
+own unknowns, so the Jacobian keeps its blocks.
 
 ### Interface traps (`Calc_Trap_Filling_Charge`, `Calc_Recombination_n/p`)
 

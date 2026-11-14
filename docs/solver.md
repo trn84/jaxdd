@@ -96,6 +96,15 @@ doped layers or ions. A few Newton steps on Poisson's equation alone, with `n �
 `p ∝ exp(−V/V_T)` following the potential (SimSS's `Solve_Poisson` does the same), bring the
 potential close before the coupled system starts; it is a scalar tridiagonal solve per step.
 
+**Why charged bulk traps start neutral.** With charged bulk traps of a density close to the free
+carriers' (3.9e21 m⁻³ at mid-gap in a 500 nm absorber), coupled Newton from that start does not
+converge: every density step moves the traps' occupancy and so the potential, and every step
+ends at its cap, for 200 steps. From the solution with the traps' charge left out (the same
+device, their recombination kept) it converges in 5–6. So a device with charged bulk traps is
+first solved at the first voltage with them neutral, and that solution is the start of the
+coupled solve with their charge (`solve_jv` and the batch; the gradients do not see it, a start
+has none). Devices without charged bulk traps skip it, to the bit.
+
 **Why extrapolate.** Along a J-V curve the solution changes smoothly with the voltage. Starting
 each voltage from the linear extrapolation of the last two solutions (SIMsalabim's
 `Extrapolate_Solution`) instead of from the last one saves Newton steps at every voltage;

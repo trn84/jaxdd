@@ -56,12 +56,13 @@ each with its own parameters.
 | Recombination | direct (`k_direct`, or Langevin's from the mobilities, `useLangevin`, Stage B); bulk SRH through one trap level per layer or several from a trap file (`bulkTrapFile`), neutral or charged (`bulkTrapType`; Stage B) |
 | Generation | a profile from a file, uniform per layer (`genProfile = none`), or by the transfer-matrix method from n,k data and a spectrum (`calc`, Stage B); scaled by `G_frac`; field-dependent by Braun's dissociation (`fieldDepG`, all five distance distributions; Stage B) |
 | Ions | anions and cations, each mobile in one layer: free at every voltage, or settled at a pre-bias and frozen (`preCond`, `fixIons`, as SimSS with [`simss/fixed_ions.patch`](../simss/README.md)); immobile ions as fixed charge |
+| Voltages | the caller's; SimSS's own from the setup by `simss_voltages` (uniform or logarithmic towards `Vacc`, `Vdist = 1` or `2`; up or down, `Vscan`; or `expJV`'s, `useExpData`) |
+| Current | SIMsalabim's integral form (`currDiffInt = 2`) or its differential form (`currDiffInt = 1`), averaged over the device (Stage B) |
 | Output | `J(V)` and a `converged` flag per device and voltage; the number of Newton steps |
 
 Everything else is **refused by name**, never approximated: `check_supported` raises
 `NotImplementedError` listing each parameter outside this scope (an ionic region across
-layers, `fixIons` without `preCond`, `Vdist` or `currDiffInt` other than 1 and 2). What comes next in physics is
-in [PLAN.md](../PLAN.md).
+layers, `fixIons` without `preCond`). What comes next in physics is in [PLAN.md](../PLAN.md).
 
 ## Where jaxdd follows SIMsalabim, and where it does not
 

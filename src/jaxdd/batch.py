@@ -73,7 +73,7 @@ def _device_tree(dev: Device, xp=np) -> dict:
     for i in dev.i1[:-1]:
         iface[i] = True
     generated = Q * dev.L * xp.sum(dev.h[:-1] * dev.G[:-1]) / xp.sum(dev.h[:-1])
-    return {
+    tree = {
         "s": _stencils(dev, xp),
         "ion": _ion_setup(dev),
         "Vt": dev.Vt, "g_frac": dev.G_frac, "L": dev.L,
@@ -92,6 +92,9 @@ def _device_tree(dev: Device, xp=np) -> dict:
         "G_shunt": xp.where(dev.R_shunt > 0, 1 / xp.where(dev.R_shunt > 0, dev.R_shunt, 1), 0.0),
         "pre_cond": float(dev.pre_cond), "V_pre": dev.V_pre, "fix_ions": float(dev.fix_ions),
     }  # fmt: skip
+    if dev.curr_diff:  # `currDiffInt = 1`; without the key the integral form alone
+        tree["curr_diff"] = 1.0
+    return tree
 
 
 def device_tree(structure: Structure, params: dict) -> dict:
@@ -139,6 +142,9 @@ def prepare(devices: list[Device]) -> dict:
         for t in trees:
             t["s"].setdefault("tq", np.zeros_like(t["s"]["Nt"]))
             t["s"].setdefault("tcwe", np.zeros_like(t["s"]["Nt"]))
+    if any("curr_diff" in t for t in trees):  # the differential current; the others integral
+        for t in trees:
+            t.setdefault("curr_diff", 0.0)
     _pad_levels(trees)
     return jax.tree_util.tree_map(lambda *leaves: jnp.asarray(np.stack(leaves)), *trees)
 
@@ -183,9 +189,9 @@ def _initial(d, Vint):
 
 
 def _current(d, full, g_frac, B=bernoulli):
-    """SIMsalabim's `Calc_Curr_Int` for both carriers, averaged (`Calc_All_Currents`); the
-    contacts' densities of finite surface recombination from `full`'s neighbours (Bernoulli
-    function `B`)."""
+    """SIMsalabim's `Calc_Curr_Int` for both carriers, or `Calc_Curr_Diff` where `curr_diff`
+    is 1, averaged (`Calc_All_Currents`); the contacts' densities of finite surface
+    recombination from `full`'s neighbours (Bernoulli function `B`)."""
     full = _with_contacts(full, d["s"], d["Vt"], B)
     V, n, p = full[:, 0], jnp.exp(full[:, 1]), jnp.exp(full[:, 2])
     Vt, x, h, L = d["Vt"], d["x"], d["h"], d["L"]
@@ -215,6 +221,10 @@ def _current(d, full, g_frac, B=bernoulli):
         J = Q * K + jnp.concatenate(
             [jnp.zeros(1), jnp.cumsum(sn * Q * L * h[1 : NP + 1] * U[1 : NP + 1])]
         )
+        if "curr_diff" in d:  # each interval's Scharfetter–Gummel flux (`Calc_Curr_Diff`)
+            dV = sn * jnp.diff(Vg) / Vt
+            flux = sn * Q * mu[: NP + 1] * Vt * (dens[1:] * B(-dV) - dens[:-1] * B(dV))
+            J = jnp.where(d["curr_diff"] > 0, flux / (L * h[: NP + 1]), J)
         # Across an interface SIMsalabim takes the current before it plus the current through
         # the interface traps.
         through = sn * 0.5 * Q * L * h[: NP + 1] * (R_i[: NP + 1] + R_i[1:])

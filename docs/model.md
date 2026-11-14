@@ -280,7 +280,7 @@ Anions and cations each have a density `N` and a mobility in a layer. Three case
 
 A mobile region spans one layer; an ionic region across layers is refused.
 
-## The current (`Calc_Curr_Int`, `Calc_All_Currents`)
+## The current (`Calc_Curr_Int`, `Calc_Curr_Diff`, `Calc_All_Currents`)
 
 The terminal current is not read off a single Scharfetter–Gummel flux. SIMsalabim's integral
 form (De Mari's, `currDiffInt = 2`) integrates each carrier's continuity equation across the
@@ -296,6 +296,17 @@ one before it plus the current through the interface traps, `J[i] = J[i−1] ± 
 R[i+1])` (SIMsalabim's; the points after it keep their values). The reported `J` is `J_n + J_p` averaged over the
 device, weighted by the grid spacing. In a converged steady state it is constant across the
 device; SimSS's `errJ` is its spread.
+
+With `currDiffInt = 1` (`Calc_Curr_Diff`) each interval's current is instead its own
+Scharfetter–Gummel flux, the one the continuity equation balances,
+
+```
+J_n[i] = −q·μ_n[i]·V_T·(n[i+1]·B((Vgn[i+1] − Vgn[i])/V_T) − n[i]·B((Vgn[i] − Vgn[i+1])/V_T)) / (L·h[i])
+```
+
+(holes with the signs turned), the same correction across interfaces and the same average. The
+two forms differ by the discretisation's and the convergence's error; at SimSS's tolerances of
+1e-9 the differential one agrees with SimSS to 2e-11 of the current's scale.
 
 ## Constants
 

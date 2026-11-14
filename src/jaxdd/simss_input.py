@@ -11,9 +11,12 @@ The files come from a directory (`read_setup`) or from a mapping of file names t
 
 from __future__ import annotations
 
+import io
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
+
+import numpy as np
 
 __all__ = [
     "Layer",
@@ -23,6 +26,7 @@ __all__ = [
     "read_parameter_file",
     "read_setup",
     "setup_from_texts",
+    "simss_voltages",
 ]
 
 
@@ -90,6 +94,48 @@ class Setup:
         return (self.directory / file).read_text()
 
 
+def simss_voltages(setup: Setup) -> np.ndarray:
+    """The internal voltages SimSS simulates, in its order (`Init_Voltages_and_Tasks`): from
+    `Vmin` to `Vmax` in steps of `Vstep` (`Vdist = 1`) or `NJV` of them accumulating towards
+    `Vacc` (`Vdist = 2`), reversed for `Vscan = -1`; with `useExpData` the `Vext` column of
+    `expJV` instead, in the file's order. The pre-bias `Vpre` is not among them (`solve_jv`
+    takes it from the device). With `untilVoc` SimSS stops past the open circuit; these are all
+    the voltages it would reach without stopping. SimSS's checks on them raise `ValueError`."""
+    if "useExpData" in setup.raw and setup.i("useExpData"):
+        table = np.genfromtxt(io.StringIO(setup.text("expJV")), names=True)
+        if "Vext" not in (table.dtype.names or ()):
+            raise ValueError(f"expJV = {setup.raw['expJV']}: no column Vext")
+        V = np.atleast_1d(table["Vext"]).astype(float)
+        if V.size < 4:  # SimSS's minExpData
+            raise ValueError("Not enough experimental data points (SimSS needs 4).")
+        return V
+    vdist, vscan = setup.i("Vdist"), setup.i("Vscan")
+    vmin, vmax = setup.f("Vmin"), setup.f("Vmax")
+    if vdist not in (1, 2):
+        raise ValueError(f"Vdist = {vdist}: SimSS has 1 (uniform) and 2 (logarithmic)")
+    if abs(vscan) != 1:
+        raise ValueError("Vscan must be either -1 or 1.")
+    if vmin > vmax:
+        raise ValueError("Vmin should not be greater than Vmax.")
+    if vdist == 1:
+        step = setup.f("Vstep")
+        if step <= 0:
+            raise ValueError("Vstep should be positive.")
+        njv = int(np.trunc((vmax - vmin) / step + 1e-10)) + 1
+        V = vmin + step * np.arange(njv)
+    else:
+        acc, njv = setup.f("Vacc"), setup.i("NJV")
+        if vmin <= acc <= vmax:
+            raise ValueError("Invalid Vacc selected, must be outside [Vmin, Vmax].")
+        if abs(vmin - vmax) < 1e-10:
+            raise ValueError("Do not use Vdist=2 when Vmin = Vmax.")
+        if njv < 2:
+            raise ValueError(f"NJV = {njv}: Vdist = 2 needs at least 2 voltages")
+        d = acc - vmax
+        V = acc - d * np.exp((1 - np.arange(njv) / (njv - 1)) * np.log((acc - vmin) / d))
+    return V[::-1].copy() if vscan == -1 else V
+
+
 def _layers(raw: dict[str, str], read) -> tuple[Layer, ...]:
     layers = []
     k = 1
@@ -117,23 +163,16 @@ def setup_from_texts(files: Mapping[str, str], setup: str = "simulation_setup.tx
 #: traps, neutral or charged, one level or several from a trap file; series and shunt
 #: resistance; the generation profile; the left electrode as the anode; finite surface
 #: recombination at the contacts and 'sfb' work functions; Langevin recombination; the
-#: field-dependent mobility and generation): the values a supported input must have. Ions are
-#: supported in one layer per region, steady (free at every voltage) or held after a pre-bias
-#: (`preCond`, `fixIons`, as SimSS with `simss/fixed_ions.patch`: Poisson leaves them).
-#: Anything else is refused by name, never approximated.
-_SETUP_REQUIRED = {
-    "Vdist": 1.0,
-    "currDiffInt": 2.0,
-}
-
-
+#: field-dependent mobility and generation; either form of the current, `currDiffInt` 1 or
+#: 2). Ions are supported in one layer per region, steady (free at every voltage) or held
+#: after a pre-bias (`preCond`, `fixIons`, as SimSS with `simss/fixed_ions.patch`: Poisson
+#: leaves them). The voltages are the caller's (`simss_voltages` gives SimSS's, for either
+#: `Vdist`). Anything else is refused by name, never approximated.
 def check_supported(setup: Setup) -> None:
-    """Raise `NotImplementedError` naming every parameter outside Stage A without ions."""
-    problems = [
-        f"{name} = {setup.raw.get(name)} (supported: {value:g})"
-        for name, value in _SETUP_REQUIRED.items()
-        if float(setup.raw.get(name, value)) != value
-    ]
+    """Raise `NotImplementedError` naming every parameter outside what jaxdd supports."""
+    problems = []
+    if float(setup.raw.get("currDiffInt", 2)) not in (1.0, 2.0):
+        problems.append(f"currDiffInt = {setup.raw['currDiffInt']} (SimSS has 1 and 2)")
     if float(setup.raw.get("R_series", 0)) < 0 or float(setup.raw.get("R_shunt", -1)) == 0:
         problems.append("R_series < 0 or R_shunt = 0 (SimSS refuses both)")
     for k, layer in enumerate(setup.layers, start=1):

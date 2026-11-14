@@ -12,7 +12,8 @@ solution is SIMsalabim's to its tolerance:
   (`mobnDep`, `mobpDep` = 1), each interval's mobility is `μ·exp(γ·√|F|)` in its own field.
 * Recombination: direct `k_direct·(n·p − n_i²)` and bulk SRH through one neutral level.
 * Current (`Calc_Curr_Int`, `currDiffInt = 2`): the integral form of De Mari, averaged over
-  the device (`Calc_All_Currents`).
+  the device (`Calc_All_Currents`); with `currDiffInt = 1` each interval's Scharfetter–Gummel
+  flux instead (`Calc_Curr_Diff`), averaged alike.
 
 What differs is only how they are solved: SIMsalabim iterates Poisson and the two continuity
 equations in turn (Gummel); here all three are solved at once, Newton's method on the
@@ -861,8 +862,9 @@ def _poisson_step(y, bounds, s, ion, Vt):
     return new, jnp.max(jnp.abs(shift))
 
 
-def _current(dev: Device, V, n, p, g_frac) -> float:
-    """SIMsalabim's `Calc_Curr_Int` for both carriers, averaged as `Calc_All_Currents`."""
+def _current(dev: Device, V, n, p, g_frac, B=bernoulli) -> float:
+    """SIMsalabim's `Calc_Curr_Int` for both carriers, or `Calc_Curr_Diff` with
+    `dev.curr_diff` (Bernoulli function `B`), averaged as `Calc_All_Currents`."""
     Vt, x, h, L = dev.Vt, dev.x, dev.h, dev.L
     NP = len(x) - 2
     s_all = {key: np.zeros(NP + 2) for key in ("kd", "ni2", "Nt", "Cn", "Cp", "nt0", "pt0")}
@@ -894,6 +896,11 @@ def _current(dev: Device, V, n, p, g_frac) -> float:
         J = np.zeros(NP + 1)
         J[0] = Q * K
         J[1:] = Q * K + np.cumsum(sn * Q * L * h[1 : NP + 1] * U[1 : NP + 1])
+        if dev.curr_diff:  # each interval's Scharfetter–Gummel flux (`Calc_Curr_Diff`)
+            dV = sn * np.diff(Vg) / Vt
+            B_minus, B_plus = np.asarray(B(-dV)), np.asarray(B(dV))
+            J = sn * Q * mu[: NP + 1] * Vt * (dens[1:] * B_minus - dens[:-1] * B_plus)
+            J = J / (L * h[: NP + 1])
         # SIMsalabim then sets the current across each interface to the one before it plus the
         # current through the interface traps; the points after keep their values.
         for i in dev.i1[:-1]:
@@ -1038,8 +1045,9 @@ def solve_jv(dev: Device, voltages: np.ndarray, g_frac: float | None = None,
         # voltage, not the rest of the scan.
         if ok and np.isfinite(full).all() and np.isfinite(np.asarray(logs_new)).all():
             y, logs = y_new, logs_new
+        V_, n_, p_ = full[:, 0], np.exp(full[:, 1]), np.exp(full[:, 2])
         J.append(
-            _current(dev, full[:, 0], np.exp(full[:, 1]), np.exp(full[:, 2]), g_frac)
+            _current(dev, V_, n_, p_, g_frac, BERNOULLI[bernoulli_name])
             + (float(Vint) / dev.R_shunt if dev.R_shunt > 0 else 0.0)
         )
         conv.append(ok)

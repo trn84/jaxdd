@@ -56,6 +56,12 @@ Langevin recombination in all three layers; SimSS 5.36 at `tolPois = tolDens = 1
 layer, a Gaussian with `a` 0.5 nm and `P0` 0.1 in the absorber, a delta function at 0.5 nm in
 the last; SimSS 5.36 at `tolPois = tolDens = 1e-9`.
 
+`diff_iface_light/`: `iface_charged_light` with the current in SimSS's differential form
+(`currDiffInt = 1`); SimSS 5.36 at `tolPois = tolDens = 1e-9`.
+
+`logv_light/`: `thin_l1_light` scanned downwards over 25 logarithmically spaced voltages
+accumulating towards `Vacc` = 1.4 V (`Vdist = 2`, `Vscan = -1`, `NJV = 25`); SimSS 5.36.
+
 `resist_light/`: `thin_l1_light` with a series resistance of 2e-4 Ω m² and a shunt of 0.3 Ω m²
 (Stage B); SimSS 5.36.
 

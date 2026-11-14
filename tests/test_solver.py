@@ -11,7 +11,7 @@ import numpy as np
 import pytest
 
 from jaxdd.device import build_device, make_grid
-from jaxdd.simss_input import check_supported, read_setup
+from jaxdd.simss_input import check_supported, read_setup, setup_from_texts, simss_voltages
 from jaxdd.solver import bernoulli, bernoulli_simss, solve_jv
 
 DATA = Path(__file__).parent / "data"
@@ -118,10 +118,92 @@ def test_unsupported_input_is_refused_by_name(tmp_path) -> None:
         (tmp_path / f.name).write_text(f.read_text())
     setup_file = tmp_path / "simulation_setup.txt"
     text = setup_file.read_text()
-    assert "Vdist = 1 " in text
-    setup_file.write_text(text.replace("Vdist = 1 ", "Vdist = 2 ", 1))
-    with pytest.raises(NotImplementedError, match="Vdist"):
+    assert "currDiffInt = 2 " in text
+    setup_file.write_text(text.replace("currDiffInt = 2 ", "currDiffInt = 3 ", 1))
+    with pytest.raises(NotImplementedError, match="currDiffInt"):
         check_supported(read_setup(setup_file))
+
+
+def test_the_differential_current_reproduces_simss() -> None:
+    """`currDiffInt = 1` (`Calc_Curr_Diff`: each interval's Scharfetter–Gummel flux, across an
+    interface the current before it plus the current through its traps), on `iface_charged_light`
+    with SimSS at tolerances of 1e-9: its curve to 1e-9 of its scale, by both solvers, in a batch
+    with the same device in the integral form (which keeps its own curve)."""
+    from jaxdd.batch import prepare, solve_batch
+
+    devices, refs = [], []
+    for case in ("diff_iface_light", "iface_charged_light"):
+        setup = read_setup(DATA / case / "simulation_setup.txt")
+        check_supported(setup)
+        devices.append(build_device(setup))
+        refs.append(np.genfromtxt(DATA / case / "JV.dat", names=True))
+    assert devices[0].curr_diff and not devices[1].curr_diff
+    V = refs[0]["Vint"]
+    assert np.array_equal(V, refs[1]["Vint"])
+    single = solve_jv(devices[0], V, bernoulli_name="simss")
+    J, ok, _ = solve_batch(prepare(devices), V, bernoulli_name="simss")
+    assert single.converged.all() and np.asarray(ok).all()
+    for got, ref, tol in ((single.J, refs[0], 1e-9), (np.asarray(J)[0], refs[0], 1e-8),
+                          (np.asarray(J)[1], refs[1], 1e-5)):  # fmt: skip
+        assert np.max(np.abs(got - ref["Jext"])) < tol * np.max(np.abs(ref["Jext"]))
+
+
+def test_voltages_are_simss_own() -> None:
+    """`simss_voltages` gives the voltages of every reference run, in SimSS's order (where
+    SimSS stopped converging, its `JV.dat` is the beginning of them)."""
+    cases = [d for d in sorted(DATA.iterdir()) if (d / "JV.dat").exists()]
+    assert any(read_setup(d / "simulation_setup.txt").i("Vdist") == 2 for d in cases)
+    for case in cases:
+        V = simss_voltages(read_setup(case / "simulation_setup.txt"))
+        ref = np.atleast_1d(np.genfromtxt(case / "JV.dat", names=True)["Vint"])
+        assert V.size >= ref.size, case.name
+        assert np.max(np.abs(V[: ref.size] - ref)) < 1e-10, case.name
+
+
+def test_logarithmic_downward_scan_reproduces_simss() -> None:
+    """`Vdist = 2`, `Vscan = -1`: 25 voltages accumulating towards `Vacc` = 1.4 V, from 1.3 V
+    down; SimSS's curve to 1e-5 of its scale at its own voltages."""
+    case = DATA / "logv_light"
+    setup = read_setup(case / "simulation_setup.txt")
+    check_supported(setup)
+    ref = np.genfromtxt(case / "JV.dat", names=True)
+    V = simss_voltages(setup)
+    assert V[0] == pytest.approx(1.3) and V[-1] == pytest.approx(-0.2)
+    assert np.all(np.diff(np.abs(np.diff(V))) > 0)  # the steps grow away from Vacc
+    res = solve_jv(build_device(setup), V, bernoulli_name="simss")
+    assert res.converged.all()
+    assert np.max(np.abs(res.J - ref["Jext"])) < 1e-5 * np.max(np.abs(ref["Jext"]))
+
+
+def test_voltages_from_experimental_data_and_simss_checks(tmp_path) -> None:
+    """With `useExpData` the voltages are `expJV`'s `Vext` column in the file's order (as SimSS
+    5.36 runs them); the voltage parameters SimSS refuses raise `ValueError`."""
+    case = DATA / "thin_l1_light"
+    files = {f.name: f.read_text() for f in case.iterdir() if f.suffix == ".txt"}
+    text = files["simulation_setup.txt"]
+
+    def setup(**values):
+        lines = []
+        for line in text.splitlines():
+            name = line.split("=", 1)[0].strip()
+            lines.append(f"{name} = {values[name]}" if name in values else line)
+        exp = "Vext Jext\n0.9 10\n0.3 -200\n0.55 -150\n-0.1 -250\n"
+        new = {"simulation_setup.txt": "\n".join(lines), "expJV.csv": exp}
+        return setup_from_texts({**files, **new})
+
+    assert np.array_equal(simss_voltages(setup(useExpData=1)), [0.9, 0.3, 0.55, -0.1])
+    assert np.allclose(simss_voltages(setup(Vscan=-1, Vstep=0.5)), [1.3, 0.8, 0.3, -0.2])
+    bad = [
+        ({"Vdist": 3}, "Vdist"),
+        ({"Vscan": 0}, "Vscan"),
+        ({"Vmin": 1.5}, "Vmin"),
+        ({"Vstep": 0}, "Vstep"),
+        ({"Vdist": 2, "Vacc": 1.0}, "Vacc"),
+        ({"Vdist": 2, "Vacc": 2, "Vmin": 0.5, "Vmax": 0.5}, "Vmin = Vmax"),
+    ]
+    for values, match in bad:
+        with pytest.raises(ValueError, match=match):
+            simss_voltages(setup(**values))
 
 
 @pytest.mark.parametrize("case", ["frozen_1e17_x1_thin_light", "steady_1e17_thin_light"])
@@ -1068,7 +1150,7 @@ def test_the_bordered_system_and_its_transpose_are_solved() -> None:
      "frozen_thick_htl_dark", "iface_ions_light", "pin_iface_light", "resist_light",
      "calc_light", "none_light", "pin_anode_left_light", "bulk_acceptor_light",
      "trapfiles_light", "surface_light", "langevin_light", "fieldmob_light",
-     "langevin_field_light", "braun_light"],
+     "langevin_field_light", "braun_light", "diff_iface_light"],
 )  # fmt: skip
 def test_the_device_in_jax_is_numpys(case: str) -> None:
     """`batch.device_tree` (the device in `jax.numpy` from its structure and parameters) gives
@@ -1164,6 +1246,33 @@ def test_the_gradient_in_the_interface_traps_is_finite_differences() -> None:
 
     def loss(a):
         p = dict(params, N_t_int=params["N_t_int"] * jnp.exp(a * direction))
+        batch = jax.tree_util.tree_map(lambda v: v[None], device_tree(structure, p))
+        J, ok, _ = solve_batch(batch, V)
+        return jnp.sum(w * jnp.where(ok[0], J[0], 0.0))
+
+    _, by_jvp = jax.jvp(loss, (0.0,), (1.0,))
+    h = 1e-5
+    fd = (float(loss(h)) - float(loss(-h))) / (2 * h)
+    assert abs(float(by_jvp) - fd) < 1e-6 * abs(fd)
+
+
+def test_the_gradient_of_the_differential_current_is_finite_differences() -> None:
+    """With `currDiffInt = 1`, the curve's derivative in the interface traps and the absorber's
+    mobilities, through `device_tree` and the converged solution, against central finite
+    differences."""
+    from jaxdd.batch import device_tree, solve_batch
+    from jaxdd.device import device_parameters
+
+    setup = read_setup(DATA / "diff_iface_light" / "simulation_setup.txt")
+    structure, params = device_parameters(setup)
+    assert structure.curr_diff
+    V = np.round(np.arange(-0.1, 1.2 + 1e-9, 0.1), 6)
+    w = jnp.asarray(np.random.default_rng(0).normal(size=len(V)))
+
+    def loss(a):
+        p = dict(params, N_t_int=params["N_t_int"] * jnp.exp(a * jnp.array([1.0, -0.6, 0.0])))
+        for k in ("mu_n", "mu_p"):
+            p[k] = jnp.asarray(params[k]).at[1].multiply(jnp.exp(0.5 * a))
         batch = jax.tree_util.tree_map(lambda v: v[None], device_tree(structure, p))
         J, ok, _ = solve_batch(batch, V)
         return jnp.sum(w * jnp.where(ok[0], J[0], 0.0))

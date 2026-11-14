@@ -263,6 +263,9 @@ class Device:
     # in both directions (`surface = "robin"`), 0 only for extraction (SimSS's manual). None
     # where every one is infinite.
     surface: dict | None = None
+    # SIMsalabim's `currDiffInt = 1`: the current from each interval's Scharfetter–Gummel flux
+    # (`Calc_Curr_Diff`) instead of the integral form (`Calc_Curr_Int`, 2), averaged alike.
+    curr_diff: bool = False
 
 
 @dataclass(frozen=True)
@@ -306,6 +309,7 @@ class Structure:
     gen_mode: str = "file"
     optics: dict | None = None
     left_elec: int = -1
+    curr_diff: bool = False  # `currDiffInt = 1` (`Device.curr_diff`)
 
 
 #: How finite surface recombination at a contact (`S_n_L`, …, ≥ 0) acts: "extraction" as
@@ -443,6 +447,7 @@ def device_parameters(
         therm_leng_dist=np.array([int(float(ly.raw.get("thermLengDist", "1"))) for ly in layers]),
         braun_rule=braun,
         left_elec=setup.i("leftElec"),
+        curr_diff=int(float(setup.raw.get("currDiffInt", "2"))) == 1,
     )  # fmt: skip
     # SIMsalabim's checks: each work function within its layer's gap.
     for k, ly, sfb in (("W_L", layers[0], structure.sfb[0]), ("W_R", layers[-1], structure.sfb[1])):
@@ -766,6 +771,7 @@ def device_arrays(structure: Structure, p: dict, xp=np) -> Device:
         R_series=p.get("R_series", 0.0), R_shunt=p.get("R_shunt", -1.0), left_elec=st.left_elec,
         trap_charge=trap_charge, trap_cwe=trap_cwe, surface=surface,
         mob_field=mob_field, langevin_field=langevin_field, braun=braun,
+        curr_diff=st.curr_diff,
     )  # fmt: skip
 
 

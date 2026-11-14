@@ -93,6 +93,13 @@ so that the solver is never the larger error in what is computed from it.
   and gold, and on a 20/500/10 nm stack between glass, 150 nm ITO and silver, the profile on the
   grid is SimSS's within 4e-12 and the curves within 2e-7 and 6e-7 of SimSS's scale; a uniform
   profile (`genProfile = none`) within 2.4e-6.
+- **SimSS's voltages and its differential current** (2026-11-14): `simss_voltages` gives the
+  voltages of every SimSS run in `tests/data`, a logarithmic downward scan (`Vdist = 2`,
+  `Vscan = -1`) and `expJV`'s with `useExpData`; on the logarithmic scan the curve is within
+  2.0e-6 of SimSS's scale. With `currDiffInt = 1` and SimSS at tolerances of 1e-9 the curves are
+  within 2.5e-11 (`thin_l1_light`) and 1.7e-11 (with interface traps) of SimSS's, 1.2e-9 in a
+  batch beside devices with the integral form; the anode-left p-i-n cell with free ions within
+  6.9e-6, as with the integral form.
 - **The left electrode as the anode** (`leftElec = 1`, 2026-11-13): a p-i-n cell in its own
   orientation (glass, 150 nm ITO, 10 nm TaTm, 500 nm perovskite with free ions, 20 nm C60,
   100 nm Ag), interface traps at both interfaces, the transfer-matrix profile and a shunt: within
@@ -236,13 +243,17 @@ convergence", and a rerun at tight tolerances. The cases where SimSS was wrong s
 | `test_grid_spacing_*` | SIMsalabim's grid, including its interface quirk |
 | `test_grid_split_*` | each layer's share of the points where it is a whole number: exact, and as SimSS's 10-byte reals give it ([differences.md](differences.md) §5) |
 | `test_unsupported_input_is_refused_by_name` | `check_supported` |
+| `test_the_differential_current_reproduces_simss` | `currDiffInt = 1` (`tests/data/diff_iface_light`) to 1e-9 of SimSS's scale, single and in a batch with the integral form |
+| `test_voltages_are_simss_own` | `simss_voltages` against the voltages of every SimSS run in `tests/data` |
+| `test_logarithmic_downward_scan_reproduces_simss` | `Vdist = 2`, `Vscan = -1` (`tests/data/logv_light`): SimSS's voltages and curve, to 2e-6 of its scale |
+| `test_voltages_from_experimental_data_and_simss_checks` | `useExpData` (`expJV`'s voltages, in the file's order) and SimSS's checks on the voltage parameters |
 | `test_benchmark.py` | `benchmarks/run.py` hands SimSS exactly the devices jaxdd solves |
 
-`tests/data/` holds four SimSS 5.36 runs, inputs and `JV.dat` unchanged: a perovskite cell
-without ions, the same with 1e17 cm⁻³ ions frozen after a pre-bias (SimSS with
-[`simss/fixed_ions.patch`](../simss/README.md)),
-the same with the ions free, and a thick cell in the dark with a thick doped transport layer
-and ions frozen near flat band.
+`tests/data/` holds SimSS 5.36 runs, inputs and `JV.dat` unchanged, each described in
+[its README](../tests/data/README.md); the first four are a perovskite cell without ions, the
+same with 1e17 cm⁻³ ions frozen after a pre-bias (SimSS with
+[`simss/fixed_ions.patch`](../simss/README.md)), the same with the ions free, and a thick cell
+in the dark with a thick doped transport layer and ions frozen near flat band.
 
 ## The validation scripts
 

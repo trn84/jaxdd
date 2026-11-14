@@ -165,16 +165,25 @@ and samples the posteriors, each by two independent runs that agree
   fit's minimum. 64 starts for 0.6 Cl find the same best (8 starts, 24 min). The ends of every
   start are in `benchmarks/samples/multistart_{01Cl,06Cl}.npz` (not committed).
 
-  **Hand-over (2026-11-14, 17:47):** running on the desktop GPU, in the background, four
+  **Hand-over (2026-11-14, 19:27):** running on the desktop GPU, in the background, four
   sampling runs one after the other, each `sample_measured.py SAMPLE --from-multistart
   --walkers 64 --steps 3000 --seed {0,1}`: 0.1 Cl seed 0, seed 1, then 0.6 Cl seed 0, seed 1;
-  about 1.8 h each, done around 01:00. Log `benchmarks/samples/best.log` (a failed run is a
-  line `!! SAMPLE seed N failed`), chains `benchmarks/samples/chain_{01Cl,06Cl}_best_s{0,1}.npz`.
-  The first started well: σ 7.01e-3 (the best minimum's rms), acceptance 0.08. Do not start a
-  second GPU process beside it. When done:
+  about 1.85 h each (2.2 s per step), done around 02:50. The first attempt (17:47) was killed
+  at step 300 with the ssh session it ran in; this one runs in its own session (`setsid nohup
+  benchmarks/samples/run_best.sh`, not committed), so check it with `pgrep -f run_best.sh`.
+  Log `benchmarks/samples/best.log` (a failed run is a line `!! SAMPLE seed N failed`, the end
+  a line `== … all done`), chains `benchmarks/samples/chain_{01Cl,06Cl}_best_s{0,1}.npz`.
+  It restarted well: σ 7.01e-3 (the best minimum's rms), acceptance 0.08, step for step the
+  first attempt's. Do not start a second GPU process beside it. When done:
   1. Per sample, compare the two seeds as the earlier second runs were (chain coordinates, the
      first 1000 steps discarded): each median's shift over the 16–84 % half-width (they agreed
      within 0.13), the half-widths' ratio, the independent samples of both together (≥ 1000).
+     `.venv/bin/python -I benchmarks/samples/compare_seeds.py . 01Cl 06Cl` (numpy only) prints
+     all of it, plus the table's entries over both seeds. On the earlier pair (A100 and
+     desktop) it reproduces validation.md's shifts (0.12, 0.13) and independent samples (1561,
+     1954), but its half-width ratios (larger over smaller) are 1.33 for 0.6 Cl's `mu_htl` (the
+     doc's 25 %) and 1.13 for its `Ev_htl` (also at its bound): not "within 8 %", which came
+     from the log's rounded ±0.001. Word that sentence from the chains when rewriting it.
   2. In docs/validation.md, replace the 0.1 and 0.6 Cl columns of the posterior table with the
      new posteriors (median and half-width, which parameters sit at a bound, the strongest
      correlations, from the log's summaries), and drop the remarks that they hold the cold
@@ -213,10 +222,10 @@ What jaxdd solves today ("Stage A") is in [docs/overview.md](docs/overview.md). 
   circuit; the generation profile by the transfer-matrix method, differentiable in the
   thicknesses, and uniform; the left electrode as the anode; the contacts' finite surface
   recombination and `sfb` work functions; Langevin recombination; the field-dependent mobility,
-  also with Langevin in the same layer; the field-dependent generation (Braun's dissociation)
-  ([docs/model.md](docs/model.md)). Left, still refused by name: ions in a region across
-  layers or in more than one layer, `fixIons` without `preCond`, `Vdist` = 2 (SimSS's other
-  voltage steps) and `currDiffInt` = 1 (its other current).
+  also with Langevin in the same layer; the field-dependent generation (Braun's dissociation);
+  the current in SimSS's differential form (`currDiffInt = 1`) ([docs/model.md](docs/model.md)). Left, still refused by name: ions in a region across
+  layers or in more than one layer, and `fixIons` without `preCond`. SimSS's voltages, `Vdist`
+  1 and 2, are `simss_voltages`.
   At the end, a SimSS input runs on jaxdd or is refused with the missing feature named.
 - **Stage C: transients (ZimT).** Time-dependent drift-diffusion with mobile ions: scan-rate
   hysteresis, transient photocurrent and photovoltage, impedance. Its own plan when Stage B is

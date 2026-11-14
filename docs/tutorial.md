@@ -33,7 +33,7 @@ setup = read_setup(Path("tests/data/thin_l1_light/simulation_setup.txt"))
 check_supported(setup)              # NotImplementedError naming anything outside the scope
 dev = build_device(setup)           # SIMsalabim's grid and every static array (NumPy)
 
-V = np.round(np.arange(-0.2, 1.3 + 1e-9, 0.025), 6)
+V = np.round(np.arange(-0.2, 1.3 + 1e-9, 0.025), 6)   # or simss_voltages(setup), SimSS's own
 res = solve_jv(dev, V)
 res.J            # A/m², SIMsalabim's sign: the photocurrent is negative
 res.converged    # per voltage
@@ -41,7 +41,10 @@ res.iterations   # Newton steps per voltage
 ```
 
 `read_setup` takes a `Path`; the layer files and the generation profile are found relative to
-it. `solve_jv` solves the voltages in the order given, each from the solution at the one before.
+it. `simss_voltages(setup)` (from `jaxdd.simss_input`) gives the voltages SimSS would run, in its
+order: `Vmin` to `Vmax` by `Vstep` or logarithmically towards `Vacc` (`Vdist`), up or down
+(`Vscan`), or `expJV`'s with `useExpData`. `solve_jv` solves the voltages in the order given, each
+from the solution at the one before.
 The device's own `G_frac` sets the light; `solve_jv(dev, V, g_frac=0.0)` gives the dark curve of
 the same device. If the input has `preCond = 1`, the device is first settled at `Vpre` with its
 ions free (and with `fixIons = 1` the ions are then held for the scan); a pre-bias that does not

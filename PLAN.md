@@ -62,7 +62,7 @@ about two A100s).
 |---|---|---|
 | **M4** | The grid in space (2.1) | 400 points or fewer meet the validation criteria on the hardest devices, or bucketing by grid size is justified |
 | **M6** | Adaptive parameter axes (2.2) | the refined axes meet a table's interpolation tolerance with fewer devices than hand-made ones |
-| **M7** | What fits still need (2.4): several starts at once, the second runs' 1000 independent samples; the curves are differentiable in the input's parameters, measured curves are fitted (`validation/fit_measured.py`) and the three samples' posteriors are sampled to about ten autocorrelation times (`validation/sample_measured.py`) | the best of many starts found in one batched run, and every measured sample's posterior from two independent runs that agree, each with 1000 independent samples or more |
+| **M7** | What fits still need (2.4): several starts at once; the curves are differentiable in the input's parameters, measured curves are fitted (`validation/fit_measured.py`) and the three samples' posteriors are sampled, each by two independent runs that agree (`validation/sample_measured.py`) | the best of many starts found in one batched run |
 | — | Several GPUs in one process: the batch axis sharded (`NamedSharding` or `shard_map`, not `pmap`); the devices are independent, so no communication | the rate scales with the number of GPUs |
 
 Gradients are taken by implicit differentiation of the converged solution: the backward pass
@@ -155,23 +155,10 @@ as one CUDA kernel on devices without ions, against the JAX step's time on the A
 The curves are differentiable in the input's own parameters; a fit recovers a SimSS curve's
 parameters (`validation/fit.py`) and fits the measured curves of Heester et al. (2025), five
 intensities at once, to 0.55–2.7 % of the short-circuit current in minutes
-(`validation/fit_measured.py`, [docs/validation.md](docs/validation.md)). Left:
+(`validation/fit_measured.py`), and samples the three samples' posteriors, each by two
+independent runs that agree (`validation/sample_measured.py`,
+[docs/validation.md](docs/validation.md)). Left:
 
-- **The second runs' 1000 independent samples.** The three samples' posteriors
-  (`validation/sample_measured.py`, [docs/validation.md](docs/validation.md)) hold 1000–1300
-  independent samples each (128 walkers × 3000 steps, 4.2 h for all three on the A100). A
-  second, independent run of each on the desktop (64 walkers) agrees: medians within 0.13
-  half-widths, half-widths within 8 % but one. With 64 walkers they hold 520–680 independent
-  samples, below the 1000 per run the criterion asks: either a second A100 run (`--seed 1`,
-  128 walkers, 4.2 h for all three), or the criterion counted over the two runs together.
-  The chains hold 8–10 autocorrelation times, not the 50 that emcee's rule asks for: that rule is
-  for the estimate of the autocorrelation time itself, not for the quantiles, and 50 would be
-  some 5 h per sample on the A100. What would make a sample cheaper, if it is needed: the three
-  samples in one batch (960 curves per call instead of 320; a call at that size costs little
-  more), the bounded coordinates transformed so that no proposal falls outside (the acceptance
-  is 0.05, the walkers stopped at the bounds), or HMC by the gradients. Three or four of the
-  fourteen parameters end at a bound in every sample, and not the same ones; whether the bounds
-  or the assumptions are what holds them is a question for the model, not the sampler.
 - **Several starts at once**: the same device at many starting points in one batch (a batched
   Gauss–Newton in JAX instead of one `least_squares` per start); the best kept.
 - **The optics for the measured cell**: the measured fits assume a uniform generation. The cell

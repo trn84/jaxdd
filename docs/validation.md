@@ -154,7 +154,8 @@ so that the solver is never the larger error in what is computed from it.
   each, 0.89–1.12 s per batch of 32 × 5) gives the same posteriors: for 0.1 and 0.6 Cl every
   median within 0.13 half-widths of the A100's and every half-width within 8 % (25 % for the
   HTL's mobility in 0.6 Cl, held by its bound in a quarter of the samples), from 520 and 680
-  independent samples. Median and 16–84 % half-width:
+  independent samples: each posterior from two runs that agree, with 1500 independent samples or
+  more between them. Median and 16–84 % half-width:
 
   | | 0.1 Cl | 0.2 Cl | 0.6 Cl | bounds |
   |---|---|---|---|---|

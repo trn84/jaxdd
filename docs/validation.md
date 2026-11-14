@@ -129,7 +129,8 @@ so that the solver is never the larger error in what is computed from it.
   sample; the 0.2 Cl sample's curves are matched within 0.2–0.7 A/m² on average at 187 A/m².
   Cold and warm starts end in the same fit for 0.1 and 0.2 Cl. On the RTX 4070 Ti SUPER a fit is
   2–10 minutes, 100–400 evaluations of the five curves and as many Jacobians (the paper's
-  Bayesian optimisation ran about 25 000 simulations per sample). What the curves determine: the
+  Bayesian optimisation ran about 25 000 simulations per sample).
+  What the curves determine: the
   Jacobian's singular values spread over seven to nine decades, three to seven of the fourteen
   parameters end at a bound, and `k_direct` ends within a factor of three of its lower bound in
   all six fits (two starts per sample), so
@@ -141,10 +142,23 @@ so that the solver is never the larger error in what is computed from it.
   no better, and the fitted parameters move by up to a factor of 20 between the two assumptions
   about the generation (0.2 Cl: the ETL interface's traps 1.1e14 against 2.4e13 m⁻²). What these
   curves say about a single parameter depends on the unstated assumptions as much as on the data.
+- **Many starts at once** (`fit_measured.py --starts 16`, `jaxdd.fit.least_squares_many`,
+  2026-11-14): the same fit from 16 starts (the cold one, the paper's values and 14 of a Sobol
+  sequence in the box), every start scipy's `least_squares` as alone, their curves and
+  Jacobians solved as one batch: 10.5 min per sample on the RTX 4070 Ti SUPER (400 batched
+  evaluations of 16 × 5 curves and 14 tangents, 1.6 s each), the time of two fits from one
+  start. The starts end in 6–10 minima. For 0.2 Cl the best is the cold start's (rms 0.553 %,
+  6 starts). For 0.1 and 0.6 Cl it is lower than the cold and the paper's start find, in
+  another part of the box: 0.701 % against 0.773 % (4 starts; the absorber's electron mobility
+  2e-5 against 1e-3 m²/Vs, the ions 1e22 against 1e21 m⁻³) and 1.93 % against 2.69 % and 2.42 %
+  (2 starts; the cations at their bound of 1e23 m⁻³, the holes' mobility at 1e-6). With the
+  sampler's σ the lower minima are e⁵⁹ and e¹⁵⁸ more likely: the posteriors below hold, for
+  those two samples, the cold fit's minimum only.
 
 - **The fit's uncertainty, by sampling** (`validation/sample_measured.py`, 2026-11-14): a posterior
   of the same fourteen parameters, by an ensemble sampler whose walkers' five intensities are
-  solved as one batch (differential evolution, the walkers started around the least-squares fit;
+  solved as one batch (differential evolution, the walkers started around the least-squares fit
+  from the cold start, for 0.1 and 0.6 Cl not the best minimum: above;
   the prior uniform in the fitted coordinates within the bounds, the likelihood Gaussian with σ the
   fit's rms misfit). All three samples, 128 walkers and 3000 steps each, the first 1000
   discarded: 4.2 h on an A100-SXM4-40GB (0.75–0.96 s per batch of 64 × 5 curves). Acceptance
@@ -244,8 +258,8 @@ as arguments. SimSS itself is built by [`simss/`](../simss/README.md).
 | `validation/shortcuts.py CASE_DIR …` | the batched solver with its shortcuts against `strict=True` |
 | `validation/bench.py [N] [batch]` | curves per second ([hardware.md](hardware.md)) |
 | `validation/breakdown.py [batch]` | one Newton step's time, part by part |
-| `validation/fit_measured.py [SAMPLE …] [--start cold\|paper] [--device mirrored\|anode]` | a fit to the measured curves of Heester et al. (2025), five intensities at once |
-| `validation/sample_measured.py [SAMPLE] [--move de\|stretch] [--walkers W] [--steps S] [--sigma F] [--out FILE]` | the fit's posterior by an ensemble sampler over the batch; the chain to an `.npz` |
+| `validation/fit_measured.py [SAMPLE …] [--start cold\|paper] [--device mirrored\|anode] [--starts N]` | a fit to the measured curves of Heester et al. (2025), five intensities at once; from N starts at once |
+| `validation/sample_measured.py [SAMPLE] [--move de\|stretch] [--walkers W] [--steps S] [--sigma F] [--out FILE] [--from-multistart]` | the fit's posterior by an ensemble sampler over the batch; the chain to an `.npz`; around the best of `fit_measured.py --starts N` |
 | `validation/fit.py CASE_DIR [--start S] [--fix NAME …] [--noise σ]` | a fit by gradients to the case's SimSS curve, from a perturbed start; what the curve determines (singular values) |
 
 ## Running SimSS for a comparison

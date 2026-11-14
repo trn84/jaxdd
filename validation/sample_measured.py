@@ -3,6 +3,7 @@
 
     .venv/bin/python validation/sample_measured.py [SAMPLE] [--device mirrored|anode]
         [--move de|stretch] [--walkers W] [--steps S] [--sigma F] [--seed N] [--out FILE.npz]
+        [--from-multistart]
 
 The walkers are split into two halves, and each half moves relative to the other, so one step is
 two calls of the model, each solving half the walkers' five intensities as one batch
@@ -23,7 +24,9 @@ such a point is never accepted. The misfit is systematic, not noise (the residua
 the voltage), so this likelihood is a lower bound on the widths; they scale with `sigma` where the
 posterior is close to Gaussian.
 
-The walkers start around the fit (it is run first, from the middle of the bounds), drawn from the
+The walkers start around the fit (it is run first, from the middle of the bounds; with
+`--from-multistart` the best end of `fit_measured.py --starts N` instead, from its
+`benchmarks/samples/multistart_SAMPLE.npz`), drawn from the
 linearised posterior `σ²(JᵀJ + P)⁻¹`, `P` a weak Gaussian prior of the bounds' width so that the
 directions the curves do not settle start spread over the box, not beyond it. The first third of
 the steps is discarded. Printed: the acceptance fraction, each parameter's integrated
@@ -119,6 +122,23 @@ def start(theta, jac, sigma, lo, hi, walkers, rng):
     return x
 
 
+def best_of_many(sample: str, device: str):
+    """The best end of `fit_measured.py SAMPLE --starts N` (its saved file), with its residuals
+    and Jacobian as `least_squares` gives them (`x`, `fun`, `jac`)."""
+    import jax
+    from fit_measured import ROOT
+
+    path = ROOT / "benchmarks" / "samples" / f"multistart_{sample}.npz"
+    saved = np.load(path)
+    if str(saved["device"]) != device:
+        raise SystemExit(f"{path.name} is for the {saved['device']} device, not {device}")
+    x = saved["theta"][int(np.argmin(saved["cost"]))]
+    res = problem(sample, device)["residuals"]
+    fun = np.asarray(res(jnp.asarray(x)))
+    jac = np.asarray(jax.jacfwd(res)(jnp.asarray(x)))
+    return argparse.Namespace(x=x, fun=fun, jac=jac)
+
+
 def main() -> None:
     args = argparse.ArgumentParser()
     args.add_argument("sample", nargs="?", default="02Cl", choices=tuple(GAP_eV))
@@ -137,13 +157,19 @@ def main() -> None:
         "--out", default=None, help="write the chain to this .npz (also every --every steps)"
     )
     args.add_argument("--every", type=int, default=100, help="a progress line every N steps")
+    args.add_argument("--from-multistart", action="store_true",
+                      help="start at the best end of fit_measured.py --starts N")  # fmt: skip
     a = args.parse_args()
     if a.walkers % 2 or a.walkers < 2 * len(FREE):
         raise SystemExit(f"--walkers must be even and at least {2 * len(FREE)}")
 
     t0 = time.perf_counter()
-    r = fit(a.sample, "cold", a.device)
-    out = r["out"]
+    if a.from_multistart:
+        out = best_of_many(a.sample, a.device)
+        r = {"scale": problem(a.sample, a.device)["scale"]}
+    else:
+        r = fit(a.sample, "cold", a.device)
+        out = r["out"]
     rms = float(np.sqrt(np.mean(out.fun**2)))
     sigma = rms if a.sigma is None else a.sigma
     t1 = time.perf_counter()

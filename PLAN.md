@@ -62,7 +62,7 @@ about two A100s).
 |---|---|---|
 | **M4** | The grid in space (2.1) | 400 points or fewer meet the validation criteria on the hardest devices, or bucketing by grid size is justified |
 | **M6** | Adaptive parameter axes (2.2) | the refined axes meet a table's interpolation tolerance with fewer devices than hand-made ones |
-| **M7** | What fits still need (2.4): several starts at once; the curves are differentiable in the input's parameters, measured curves are fitted (`validation/fit_measured.py`) and the three samples' posteriors are sampled, each by two independent runs that agree (`validation/sample_measured.py`) | the best of many starts found in one batched run |
+| **M7** | What fits still need (2.4): the posteriors of 0.1 and 0.6 Cl around their best minimum; the curves are differentiable in the input's parameters, measured curves are fitted from many starts at once (`validation/fit_measured.py --starts N`, `jaxdd.fit`), and the posteriors sampled by two independent runs that agree (`validation/sample_measured.py`), for 0.1 and 0.6 Cl around the cold fit's minimum | every measured sample's posterior around the best of many starts, from two independent runs that agree with 1000 independent samples or more between them |
 | — | Several GPUs in one process: the batch axis sharded (`NamedSharding` or `shard_map`, not `pmap`); the devices are independent, so no communication | the rate scales with the number of GPUs |
 
 Gradients are taken by implicit differentiation of the converged solution: the backward pass
@@ -155,12 +155,17 @@ as one CUDA kernel on devices without ions, against the JAX step's time on the A
 The curves are differentiable in the input's own parameters; a fit recovers a SimSS curve's
 parameters (`validation/fit.py`) and fits the measured curves of Heester et al. (2025), five
 intensities at once, to 0.55–2.7 % of the short-circuit current in minutes
-(`validation/fit_measured.py`), and samples the three samples' posteriors, each by two
-independent runs that agree (`validation/sample_measured.py`,
-[docs/validation.md](docs/validation.md)). Left:
+(`validation/fit_measured.py`), from 16 starts at once in 10.5 min (`--starts`, `jaxdd.fit`),
+and samples the posteriors, each by two independent runs that agree
+(`validation/sample_measured.py`, [docs/validation.md](docs/validation.md)). Left:
 
-- **Several starts at once**: the same device at many starting points in one batch (a batched
-  Gauss–Newton in JAX instead of one `least_squares` per start); the best kept.
+- **The posteriors of 0.1 and 0.6 Cl around their best minimum.** From 16 starts, both have a
+  minimum below the cold fit's, elsewhere in the box (rms 0.70 against 0.77 %, 1.93 against
+  2.69 %), e⁵⁹ and e¹⁵⁸ more likely with the sampler's σ; their posteriors so far are the cold
+  fit's minimum. `fit_measured.py SAMPLE --starts N` saves every start's end, and
+  `sample_measured.py SAMPLE --from-multistart` starts the walkers at the best: two runs each
+  (on the desktop 64 walkers, about 2 h a run). Only 2 of 16 starts found 0.6 Cl's best, so
+  more starts there first (64: about 40 min) may find a lower one.
 - **The optics for the measured cell**: the measured fits assume a uniform generation. The cell
   in its own orientation with the transfer-matrix profile is `tests/data/pin_anode_left_light`,
   but the paper's perovskite n,k data (Werner et al., ACS Energy Lett. 3, 742 (2018)) are not

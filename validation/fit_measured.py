@@ -2,7 +2,7 @@
 (2025) at once, by gradients.
 
     .venv/bin/python validation/fit_measured.py [SAMPLE ...] [--start cold|paper]
-        [--device mirrored|anode]
+        [--device mirrored|anode] [--starts N]
 
 SAMPLE is `01Cl`, `02Cl` or `06Cl` (all three by default; `validation/data/heester2025/`). The
 device (`--device mirrored`) is `tests/data/pin_iface_light`: the paper's stack (Table S2),
@@ -19,9 +19,12 @@ the measured short-circuit currents' ratios to the 1-sun curve's (0.126 where th
 
 Fitted: the paper's free parameters (Table I, its bounds) and the generation's scale, by
 `scipy.optimize.least_squares` with the Jacobian from `jax.jacfwd` through the converged
-solutions. Printed per sample: the misfit (rms of the residual over the 1-sun short-circuit
-current, and the mean |ΔJ| per curve), the parameters against the paper's fit, which of them
-end at a bound, and the singular values of the Jacobian.
+solutions. With `--starts N`, from N starts at once instead (`jaxdd.fit.least_squares_many`:
+every start's five intensities in one batch per step): the box's centre (`cold`), the paper's
+fit (`paper`) and N − 2 points of a scrambled Sobol sequence in the box; printed, the minima
+the starts end in and the best of them. Printed per sample: the misfit (rms of the residual over
+the 1-sun short-circuit current, and the mean |ΔJ| per curve), the parameters against the
+paper's fit, which of them end at a bound, and the singular values of the Jacobian.
 """
 
 import argparse
@@ -35,6 +38,7 @@ from scipy.optimize import least_squares
 
 from jaxdd.batch import device_tree, solve_batch
 from jaxdd.device import device_parameters
+from jaxdd.fit import least_squares_many
 from jaxdd.simss_input import read_setup
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -144,11 +148,7 @@ def fit(sample: str, start: str = "cold", device: str = "mirrored") -> dict:
     pr = problem(sample, device)
     residuals, unpack, lo, hi = pr["residuals"], pr["unpack"], pr["lo"], pr["hi"]
     jacobian = jax.jit(jax.jacfwd(residuals))
-    if start == "paper":
-        v0 = dict(PAPER[sample], G=1.0)
-        theta0 = np.clip([np.log(v0[n]) if log else v0[n] for n, log, _, _ in FREE], lo, hi)
-    else:
-        theta0 = 0.5 * (lo + hi)
+    theta0 = paper_start(sample, lo, hi) if start == "paper" else 0.5 * (lo + hi)
     calls = {"r": 0, "J": 0}
 
     def fun(theta):
@@ -162,12 +162,89 @@ def fit(sample: str, start: str = "cold", device: str = "mirrored") -> dict:
     t0 = time.perf_counter()
     fun(theta0), jac(theta0)
     t1 = time.perf_counter()
-    out = least_squares(fun, theta0, jac=jac, bounds=(lo, hi), method="trf", x_scale="jac",
-                        xtol=1e-10, ftol=1e-12, gtol=1e-12, max_nfev=400)  # fmt: skip
+    out = least_squares(fun, theta0, jac=jac, bounds=(lo, hi), **LSQ)
     t2 = time.perf_counter()
     return dict(sample=sample, start=start, out=out, suns=pr["suns"], scale=pr["scale"],
                 theta0=theta0, fitted={k: float(x) for k, x in unpack(out.x).items()},
                 device=device, seconds=(t1 - t0, t2 - t1), calls=dict(calls))  # fmt: skip
+
+
+def paper_start(sample: str, lo, hi) -> np.ndarray:
+    v0 = dict(PAPER[sample], G=1.0)
+    return np.clip([np.log(v0[n]) if log else v0[n] for n, log, _, _ in FREE], lo, hi)
+
+
+#: `scipy.optimize.least_squares`'s settings, for one start and for many.
+LSQ = dict(method="trf", x_scale="jac", xtol=1e-10, ftol=1e-12, gtol=1e-12, max_nfev=400)
+
+
+def fit_many(sample: str, starts: int, device: str = "mirrored", seed: int = 0) -> dict:
+    """The sample from `starts` starts at once (module docstring)."""
+    from scipy.stats import qmc
+
+    pr = problem(sample, device)
+    lo, hi = pr["lo"], pr["hi"]
+    # A power of two keeps the sequence balanced; the first `starts − 2` are used.
+    n = 2 ** int(np.ceil(np.log2(max(starts - 2, 1))))
+    sobol = qmc.Sobol(len(FREE), scramble=True, seed=seed).random(n)
+    theta0 = np.vstack([0.5 * (lo + hi), paper_start(sample, lo, hi),
+                        qmc.scale(sobol, lo, hi)])[:starts]  # fmt: skip
+    t0 = time.perf_counter()
+
+    def progress(calls, asking):
+        if calls % 25 == 0:
+            print(f"  {calls} batched evaluations, {asking} starts still running, "
+                  f"{time.perf_counter() - t0:.0f} s", flush=True)  # fmt: skip
+
+    res = least_squares_many(pr["residuals_many"], theta0, lo, hi, progress=progress, **LSQ)
+    out = ROOT / "benchmarks" / "samples" / f"multistart_{sample}.npz"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    np.savez(
+        out,
+        theta0=theta0,
+        theta=res.theta,
+        cost=res.cost,
+        nfev=[x.nfev for x in res.results],
+        status=[x.status for x in res.results],
+        names=[n for n, *_ in FREE],
+        log=[lg for _, lg, *_ in FREE],
+        device=device,
+    )
+    return dict(sample=sample, device=device, res=res, pr=pr, theta0=theta0, out=out)
+
+
+def report_many(r: dict) -> None:
+    res, pr = r["res"], r["pr"]
+    rms = np.sqrt(2 * res.cost / pr["J_data"].size)
+    order = np.argsort(rms)
+    nfev = [x.nfev for x in res.results]
+    print(f"{r['sample']} ({r['device']}) from {len(rms)} starts at once: {res.seconds:.0f} s, "
+          f"{res.calls} batched evaluations ({len(rms)} × 5 curves and 14 tangents each); "
+          f"per start {min(nfev)}–{max(nfev)}, {sum(x.status == 0 for x in res.results)} "
+          f"stopped at {LSQ['max_nfev']}; the ends in {r['out'].name}")  # fmt: skip
+    # The minima: starts whose rms misfits agree to 0.1 % end in the same one.
+    minima = []
+    for s in order:
+        if minima and rms[s] <= minima[-1][0] * 1.001:
+            minima[-1][1].append(s)
+        else:
+            minima.append((rms[s], [s]))
+    labels = {0: "cold", 1: "paper"}
+    print("  minima (rms misfit over J_sc, the starts ending there):")
+    for value, members in minima[:8]:
+        named = [labels[s] for s in members if s in labels]
+        print(f"    {value:.4e}: {len(members)} start(s)" + (f", {', '.join(named)}" if named
+                                                             else ""))  # fmt: skip
+    if len(minima) > 8:
+        print(f"    … {len(minima) - 8} more, up to {minima[-1][0]:.3e}")
+    b = res.best
+    v = pr["unpack"](jnp.asarray(res.theta[b]))
+    print(f"  best (start {labels.get(b, b)}):")
+    print(f"  {'param':>8} {'paper':>10} {'fitted':>10}")
+    for i, (name, _, _, _) in enumerate(FREE):
+        bound = "  at a bound" if res.results[b].active_mask[i] else ""
+        paper = PAPER[r["sample"]].get(name, 1.0)
+        print(f"  {name:>8} {paper:10.3g} {float(v[name]):10.3g}{bound}")
 
 
 def report(r: dict) -> None:
@@ -193,9 +270,13 @@ def main() -> None:
     args.add_argument("samples", nargs="*", default=list(GAP_eV))
     args.add_argument("--start", choices=("cold", "paper"), default="cold")
     args.add_argument("--device", choices=tuple(DEVICES), default="mirrored")
+    args.add_argument("--starts", type=int, default=0, help="N starts at once (0: one, --start)")
     a = args.parse_args()
     for sample in a.samples:
-        report(fit(sample, a.start, a.device))
+        if a.starts:
+            report_many(fit_many(sample, a.starts, a.device))
+        else:
+            report(fit(sample, a.start, a.device))
 
 
 if __name__ == "__main__":

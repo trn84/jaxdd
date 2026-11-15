@@ -40,6 +40,7 @@ from jaxdd.batch import (
     _newton_solve,
     _poisson_solve,
     _quiet,
+    _traced,
 )
 from jaxdd.constants import Q
 from jaxdd.simss_input import TVG
@@ -365,7 +366,7 @@ def _solve_batch(batch, t, V, oc, G_frac, track, ctl, tol, max_iter, bernoulli_n
 
 
 def solve_transient(batch, tvg: TVG | list[TVG], tol=1e-10, max_iter=200, bernoulli_name="exact",
-                    zimt_ion_currents=False) -> TransientResult:  # fmt: skip
+                    zimt_ion_currents=False, ions=None, vint=None) -> TransientResult:  # fmt: skip
     """A batch (`batch.prepare`) through ZimT's time steps `tvg`: one for every device, or one
     per device (all of one length). Each step's Newton to `tol` or `max_iter`. Where any device
     of the batch has an open circuit or a series resistance, the internal voltage is an unknown
@@ -373,7 +374,14 @@ def solve_transient(batch, tvg: TVG | list[TVG], tol=1e-10, max_iter=200, bernou
     `failureMode` and `Track` as ZimT's main loop has them (`TransientResult.accepted`, `stop`);
     the steps after a stop are solved too (the batch runs in lockstep) but not kept.
     `zimt_ion_currents`: with several regions of one species only the last one's current, as
-    ZimT 5.36 has it (docs/differences.md §11); by default every region's."""
+    ZimT 5.36 has it (docs/differences.md §11); by default every region's.
+
+    Differentiable in the batch (`batch.device_tree`, M7): each step's derivatives those of its
+    converged solution by the implicit function (`batch._converged_jvp`), carried from step to
+    step by the state, in forward mode (`jax.jvp`, `jax.jacfwd`). Where `batch` is traced the
+    result holds JAX arrays, and `ions` (any mobile ions: 5×5 blocks) and `vint` (the internal
+    voltage an unknown), which set the program's shape, must be given; else they are read from
+    the batch."""
     n = jax.tree_util.tree_leaves(batch)[0].shape[0]
     tvgs = list(tvg) if isinstance(tvg, list | tuple) else [tvg] * n
     if len(tvgs) != n or len({len(t.t) for t in tvgs}) != 1:
@@ -384,16 +392,23 @@ def solve_transient(batch, tvg: TVG | list[TVG], tol=1e-10, max_iter=200, bernou
            for k in ("failure_mode", "conv_var", "tol_pois", "tol_dens", "tol_curr")}  # fmt: skip
     oc = np.stack([t.oc for t in tvgs])
     V = jnp.asarray(np.where(oc, 0.0, np.stack([t.Vext for t in tvgs])))
-    ion = batch["ion"]
-    ions = bool(np.any(np.asarray(ion["a_totals"]) > 0) or np.any(np.asarray(ion["c_totals"]) > 0))
-    vint = bool(oc.any() or np.any(np.asarray(batch["R_series"]) > 0))
+    traced = _traced(batch)
+    if traced and (ions is None or vint is None):
+        raise ValueError("a traced batch needs `ions` and `vint` given")
+    if ions is None:
+        ion = batch["ion"]
+        ions = bool(np.any(np.asarray(ion["a_totals"]) > 0)
+                    or np.any(np.asarray(ion["c_totals"]) > 0))  # fmt: skip
+    if vint is None:
+        vint = bool(oc.any() or np.any(np.asarray(batch["R_series"]) > 0))
     with _quiet():
         J, J_ext, V_int, V_ext, ok, its, columns, kept, stop = _solve_batch(
             batch, t, V, jnp.asarray(oc, dtype=float), G, track, ctl, tol, max_iter,
-            bernoulli_name, ions, vint, zimt_ion_currents,
+            bernoulli_name, bool(ions), bool(vint), zimt_ion_currents,
         )  # fmt: skip
-    n_layers = np.asarray(batch["layers"]["cells"]).any(axis=2).sum(axis=1)
-    return TransientResult(*(np.asarray(a) for a in (J, J_ext, V_int, V_ext, ok, its)),
-                           columns={k: np.asarray(v) for k, v in columns.items()},
-                           n_layers=n_layers, accepted=np.asarray(kept),
-                           stop=np.asarray(stop))  # fmt: skip
+    out = (lambda a: a) if traced else np.asarray
+    xp = jnp if traced else np
+    n_layers = xp.asarray(batch["layers"]["cells"]).any(axis=2).sum(axis=1)
+    return TransientResult(*(out(a) for a in (J, J_ext, V_int, V_ext, ok, its)),
+                           columns={k: out(v) for k, v in columns.items()},
+                           n_layers=n_layers, accepted=out(kept), stop=out(stop))  # fmt: skip

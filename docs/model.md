@@ -395,6 +395,16 @@ brackets from it (13 Newton steps to `Voc` for `thin_l1_light`), each step after
 last voltage extrapolated as the state is; with a series resistance from `Vext` less the last
 current's drop. `solve_transient` returns `Vint` and `Vext = Vint + Jext·R_series` per step.
 
+**Gradients through time.** A transient is differentiable in its parameters
+(`batch.device_tree`, as the steady state's for M7's fits): each step's derivatives are those
+of its converged solution by the implicit function (`batch._converged_jvp`, with the internal
+voltage's border where it is an unknown), and they reach the next step through the state it
+starts from (the densities and potential before it, the traps' occupations, the ions), so
+forward mode (`jax.jvp`, `jax.jacfwd`) carries the tangents from step to step: no reverse pass
+through time, which would hold every state. Under tracing `solve_transient` takes `ions` and
+`vint` as given and returns JAX arrays. `validation/fit_transient.py` fits a transient from
+its own curve.
+
 **Stopping and failures**, as ZimT's main loop has them, per device (`TVG` carries the setup's
 `failureMode`, `convVar` and tolerances). A step not converged: `failureMode` 0 stops the run,
 1 keeps the step, 2 skips it, keeping it only in the steady state (`t = 0`), but stops where the

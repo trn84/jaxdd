@@ -122,6 +122,18 @@ so that the solver is never the larger error in what is computed from it.
   Brent on whole solves at each step. The open circuit at `t = 0` is SimSS 5.36's `Voc`
   (1.0282617 V; SimSS at 1e-12 on 0.1 mV steps around it, a cubic through them,
   `thin_l1_voc_light`) to 1.1e-13 V.
+- **Gradients through time** (2026-11-15, Stage C): the tangents of a transient in its
+  parameters against central differences (a step of 1e-3 in the logarithm): the absorber's trap
+  density through the light switched on within 2.7e-7 of their largest, the holes' capture in
+  the photovoltage at the open circuit within 8e-6 (`Vint`'s Newton tolerance in the
+  differences), the anions' mobility through a sweep within 6e-6 (at a step of 1e-4). Fits of a
+  transient from its own curve, every parameter started at twice or half its value
+  (`validation/fit_transient.py`, 60 steps, RTX 4070 Ti SUPER): the trap density, the
+  electrons' capture and the holes' mobility from the light switched on, to 7e-9, in 12
+  Jacobians and 11 s; the trap density and the holes' capture from the photovoltage, to 4e-13;
+  the anions' mobility and density from the sweep's hysteresis, to 7e-10, in 7 Jacobians and
+  40 s (compiling 14–42 s more). The direct recombination is not determined by the
+  photovoltage of a device whose traps dominate (a fit took it to 0 at a misfit of 5e-8 V).
 - **ZimT's output, its automatic stop and failures** (2026-11-15, Stage C). Every column of the
   `tJFile` of the fourteen ZimT cases in `tests/data`: the currents and the recombination as
   currents (per layer, at each interface, the minority carriers' at the contacts, the ions',
@@ -350,6 +362,8 @@ differences, about 12 s each for the slowest:
 | `test_layer_voltages_as_zimt_writes_them` | `specialOutput = spv`: each layer's voltage drop, with every other column |
 | `test_automatic_stop_reproduces_zimt` | `Track` 2 and 3 on the photovoltage after a pulse: ZimT's stop within one step |
 | `test_states_compare_as_zimt_compares_them` | `States_Are_Equal` under each `convVar` |
+| `test_tangents_through_time_are_finite_differences` | a transient's tangents (traps, the open circuit, mobile ions) against central differences |
+| `test_a_fit_through_time_recovers_its_parameters` | two parameters recovered from a transient by its gradients |
 | `test_failure_modes_as_zimt_treats_them` | `failureMode` 0, 1, 2 on steps made to fail, `Δt` from the last step kept |
 | `test_the_ions_blocks_in_time_are_autodiff` | `_assemble_ions`' 5×5 blocks and slot columns against `jax.jacfwd`, over a step and in the steady state |
 | `test_photovoltage_at_open_circuit_reproduces_zimt` | the photovoltage at the open circuit through a light pulse, `Vint` to 1e-10 V of ZimT's |

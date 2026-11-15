@@ -8,7 +8,7 @@ the handbook.
 
 The order (2026-11-15, an estimate at the pace so far):
 
-1. Stage C to its end (section 4.1, steps 1–2): about 2 days.
+1. Stage C to its end (section 4.1, step 1, on the A100): about a day.
 2. M4's first step, the graded mesh (2.1): 1–3 days, depending on whether it is enough.
 3. **Release 0.1.0**: the steady state (SimSS) and the transients (ZimT); a version, a
    changelog, the README's installation, a wheel, CI, a pass over the handbook and the API.
@@ -23,7 +23,8 @@ data), the steric ions (3, waiting for a source of `N_max`).
 
 Begun: electrons, holes, traps and mobile ions in time, with the voltage given, at the open
 circuit and behind a series resistance, with ZimT's automatic stop, failure modes and output
-columns, reproduce ZimT 5.36. The next steps (gradients, speed) are in section 4.1.
+columns, reproduce ZimT 5.36, and are differentiable in their parameters. Its speed on the
+A100 is next (section 4.1).
 
 ### 1.3 M8: the MI50 cards
 
@@ -161,7 +162,7 @@ separate arrays, would spare a third of the blocks' writes and reads.
 Order: Stage B in JAX (done); then the kernel for the physics that has settled. A first
 measurement before deciding: the Newton step of Stage A's physics without ions as one CUDA
 kernel on devices without ions, against the JAX step's time on the A100. The fused kernel is not
-needed for the steady state; it is decided with Stage C's speed (section 4.1, step 2).
+needed for the steady state; it is decided with Stage C's speed (section 4.1, step 1).
 
 ### 2.4 M7: what fits still need
 
@@ -259,22 +260,19 @@ steady state at `t = 0` is today's solver.
 - **With mobile ions** the blocks grow to 5×5 `(V, ln n, ln p, ln a, ln c)`, identity rows
   where a species cannot be, and one slot per region (the rescaling). A batch takes 5×5 if
   any device needs it. The sweep (scan and Pallas kernel) takes blocks of either size.
-- **Gradients** by forward tangents step by step, each one by the implicit function at its
-  step, as M7's fits take them; no reverse pass through time (it would hold every state).
 
 **Steps**, each validated against ZimT 5.36 at `tolPois = tolDens = 1e-12` (at 1e-9 ZimT moves
 by 1.7e-7 of the scale; `zimt` in the image `jaxdd/simss:5.36`, its input read by `read_tvg`).
 Electrons, holes, traps and mobile ions in time, with the voltage given, at the open circuit
 and with a series resistance (`Vint` an unknown of each step), ZimT's automatic stop, failure
-modes and `tJFile` columns are done (`jaxdd.transient`, docs/model.md "Transients"); next:
+modes and `tJFile` columns, and the gradients through time are done (`jaxdd.transient`,
+docs/model.md "Transients"); next:
 
-1. **Gradients through time**: tangents of a transient in its parameters. Done when they match
-   finite differences, and a fit of a transient recovers its parameters.
-2. **Speed**: a transient batch on the A100 (steps per second, Newton steps per time step, the
+1. **Speed**: a transient batch on the A100 (steps per second, Newton steps per time step, the
    5×5 step's cost against the 3×3 one). Done when its numbers are in the handbook; with them
    the fused kernel is decided (section 7).
 
-Open beside them: the QFLS where a carrier lies below Newton's floor of convergence, in the
+Open beside it: the QFLS where a carrier lies below Newton's floor of convergence, in the
 dark and in an ionic region's depletion zones (docs/model.md "Transients", up to 5e-3 V and
 3 V off ZimT's): a floor, or a last step for the output, that converges those densities
 without costing the ions' convergence (a lower floor alone converges them only without ions).
@@ -368,5 +366,5 @@ microseconds per evaluation are needed.
 
 | Decision | When | With |
 |---|---|---|
-| The fused kernel as an optional mode (2.3) | after Stage C's step 2 (4.1) | the applications' needs (section 5) and a first measurement of a Stage A kernel |
+| The fused kernel as an optional mode (2.3) | after Stage C's step 1 (4.1) | the applications' needs (section 5) and a first measurement of a Stage A kernel |
 | The steric ion model and its `N_max` | when a source for `N_max` is found | its users: results with and without it differ at high ion density |

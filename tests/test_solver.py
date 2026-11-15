@@ -520,6 +520,64 @@ def test_ions_in_two_regions_per_species_against_zimt() -> None:
         assert np.max(np.abs(every[name])) > 10 * np.max(np.abs(ref[name])), name
 
 
+def _first_steps(tvg, n):
+    fields = ("t", "Vext", "oc", "G_frac", "track", "dti")
+    return dataclasses.replace(tvg, **{k: getattr(tvg, k)[:n] for k in fields})
+
+
+TANGENT_CASES = [("zimt_traps_photo_light", "N_t_bulk", 40), ("zimt_tpv_light", "C_p_bulk", 40),
+                 ("zimt_ions_fast_light", "mu_anion", 20)]  # fmt: skip
+
+
+@pytest.mark.parametrize(("case", "name", "steps"), TANGENT_CASES)
+def test_tangents_through_time_are_finite_differences(case: str, name: str, steps: int) -> None:
+    """Stage C's gradients (`jax.jvp` through `solve_transient` from `batch.device_tree`): each
+    step's tangent by the implicit function at its solution, carried by the state. The
+    absorber's trap density through the light switched on (traps filling), the holes' capture
+    in the photovoltage at the open circuit (`Vint`'s border), and the anions' mobility through
+    a sweep (5×5 blocks): central differences to 1e-5 of their largest (at a step of 1e-3 in
+    the logarithm, where the differences' own error is smallest: 2.7e-7 in the first, 8e-6 in
+    the photovoltage, whose Newton tolerance enters them)."""
+    from jaxdd.batch import device_tree
+    from jaxdd.device import device_parameters
+    from jaxdd.transient import solve_transient
+
+    setup, tvg, _ = _zimt_case(case)
+    tvg = _first_steps(tvg, steps)
+    structure, p0 = device_parameters(setup)
+    oc = bool(tvg.oc.any())
+
+    def curve(x):
+        p = {k: jnp.asarray(v) for k, v in p0.items()}
+        p[name] = p[name].at[1].set(jnp.exp(x))
+        batch = jax.tree_util.tree_map(lambda v: v[None], device_tree(structure, p))
+        r = solve_transient(batch, tvg, bernoulli_name="simss", ions=name == "mu_anion",
+                            vint=oc)  # fmt: skip
+        return r.V_int[0] if oc else r.J_ext[0]
+
+    x0 = jnp.log(jnp.asarray(p0[name])[1])
+    _, tangent = jax.jvp(curve, (x0,), (jnp.ones_like(x0),))
+    h = 1e-3
+    fd = (curve(x0 + h) - curve(x0 - h)) / (2 * h)
+    assert np.max(np.abs(tangent - fd)) < 1e-5 * np.max(np.abs(fd))
+
+
+def test_a_fit_through_time_recovers_its_parameters() -> None:
+    """A transient's parameters recovered from it (`validation/fit_transient.py`): the light
+    switched on, the absorber's trap density and electron capture from twice and half their
+    values, by `least_squares` with the Jacobian through time, to 1e-6."""
+    sys.path.insert(0, str(Path(__file__).parents[1] / "validation"))
+    from fit_transient import problem
+    from scipy.optimize import least_squares
+
+    residuals, jacobian, true = problem("zimt_traps_photo_light", [("N_t_bulk", 1),
+                                                                  ("C_n_bulk", 1)], 40)  # fmt: skip
+    start = true + np.log([2.0, 0.5])
+    out = least_squares(lambda t: np.asarray(residuals(jnp.asarray(t))), start,
+                        jac=lambda t: np.asarray(jacobian(jnp.asarray(t))))  # fmt: skip
+    assert np.max(np.abs(out.x - true)) < 1e-6
+
+
 def test_transients_with_and_without_ions_in_a_batch() -> None:
     """Devices with mobile ions beside devices with traps and with neither, in one batch of 5×5
     blocks (the others' ion rows held): each within 1e-7 of ZimT's scale, the `tJFile`'s

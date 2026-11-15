@@ -466,7 +466,7 @@ What this means for a curve:
 
 - **Any solver, the same derivatives.** The iterations, their number, the shortcuts and the
   start do not enter: a forward solver that converges to the same solution (the scan, the kernel,
-  a hand-written fused kernel, should one come, [PLAN.md](../PLAN.md)) has the same gradients, and needs no adjoint of
+  a hand-written fused kernel, should one come, [hardware.md](hardware.md#why-there-is-no-fused-kernel)) has the same gradients, and needs no adjoint of
   its own. They are exact to the solution's own error (1e-10 in the step).
 - **The start has none.** The Poisson start, the scan's carry and its extrapolated starts are
   behind `stop_gradient`: they choose where Newton begins, not where it ends. A while loop has no

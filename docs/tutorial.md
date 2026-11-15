@@ -259,7 +259,7 @@ with the exact Bernoulli function. Larger gaps are usually SimSS's: rerun SimSS 
   leave a carrier-free bulk between them. jaxdd converges there at every voltage (since its
   Jacobian is assembled by intervals, [solver.md](solver.md)); SimSS skips a third of those
   voltages. Whether such a profile is physical is another question: Boltzmann statistics let
-  ions stack without limit ([PLAN.md](../PLAN.md), section 3).
+  ions stack without limit (a steric limit is proposed in [PLAN.md](../PLAN.md)).
 - **`fixIons` without `preCond`** holds the ions at SimSS's starting density, uniform in each
   layer, for the whole scan, which is rarely meant: with uniform ions of both signs at the same
   density they cancel, and the device behaves as one without ions.

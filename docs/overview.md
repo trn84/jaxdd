@@ -99,6 +99,57 @@ and offers a switch that reproduces SimSS's number. Each such case is in
 | First GPU | NVIDIA A100 (CUDA) | JAX works there as is; the code stays plain JAX, so other platforms have nothing to undo |
 | Licence | LGPL-3.0, like SIMsalabim | SIMsalabim's code may be carried over where it helps; programs under other licences may call jaxdd |
 
+## What the speed is for
+
+None of these is planned work. Each says how much speed it needs.
+
+| | Curves/s | Per hour | 1024 curves |
+|---|---|---|---|
+| A100 (40 GB SXM4, batch 16 384) | ~2800 | 10 M | 0.37 s |
+| a 16-core desktop CPU | ~730 | 2.6 M | 1.4 s |
+| one CPU core | ~58 | 210 k | 18 s |
+| a neural surrogate, evaluated | ~10⁶ | — | ~1 ms |
+
+1. **A surrogate trained on data simulated during training.** Simulator and network are both
+   JAX, so they can run in one process on one GPU, with no dataset written or stored.
+   Simulation takes about 100× the time of a training step; a replay buffer (each curve serves
+   several steps) makes this work at today's speed. It pays most with active learning: simulate
+   where the surrogate is still wrong, in spaces too large for a grid (a 16-dimensional space of
+   process recipes, layer stacks with many parameters). Training must mask by the `converged`
+   flag. Active learning steers towards the hard devices, which the lockstep makes slow. For a
+   fixed dataset today's speed is enough: 10 M curves in about 1 h on one A100.
+2. **Parameters from measurements, with uncertainty.** MCMC needs 10⁵–10⁶ simulations per cell,
+   0.6–6 min on one A100. Ensemble samplers and sequential Monte Carlo map onto the batch;
+   gradient-based samplers and optimisers use the curves' gradients ([solver.md](solver.md)).
+3. **Sensitivity analysis and uncertainty propagation.** Sobol indices by Saltelli sampling
+   (N·(d+2) simulations: 1.8·10⁵ for N = 10⁴, d = 16, about a minute) and Monte Carlo over process
+   spread are independent devices, which is exactly what the batch does.
+4. **Inverse design.** Optimise a stack for efficiency or stability by gradient, from many
+   starting points in parallel. Optimising thicknesses needs the computed optics; with a profile
+   from a file only the electrical parameters are worth optimising.
+5. **Drift-diffusion inside a larger simulation.** One solve per simulated measurement, for
+   example in a digital twin of a laboratory that ages and measures many cells; mostly
+   transients, which cost 10–100× a steady-state curve. This is the one use that would need a
+   faster solver ([hardware.md](hardware.md#why-there-is-no-fused-kernel)).
+6. **Interactive tools.** A page where one slides a parameter and watches the curve: about 50 ms
+   per curve on one CPU core is already enough. The GPU earns its place when each update needs
+   many curves (a fit, an uncertainty band).
+7. **Two dimensions (an outlook, a project of its own).** Grain boundaries, pinholes, patterned
+   or interdigitated contacts, edges; Monte Carlo over random grain structures condensed into
+   effective 1D parameters. About 10⁵ unknowns per device instead of 1200, so the parallelism
+   moves into the device and batches shrink to tens. The Newton system is sparse and banded,
+   solved either by a sweep over grid columns with dense (3·n_y)² blocks (batched LU on FP64
+   tensor cores, up to n_y ≈ 100–200) or matrix-free Newton–Krylov (JVPs from `jax.jvp`,
+   GMRES; the preconditioner is the hard part, and JAX has no algebraic multigrid or sparse
+   direct solver on the GPU). Structured grids suit JAX; unstructured meshes are much more
+   work. The physics and the Jacobian by autodiff carry over. The linear solver, the batching,
+   the mesh and the reference do not: SIMsalabim is 1D only, so references would be Sentaurus,
+   ATLAS, COMSOL or ChargeTransport.jl.
+
+**The counter-argument.** The faster the simulator, the less a surrogate is needed: fits and
+sensitivity analyses can call jaxdd directly, with the exact physics. A surrogate pays where
+microseconds per evaluation are needed.
+
 ## The repository
 
 | Path | What |

@@ -151,6 +151,42 @@ On an A100-SXM4-40GB it runs at 2800 curves/s in the container at batch 16384, a
 passing; a Newton step of 16384 devices there is 20 ms, 9 of it the assembly and 7 the block
 sweep's kernel.
 
+### Why there is no fused kernel
+
+The fastest the A100 could go would be the whole Newton step in one hand-written CUDA kernel
+called through the XLA FFI: one thread per device, the blocks assembled in registers where the
+sweep uses them instead of written to memory and read back, a mode beside the JAX solver (as
+`JAXDD_SWEEP`) with the JAX solver as its reference and fallback. Implicit differentiation
+would need no adjoint of it ([solver.md](solver.md)). From the A100's bandwidth it would run
+an estimated 10⁴–3·10⁴ curves/s, 4–10× today's 2800 (uncertain by 3×), and the devices would
+wait for each other per warp of 32 instead of per batch (on the 250 nm ion grid the batch pays
+4.59 Newton steps per voltage where 2.76 are needed).
+
+It was decided against (2026-11-15), for three reasons:
+
+- **No planned use needs it.** Of the uses in [overview.md](overview.md#what-the-speed-is-for)
+  only drift-diffusion inside a larger simulation would, and none is planned.
+- **The transients with ions are no longer its case.** With the 5×5 sweep kernel a Newton step
+  with ions is 2.3× a 3×3 one (it was 4.5×), close to the ratio of their blocks' entries
+  (25/9). What is left is the memory traffic every workload shares.
+- **Its cost.** The solver's core would be written twice (800–1200 lines of CUDA, the Jacobian
+  by hand where JAX takes it by autodiff), and it would need compiled wheels per CUDA (and ROCm)
+  version where jaxdd is one pure-Python wheel. Consumer cards would gain little, because their
+  FP64 rate is the limit.
+
+It comes back when an application needs 10⁴ curves/s or more, or transients inside another
+simulation. Then the first measurement, on the A100, is the Newton step of Stage A's physics
+without ions as one kernel against the JAX step. Two cheaper steps come before it, each measured
+on the A100:
+
+1. **The blocks' structural zeros.** 24 of their 36 entries per grid point are non-zero (`A`
+   and `C` 5 of 9 each, the right-hand sides 5 of 9). A sweep kernel that reads only those 24,
+   as separate arrays, saves a third of the blocks' writes and reads. The assembly takes 9.1 of
+   the 20 ms of a Newton step at 16 384 devices.
+2. **The assembly inside the Pallas sweep kernel** (untried): the blocks are never in memory,
+   the residual is still the JAX one traced into the kernel (its derivatives by `jax.jvp`, if
+   Pallas lowers them), and no compiled wheels are needed.
+
 ## AMD Instinct MI50 (gfx906)
 
 gfx906 left ROCm's supported list with ROCm 6.3, and from JAX 0.5 on XLA compiles through

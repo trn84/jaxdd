@@ -406,8 +406,8 @@ steps. Devices without a finite `S` have no contact state and skip all of it, to
 ## When is a voltage converged?
 
 The step size is the largest of `|ΔV|/V_T`, `|Δ ln n|` and `|Δ ln p|` (each weighted by
-`dens/(dens + 1e-12·max N_c)`, so that densities far below anything that matters, whose
-logarithms are pure round-off, do not count), and `|Δ ln C|`. A voltage is converged when any of
+`dens/(dens + 1e-12·max N_c)`, so that densities far below anything that matters do not
+count; [below](#densities-below-the-floor)), and `|Δ ln C|`. A voltage is converged when any of
 these holds:
 
 | Criterion | Test | In |
@@ -422,6 +422,27 @@ shortcuts: together they save about a quarter of the Newton steps (2.60 per volt
 of 3.51). Checked against `strict=True` on 2014 devices of a perovskite parameter table and the
 ion cases, they change `J` by at most 1.2e-10 of the generation current, in the median by 4e-12
 (`validation/shortcuts.py`).
+
+### Densities below the floor
+
+A density below `n_floor` (the minority carriers in the dark, a transport layer's, an ionic
+region's depletion zones: 1e-30 m⁻³ and below) moves no current and does not count for
+convergence, so Newton may stop before it has converged. Only the QFLS, which takes its
+logarithm, sees it. Newton would not converge it in `ln n` anyway: its continuity equation is
+nearly linear in `n` (the drift, the diffusion and, beside a majority carrier, the
+recombination), and in `ln n` a density e^30 above that solution falls by about 1 per step,
+`ln n + 1 − n*/n` from `ln n`. So each density below the floor is stepped in the density
+instead (`solver.density_steps`): the same linear solve, whose step `δ` in `ln n` is the
+relative step in `n`, applied as `ln n + ln(1 + δ)`, which lands on that solution in one step
+(at most a fall of e^-50 per step; a `δ` ≤ −1, a negative density, takes the ordinary cap of
+5). Everything above the floor is stepped as before. The densities below the floor then converge
+in the Newton steps the rest takes: on ZimT's cases the QFLS in the dark after the light came to
+ZimT's from 5e-3 V off ([validation.md](validation.md)) at no more Newton steps (497 against
+501 through `zimt_photo_light`), and its value does not change with the floor 1e-18 times
+lower. A lower floor alone converged them too, at 4 % more steps, but with mobile ions Newton
+then did not converge at all. In the steady state, on 1024 devices of `validation/hard.py`,
+every voltage still converges, at 2.81 Newton steps per voltage against 2.84, the curves within
+4e-12 of their scale in the median and 1e-5 at most (the settled-current stop).
 
 The settled current stops a voltage whose current no longer changes while the potential's last
 digits still do. With the row form of the residual it was what let the carrier-free bulk of

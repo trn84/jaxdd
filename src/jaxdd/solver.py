@@ -60,6 +60,28 @@ def step_caps(Vt):
     return jnp.array(STEP_CAPS) * jnp.array([Vt, 1.0, 1.0])
 
 
+#: The largest fall of a density below `n_floor` in one Newton step, in its logarithm: a
+#: factor e^-50 (`density_steps`).
+FLOOR_DROP_CAP = 50.0
+
+
+def density_steps(y, delta, step, n_floor):
+    """Newton's step `step` (`delta` clipped to the caps) with each carrier density below
+    `n_floor` stepped in the density instead of its logarithm: `n·(1 + δ)`, `δ` the step in
+    `ln n` (`delta[:, 1:3]`). The two are the same linear solve (the Jacobian in `ln n` is the
+    one in `n` times `n`); in `ln n`, a density far above the solution of its (nearly linear)
+    continuity equation falls by about 1 per step, in `n` it lands on it. Such a density moves
+    no current and does not count for convergence, so without this the iterations stop with it
+    anywhere: its logarithm, the QFLS's, undetermined (docs/solver.md). A `δ` ≤ −1, a negative
+    density, takes the ordinary cap."""
+    d = delta[:, 1:3]
+    positive = d > -1
+    in_n = jnp.where(positive, jnp.log1p(jnp.where(positive, d, 0.0)), -STEP_CAPS[1])
+    in_n = jnp.clip(in_n, -FLOOR_DROP_CAP, STEP_CAPS[1])
+    below = jnp.exp(y[:, 1:3]) < n_floor[:, None]
+    return step.at[:, 1:3].set(jnp.where(below, in_n, step[:, 1:3]))
+
+
 #: Below |x| < this, `B(x)` by its series: the full expression is 0/0 at 0.
 _SERIES_BELOW = 1e-2
 
@@ -1065,7 +1087,7 @@ def _newton_step(y, logs, bounds, s, ion, Vt, g_frac, bernoulli_name="exact"):
     # Damping per point, as SIMsalabim limits its potential update (maxDelV): no potential
     # step past 10 V_T and no density step past a factor e^5 (`STEP_CAPS`).
     caps = step_caps(Vt)
-    step = jnp.clip(delta, -caps, caps)
+    step = density_steps(y, delta, jnp.clip(delta, -caps, caps), s["n_floor"])
     d_logs = jnp.clip(d_logs, -ION_LOG_CAP, ION_LOG_CAP)
     new = y + step
     # Converged by the potential in V_T and the densities relatively — a density far below any

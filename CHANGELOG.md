@@ -20,6 +20,16 @@ the API, and says so here.
   `currDiffInt = 1` do not. ZimT's sums with the new `solve_transient(..., zimt_current=True)`
   ([docs/differences.md](docs/differences.md) §13).
 
+### Fixed
+
+- **The QFLS in the dark and in transport layers.** A density below Newton's floor of
+  convergence (the minority carriers in the dark, in a transport layer) was left wherever
+  Newton stopped, and the QFLS, which takes its logarithm, was up to 5e-3 V off in the dark
+  after the light. Such densities are now stepped in the density instead of its logarithm and
+  converge with the rest at no more Newton steps; the QFLS is ZimT's to 3.5e-6 V in the dark
+  after the light and 5e-11 V under light. The currents do not change; steady-state curves
+  within the settled-current stop (docs/solver.md, "Densities below the floor").
+
 ## [0.1.0] – 2026-11-15
 
 The first release: SimSS 5.36's steady state and ZimT 5.36's transients, batched over thousands

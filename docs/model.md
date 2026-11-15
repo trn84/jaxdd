@@ -467,14 +467,12 @@ direct and bulk recombination as currents, at each interface the interface traps
 recombination of each carrier, the minority carriers' currents at the contacts, the shunt's,
 the ions' and the displacement current, and with `specialOutput = spv` each layer's voltage
 drop. The currents are `batch._current_parts`, what the average `Jint` is made of. ZimT's
-`varFile` (the profiles at each step) is not produced. The QFLS is `V_T·ln(n·p/n_i²)`, and a
-density below Newton's floor of convergence (`n_floor`, 1e-12 of the largest `N_c`, docs/solver.md)
-is not converged: it moves no current, but its logarithm moves the QFLS. Where every carrier
-of a layer lies above the floor (a device under light) the QFLS is ZimT's; in the dark, after
-the light, in a transport layer's minority carriers in the steady state and in the depletion
-zones of an ionic region it is not (docs/validation.md). A lower floor converges them in a
-device without ions (1e-20 of it: the QFLS ZimT's to 4e-6 V, 4 % more Newton steps), but with
-ions Newton then does not converge at all, so the floor stays.
+`varFile` (the profiles at each step) is not produced. The QFLS is `V_T·ln(n·p/n_i²)`. It
+takes the logarithm of densities far below any that moves a current, below Newton's floor of
+convergence (`n_floor`, 1e-12 of the largest `N_c`): the minority carriers in the dark and in a
+transport layer. Newton steps those in the density, not its logarithm, so that they converge
+with the rest although they do not count for convergence (docs/solver.md, "When is a voltage
+converged?"); the QFLS is then the converged solution's at every step (docs/validation.md).
 
 ## Constants
 

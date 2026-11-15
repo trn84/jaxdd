@@ -190,10 +190,18 @@ so that the solver is never the larger error in what is computed from it.
   `tJFile` of the fourteen ZimT cases in `tests/data`: the currents and the recombination as
   currents (per layer, at each interface, the minority carriers' at the contacts, the ions',
   the displacement current) within 1e-7 of the scale, `errJ` within 3e-6, with
-  `specialOutput = spv` each layer's voltage drop within 1e-9 V. The QFLS within 1e-10 V where
-  every carrier lies above Newton's floor of convergence (the sweeps under light); not where
-  one lies below it (docs/model.md "Transients"): up to 5e-3 V in the dark after the light,
-  2e-2 V in a transport layer in the steady state, up to 3 V in a layer with an ionic region.
+  `specialOutput = spv` each layer's voltage drop within 1e-9 V. The QFLS within 5e-11 V under
+  light; within 3.5e-6 V in the dark after the light, where ZimT's Gummel overshoots and comes
+  back (at 2 ns after the light ZimT's falls to −7.1e-7 V and returns to −2.37e-7 V, where
+  jaxdd's falls monotonically to the same −2.37e-7 V); with mobile ions within 3.2e-7 V over
+  the time steps and 7e-7 V in the steady state at t = 0. In two of ZimT's steady states at
+  t = 0 its minority carriers in a transport layer are not converged: with interface traps the
+  first layer's QFLS is 2.1e-2 V above jaxdd's, 0.8684 V where one step later, 0.8 ns and 10 mV
+  on, ZimT's own is 0.8479 V and jaxdd's 0.8479 V; with a trap file 1.8e-5 V off in the dark at
+  0 V (jaxdd's −3.5e-7 V, the equilibrium's 0 to SIMsalabim's Bernoulli function). jaxdd's
+  values there do not change with Newton's floor 1e-18 times lower. Before the densities below
+  that floor were stepped in the density (docs/solver.md, "When is a voltage converged?") the
+  QFLS was up to 5e-3 V off in the dark after the light and 9e-4 V with surface recombination.
   The automatic stop on the photovoltage after a pulse, against the steady state before it
   (`Track` 2) and step by step (`Track` 3): ZimT stops after 118 and 119 of 182 steps, jaxdd a
   step before each, where the states' difference crosses `tolPois` (1e-12 V) and ZimT's own
@@ -416,9 +424,9 @@ jaxdd supports (JAX 0.4.31, NumPy 1.26, Python 3.11). The main ones:
 | `test_voltages_from_experimental_data_and_simss_checks` | `useExpData` (`expJV`'s voltages, in the file's order) and SimSS's checks on the voltage parameters |
 | `test_transients_of_electrons_and_holes_reproduce_zimt` | the four ZimT cases without traps, to 1e-9 of ZimT's scale |
 | `test_transients_with_traps_reproduce_zimt` | the four ZimT cases with traps (neutral, charged, a trap file, interface), to 1e-9 |
-| `test_transients_in_a_batch_reproduce_zimt` | all eight as one batch, each device with its own steps; every `tJFile` column (the QFLS of the sweeps under light) |
+| `test_transients_in_a_batch_reproduce_zimt` | all eight as one batch, each device with its own steps; every `tJFile` column, the QFLS to 1e-9 V under light and 4e-6 V in the dark after it, but in ZimT's two unconverged steady states |
 | `test_transients_with_mobile_ions_reproduce_zimt` | the four ZimT cases with mobile ions, to 1e-7 of ZimT's scale |
-| `test_transients_with_and_without_ions_in_a_batch` | devices with mobile ions beside devices with traps and with neither, in one batch of 5×5 blocks; every `tJFile` column but the QFLS |
+| `test_transients_with_and_without_ions_in_a_batch` | devices with mobile ions beside devices with traps and with neither, in one batch of 5×5 blocks; every `tJFile` column, the QFLS to 4e-6 V |
 | `test_ions_in_two_regions_per_species_against_zimt` | two ion regions per species: ZimT's currents with `zimt_ion_currents`, every region's without |
 | `test_the_integral_current_in_time_is_the_one_the_equations_balance` | the integral form in time on the graded grid: the differential form's current to 1e-9 of the scale; ZimT's sums (`zimt_current`) more than 1e-2 off (differences.md §13) |
 | `test_layer_voltages_as_zimt_writes_them` | `specialOutput = spv`: each layer's voltage drop, with every other column |

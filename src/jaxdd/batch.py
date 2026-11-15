@@ -57,6 +57,7 @@ from jaxdd.solver import (
     _stencils,
     _with_contacts,
     bernoulli,
+    density_steps,
     step_caps,
 )
 from jaxdd.sweep import block_sweep
@@ -668,7 +669,7 @@ def _newton_loop(y, logs, d, s, ion, Vint, g_frac, B, tol, max_iter, strict, vin
             F, g, blocks = _system(y, logs, bounds_of(logs), held(branch), ion, Vt, g_frac, B)
         delta, d_logs = _bordered_solve(blocks, -F, -g)
         caps = _caps(Vt, y.shape[-1])
-        stepv = jnp.clip(delta, -caps, caps)
+        stepv = density_steps(y, delta, jnp.clip(delta, -caps, caps), s["n_floor"])
         if vint:
             d_logs = jnp.concatenate([
                 jnp.clip(d_logs[:-1], -ION_LOG_CAP, ION_LOG_CAP),

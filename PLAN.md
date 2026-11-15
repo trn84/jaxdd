@@ -7,17 +7,9 @@ handbook or the commit message, not here.
 
 ## 1 Next
 
-0.1.0 is released (CHANGELOG.md).
+0.1.0 is released (CHANGELOG.md); the transients (Stage C) are complete.
 
-1. **The QFLS below Newton's floor.** In the dark, after the light, in a transport layer's
-   minority carriers and in an ionic region's depletion zones a carrier lies below Newton's floor
-   of convergence (`n_floor`), and the QFLS there is up to 5e-3 V and 3 V off ZimT's ([docs/model.md](docs/model.md) "Transients"). A
-   lower floor alone converges those densities only without ions; with ions Newton then does not
-   converge. Wanted: a floor, or a last step for the output, that converges them without costing
-   the ions' convergence. **Done when** the QFLS agrees with ZimT's within the validation
-   criteria on the transient tests, with and without ions, at no more Newton steps than today
-   for the ions. This is the last open point of the transients (Stage C).
-2. **M6: adaptive parameter axes, for 0.2.** Sample the parameter space where the result changes
+1. **M6: adaptive parameter axes, for 0.2.** Sample the parameter space where the result changes
    instead of on a full tensor grid.
    - *Axis refinement* keeps an interpolated table: each axis stays a tensor-product axis, but its
      points are chosen by error. Solve at the midpoints between neighbouring axis points across a

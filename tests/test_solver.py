@@ -514,19 +514,22 @@ def _zimt_case(case):
     return setup, read_tvg(setup), np.genfromtxt(DATA / case / "tj.dat", names=True)
 
 
-def _check_columns(r, k, ref, qfls=True, spv=False):
+def _check_columns(r, k, ref, qfls=1e-9, steady=True, spv=False):
     """Device `k`'s `tJFile` columns (`transient.tj_columns`) against ZimT's: every one ZimT
     writes; the currents and recombination as currents to 1e-7 of the scale (the larger of
-    `Jext` and the photocurrent), `errJ` to 1e-5, the QFLS (where `qfls`) and voltages to 1e-9 V."""
+    `Jext` and the photocurrent), `errJ` to 1e-5, voltages to 1e-9 V, the QFLS to `qfls` V, with
+    `steady` False only over the time steps (ZimT's steady states at t = 0 leave a transport
+    layer's minority carriers unconverged, docs/validation.md)."""
     from jaxdd.transient import tj_columns
 
     c = tj_columns(r, k, spv=spv)
     assert set(c) | {"t", "G_frac"} == set(ref.dtype.names)
     scale = max(np.max(np.abs(ref["Jext"])), np.max(ref["JphotoL2"]))
+    rows = np.ones(len(ref), bool) if steady else ref["t"] > 0
     for name, v in c.items():
         err = np.max(np.abs(v - ref[name]))
         if name.startswith("QFLS"):
-            assert not qfls or err < 1e-9, name
+            assert np.max(np.abs(v - ref[name])[rows]) < qfls, name
         elif name.startswith("V"):
             assert err < 1e-9, name
         else:
@@ -695,7 +698,8 @@ def test_a_fit_through_time_recovers_its_parameters() -> None:
 def test_transients_with_and_without_ions_in_a_batch() -> None:
     """Devices with mobile ions beside devices with traps and with neither, in one batch of 5×5
     blocks (the others' ion rows held): each within 1e-7 of ZimT's scale, the `tJFile`'s
-    columns (the ions' currents among them) but the QFLS as `_check_columns`."""
+    columns (the ions' currents among them) as `_check_columns`, the QFLS to 4e-6 V (in the dark
+    after the light, where ZimT's Gummel overshoots before it settles)."""
     from jaxdd.batch import prepare
 
     cases = [_zimt_case(c) for c in ("zimt_ions_slow_light", "zimt_region_diff_light",
@@ -705,7 +709,7 @@ def test_transients_with_and_without_ions_in_a_batch() -> None:
     assert r.converged.all()
     for k, (_, _, ref) in enumerate(cases):
         assert np.max(np.abs(r.J_ext[k] - ref["Jext"])) < 1e-7 * np.max(np.abs(ref["Jext"]))
-        _check_columns(r, k, ref, qfls=False)  # the ions' currents among them
+        _check_columns(r, k, ref, qfls=4e-6)  # the ions' currents among them
 
 
 def test_transients_in_a_batch_reproduce_zimt() -> None:
@@ -721,9 +725,12 @@ def test_transients_in_a_batch_reproduce_zimt() -> None:
     assert r.converged.all()
     for k, (name, (_, _, ref)) in enumerate(zip(ZIMT_CASES + ZIMT_TRAP_CASES, cases, strict=True)):
         assert np.max(np.abs(r.J_ext[k] - ref["Jext"])) < 1e-9 * np.max(np.abs(ref["Jext"]))
-        # The QFLS only where every carrier stays above the floor of convergence (the sweeps
-        # under light): in the dark, after the light, it is not converged (docs/model.md).
-        _check_columns(r, k, ref, qfls=name in ("zimt_sweep_light", "zimt_sweep_diff_light"))
+        # The QFLS to 1e-9 V under light; in the dark after it to 4e-6 V, where ZimT's Gummel
+        # overshoots before it settles; not in the two steady states at t = 0 where ZimT leaves
+        # a transport layer's minority carriers unconverged (docs/validation.md).
+        light = name in ("zimt_sweep_light", "zimt_sweep_diff_light", "zimt_photo_surface_light")
+        steady = name not in ("zimt_iface_sweep_light", "zimt_trapfiles_photo_light")
+        _check_columns(r, k, ref, qfls=1e-9 if light else 4e-6, steady=steady)
 
 
 def test_photovoltage_at_open_circuit_reproduces_zimt() -> None:

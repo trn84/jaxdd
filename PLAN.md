@@ -7,21 +7,12 @@ handbook or the commit message, not here.
 
 ## 1 Next
 
-0.1.0 is released (CHANGELOG.md); the transients (Stage C) are complete.
+0.1.0 is released (CHANGELOG.md); the transients (Stage C) and the refined axes (M6) are
+complete.
 
-1. **M6: adaptive parameter axes, for 0.2.** Sample the parameter space where the result changes
-   instead of on a full tensor grid.
-   - *Axis refinement* keeps an interpolated table: each axis stays a tensor-product axis, but its
-     points are chosen by error. Solve at the midpoints between neighbouring axis points across a
-     sample of the other axes, and insert a point where the interpolation misses by more than
-     the tolerance.
-   - *Sparse grids* (Smolyak) or *scattered samples with a surrogate* (a GP or a small network)
-     need far fewer devices in 7–9 dimensions, at the price of a model evaluation instead of an
-     interpolation.
-
-   Either needs the solver callable from Python in a loop at low latency, which is a requirement
-   on the API, not only on throughput. **Done when** the refined axes meet a table's
-   interpolation tolerance with fewer devices than hand-made ones.
+1. **Release 0.2.** What came since 0.1.0 (CHANGELOG.md, "Unreleased": the tables with refined
+   axes, the current in time, the QFLS below Newton's floor) as a release, so that its users
+   can pin it. **Done when** the tag `v0.2.0` is pushed and the CI has made the release.
 
 ## 2 Waiting
 
@@ -69,6 +60,12 @@ two must agree.
 
 ## 3 Later
 
+- **Samples that are not a tensor product**, sparse grids (Smolyak) or scattered samples with a
+  surrogate (a GP or a small network): a feature that lies across the axes costs a tensor
+  product its points everywhere ([docs/validation.md](docs/validation.md#a-table-with-refined-axes)),
+  and in 7–9 dimensions a table is out of reach. The price is a model evaluation instead of an
+  interpolation. **Done when** such a sample meets a table's tolerance with fewer devices than
+  `refine_axes`.
 - **Impedance in the frequency domain**, from the steady state's Jacobian
   (`(J + iω·M)·δx = b`, one complex solve per frequency) instead of a transient per frequency.
   ZimT has no reference for it but its own time-domain response.

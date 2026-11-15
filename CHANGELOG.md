@@ -7,6 +7,17 @@ the API, and says so here.
 
 ## [Unreleased]
 
+### Added
+
+- **Tables with refined axes** (`jaxdd.axes`). `refine_axes` chooses the points of a
+  tensor-product table's axes by the multilinear interpolation's error, estimated in each cell
+  from the table's own second differences, and solves only the table's points; `tabulate`,
+  `interpolate` and `in_chunks` build and read such tables. On a perovskite cell's table over
+  four axes it meets a tolerance of 5e-2 in `η` with 50 274 points where evenly spaced axes need
+  83 521; where a feature moves across the axes with the voltage it saves no more than that
+  ([docs/validation.md](docs/validation.md#a-table-with-refined-axes),
+  [docs/tutorial.md](docs/tutorial.md#a-table-over-parameters)).
+
 ### Changed
 
 - **The current in time.** With the integral form of the current (`currDiffInt = 2`, ZimT's

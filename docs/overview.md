@@ -163,6 +163,7 @@ microseconds per evaluation are needed.
 | `src/jaxdd/optics.py` | the generation profile by the transfer-matrix method (`genProfile = calc`) |
 | `src/jaxdd/sweep.py` | the batch's block sweep in one GPU kernel (Pallas), and the switch between it and the scan |
 | `src/jaxdd/fit.py` | least squares from many starts at once: scipy's `least_squares` from each, their curves and Jacobians solved as one batch (`least_squares_many`) |
+| `src/jaxdd/axes.py` | tables over parameters whose axes are refined by the interpolation's error: `refine_axes`, `tabulate`, `interpolate`, `in_chunks` |
 | `src/jaxdd/constants.py` | SIMsalabim's physical constants |
 | `tests/` | pytest suite, in parallel (pytest-xdist); `tests/data/` SimSS and ZimT runs (inputs and their `JV.dat`, `tj.dat`) as reference |
 | `validation/` | scripts that compare with SimSS and time the solver ([validation.md](validation.md)) |

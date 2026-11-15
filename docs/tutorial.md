@@ -159,6 +159,53 @@ device whose pre-bias did not converge is flagged at every voltage. Mask by the 
 using the curves (for a table, a fit or a training set). The `iterations` show where a batch
 spends its time ([batching.md](batching.md)).
 
+## A table over parameters
+
+A table of curves over several parameters, interpolated between its points, needs each axis's
+points dense enough for the curvature along it. `jaxdd.axes` chooses them by the
+interpolation's own error instead of by hand:
+
+```python
+import numpy as np
+from jaxdd.axes import in_chunks, interpolate, refine_axes
+
+def curves(points):                 # (N, 2) parameter points -> (N, voltages)
+    batch = devices_at(points)      # your devices at these points, as one batch
+    J, converged, _ = solve_batch(batch, V)
+    return np.where(converged, J, np.nan)
+
+start = [np.geomspace(1e21, 4e24, 5), np.linspace(0.0, 1.0, 5)]    # coarse axes
+r = refine_axes(in_chunks(curves, 512), start, tol=5e-2, log=[True, False], max_size=100_000)
+r.axes, r.values                    # the refined axes and the table on them
+J = interpolate(r.axes, r.values, np.array([[3e23, 0.4]]), log=[True, False])
+```
+
+`evaluate` (here `curves`) is any function from an `(N, d)` array of points to an `(N, ...)`
+array of results, NaN where it has none; `in_chunks` calls it with one batch size, so the
+solver compiles once. `tol` is in the results' unit, and `log` says which axes are refined and
+interpolated in their logarithm.
+
+Each round solves the table's new points as one call, estimates in every cell and for every
+output how far the multilinear interpolation misses (the sum over the axes of `h²/8·|f''|`,
+`f''` from the table's second differences along that axis), and where the sum exceeds `tol`
+inserts the midpoint of the axis that misses most there. The axes only grow, so every point
+solved is one of the final table's. The result says how it ended:
+
+| Field | Meaning |
+|---|---|
+| `estimate` | the table's estimated error, the largest sum in one cell for one output |
+| `error` | per axis its largest miss alone |
+| `stopped` | `"converged"`, `"max_rounds"` or `"max_size"` (the next round's table would have been larger) |
+| `unresolved` | per axis the intervals that should still have been split (`min_width`, `max_points`, or the stop) |
+| `nan` | the table's points with a NaN result, left out of the estimate |
+
+Two limits. The start must resolve every feature at least once: a peak between its points
+leaves no curvature in the table and is never found. And the table stays a tensor product: a
+feature that lies across the axes, or moves along an axis with the voltage of a curve stored
+whole, crosses most intervals of the axis and needs the points everywhere. On such a table the
+refinement saves the points an axis does not need, not more
+([validation.md](validation.md#a-table-with-refined-axes)).
+
 ## Transients
 
 ZimT's runs take the same devices through its time steps: a `tVGFile` named by the setup

@@ -387,6 +387,59 @@ When jaxdd and SimSS disagree, check SimSS first: its `errJ` at that voltage, it
 convergence", and a rerun at tight tolerances. The cases where SimSS was wrong so far are all in
 [differences.md](differences.md).
 
+## A table with refined axes
+
+`validation/axes.py` builds a table of a perovskite cell with ions frozen after a pre-bias
+(`tests/data/frozen_1e17_x1_thin_light`) over four axes: the absorber's trap density (three
+decades), its ion density (1e15–4e18 cm⁻³), the share `x_ion` of the built-in voltage the ions
+screen, and its thickness (250–1000 nm). Each point holds `η(V) = (J_dark − J_light)/J_gen` at
+29 voltages from −0.2 to 1.2 V. Three ways from five points per axis, their error against the
+solver at 4096 random points between the table's:
+
+| `tol` | Way | Points per axis | Points | Estimate | Error, largest | 99th percentile |
+|---|---|---|---|---|---|---|
+| 5e-2 | refined | 19, 21, 14, 9 | 50 274 | 4.9e-2 | 3.75e-2 | 2.09e-2 |
+| | even, each axis halved until it passes | 17, 17, 17, 9 | 44 217 | 6.2e-2 | 5.30e-2 | 2.61e-2 |
+| | equal on every axis | 17⁴ | 83 521 | 5.3e-2 | 4.95e-2 | 2.44e-2 |
+| 1e-1 | refined | 9, 13, 10, 7 | 8 190 | 9.3e-2 | 8.09e-2 | 5.50e-2 |
+| | even, each axis halved until it passes | 9, 17, 9, 9 | 12 393 | 8.6e-2 | 8.41e-2 | 5.16e-2 |
+| | equal on every axis | 9⁴ | 6 561 | 1.1e-1 | 9.76e-2 | 6.76e-2 |
+
+At 5e-2 the refined table is within the tolerance with 1.7 times fewer devices than seventeen
+points on every axis, which is at it; the even axes do not pass their own test at 44 217 points
+and the next halving is beyond 100 000. At 1e-1 nine points on every axis are at the tolerance
+on these test points (1.25e-1 on another 4096), and the refined table, within it, is no
+smaller. The estimate is the table's error within a third in every row.
+
+Why the gain is small here, and what the error is:
+
+- **The function is smooth.** Along lines of 257 points through the twelve worst test points
+  the linear interpolation's error falls by 3 to 4 per halving on every axis: second order, no
+  kink or jump. At nine points per axis the transitions are one to three intervals wide.
+- **It is a front that moves.** `η(V)` falls from its plateau in one flank, between about
+  1.2 V where the ions do not screen and about the pre-bias where they screen fully; the change
+  happens between 1e17 and 1e18 cm⁻³ of ions and only for `x_ion > 0`. At nine points per axis,
+  at one voltage and on one line of the other axes, 25 % (trap density), 20 % (ion density), 13 % (`x_ion`) and 0.6 %
+  (thickness) of the intervals miss by more than an eighth of 5e-2; over all voltages and
+  lines every interval of every axis does. A tensor product needs the points wherever the
+  front passes.
+- **No other voltage axis helps.** The curves of a cell's corners shifted along `V` before
+  they are averaged, by the pre-bias, by `V_oc` or by the voltage where `η` is half its
+  plateau, or scaled by `V_oc`: 1.1e-1 to 4.1e-1 at nine points per axis where the fixed
+  voltages give 7.2e-2 (512 test points). The curve changes its form: its zero near 1.2 V stays
+  while the flank moves, `V_oc` (0.85–1.38 V) does not follow the flank (0.03–1.58 V), and the
+  flank's place interpolates no better than `η` (up to 0.2 V off).
+- **What the refinement saves is the axes' worst places not being the same.** The sum of each
+  axis's largest miss is 1.7e-1 at 9⁴ and 9.9e-2 at 17⁴, the largest sum in one cell 1.1e-1
+  and 5.3e-2, the error 9.8e-2 and 5.0e-2. A test of each axis against a share of the
+  tolerance refines every axis for another's worst place: the thickness from 9 to 17 points
+  doubles the table for 5.0e-2 against 4.8e-2. The sum in each cell
+  (`refine_axes`' test) leaves it at 9 and puts the points between 2e17 and 2e18 cm⁻³ of ions
+  and at the highest trap densities.
+- **The largest error needs many test points.** It is in under 1 % of the volume (at 17⁴,
+  0.7 % of the points are above 2.5e-2): 512 points give 7.2e-2 at 9⁴ and 3.7e-2 at 17⁴ where
+  4096 give 1.0e-1 to 1.3e-1 and 4.8e-2 to 5.0e-2.
+
 ## The tests
 
 The tests compare with SimSS's and ZimT's runs on their grid (`grid="simss"`, a wrapper of
@@ -443,6 +496,7 @@ jaxdd supports (JAX 0.4.31, NumPy 1.26, Python 3.11). The main ones:
 | `test_zimt_steady_states_reproduce_zimt` | a ZimT input read and built, its steady states (`tests/data/zimt_steady_light`) to 1e-9 of ZimT's scale |
 | `test_tvg_as_zimt_reads_it` | `read_tvg` as ZimT reads its `tVGFile`, and ZimT's checks on it |
 | `test_benchmark.py` | `benchmarks/run.py` hands SimSS exactly the devices jaxdd solves |
+| `test_axes.py` | `jaxdd.axes` on functions whose answer is known: the interpolation exact on multilinear functions; refined axes within the tolerance with fewer points than even ones on a peak; an axis refined for its part of a cell's error, not for a share; a feature the start misses is not found; the limits and NaN |
 
 `tests/data/` holds SimSS 5.36 runs, inputs and `JV.dat` unchanged, each described in
 [its README](../tests/data/README.md); the first four are a perovskite cell without ions, the
@@ -467,6 +521,7 @@ as arguments. SimSS itself is built by [`simss/`](../simss/README.md).
 | `validation/breakdown.py [batch]` | one Newton step's time, part by part |
 | `validation/fit_measured.py [SAMPLE …] [--start cold\|paper] [--device mirrored\|anode] [--starts N]` | a fit to the measured curves of Heester et al. (2025), five intensities at once; from N starts at once |
 | `validation/sample_measured.py [SAMPLE] [--move de\|stretch] [--walkers W] [--steps S] [--sigma F] [--out FILE] [--from-multistart]` | the fit's posterior by an ensemble sampler over the batch; the chain to an `.npz`; around the best of `fit_measured.py --starts N` |
+| `validation/axes.py [tol] [chunk] [test_points] [max_size]` | a table of a perovskite cell over four axes: refined axes against even ones, the error at random points |
 | `validation/fit.py CASE_DIR [--start S] [--fix NAME …] [--noise σ]` | a fit by gradients to the case's SimSS curve, from a perturbed start; what the curve determines (singular values) |
 
 ## Running SimSS for a comparison

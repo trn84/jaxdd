@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "jaxdd"
-version = "0.1.0"
+version = "0.2.0"
 description = "A batched 1D drift-diffusion solver in JAX, after SIMsalabim"
 readme = "README.md"
 requires-python = ">=3.11"

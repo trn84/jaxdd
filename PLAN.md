@@ -7,13 +7,7 @@ handbook or the commit message, not here.
 
 ## 1 Next
 
-0.1.0 is released (CHANGELOG.md); the transients (Stage C) and the refined axes (M6) are
-complete.
-
-1. **Release 0.2.** What came since 0.1.0 (CHANGELOG.md, "Unreleased": the tables with refined
-   axes, the current in time, the QFLS below Newton's floor, the ions bounded by their sites)
-   as a release, so that its users can pin it. **Done when** the tag `v0.2.0` is pushed and
-   the CI has made the release.
+0.2.0 is released (CHANGELOG.md). Nothing is next until one of the items below is taken up.
 
 ## 2 Waiting
 

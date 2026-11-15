@@ -7,6 +7,12 @@ the API, and says so here.
 
 ## [Unreleased]
 
+## [0.2.0] – 2026-11-15
+
+Tables with refined axes, ions bounded by their sites, the current in time as the equations
+balance it, and the QFLS below Newton's floor. Nothing of 0.1.0's API is removed; transients
+with the integral current change by its grid error (below).
+
 ### Added
 
 - **Tables with refined axes** (`jaxdd.axes`). `refine_axes` chooses the points of a
@@ -116,5 +122,6 @@ of devices on CPUs and NVIDIA GPUs, differentiable in the input's parameters.
   depletion zones; ZimT's `varFile` is not written. A transient is not split across several GPUs.
 - AMD GPUs: prepared for the MI50 (gfx906, JAX 0.4.31 in a ROCm image), not yet measured.
 
-[Unreleased]: https://github.com/trn84/jaxdd/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/trn84/jaxdd/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/trn84/jaxdd/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/trn84/jaxdd/releases/tag/v0.1.0

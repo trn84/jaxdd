@@ -3,8 +3,8 @@
 ## Install
 
 ```bash
-pip install "jaxdd @ git+https://github.com/trn84/jaxdd@v0.1.0"            # CPU
-pip install "jaxdd[cuda12] @ git+https://github.com/trn84/jaxdd@v0.1.0"    # an NVIDIA GPU
+pip install "jaxdd @ git+https://github.com/trn84/jaxdd@v0.2.0"            # CPU
+pip install "jaxdd[cuda12] @ git+https://github.com/trn84/jaxdd@v0.2.0"    # an NVIDIA GPU
 python -c "import jax, jaxdd; print(jaxdd.__version__, jax.devices())"
 ```
 

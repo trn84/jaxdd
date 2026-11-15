@@ -22,12 +22,12 @@ tutorial, model, solver with flowcharts, batching, hardware, validation).
 Python 3.11 or newer. The release, from GitHub:
 
 ```bash
-pip install "jaxdd @ git+https://github.com/trn84/jaxdd@v0.1.0"            # CPU
-pip install "jaxdd[cuda12] @ git+https://github.com/trn84/jaxdd@v0.1.0"    # an NVIDIA GPU
+pip install "jaxdd @ git+https://github.com/trn84/jaxdd@v0.2.0"            # CPU
+pip install "jaxdd[cuda12] @ git+https://github.com/trn84/jaxdd@v0.2.0"    # an NVIDIA GPU
 ```
 
-or the wheel attached to the [release](https://github.com/trn84/jaxdd/releases/tag/v0.1.0)
-(`pip install jaxdd-0.1.0-py3-none-any.whl`, with `"jax[cuda12]"` on an NVIDIA GPU). jaxdd is
+or the wheel attached to the [release](https://github.com/trn84/jaxdd/releases/tag/v0.2.0)
+(`pip install jaxdd-0.2.0-py3-none-any.whl`, with `"jax[cuda12]"` on an NVIDIA GPU). jaxdd is
 pure Python on JAX ≥ 0.4.31 and NumPy ≥ 1.26; the extra `fit` adds SciPy for `jaxdd.fit`.
 With a CUDA jaxlib, JAX uses the GPU by default; `JAX_PLATFORMS=cpu` forces the CPU.
 

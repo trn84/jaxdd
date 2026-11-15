@@ -1006,16 +1006,22 @@ def test_the_gradient_through_the_optics_is_finite_differences() -> None:
     assert abs(float(by_jvp) - fd) < 1e-5 * abs(fd)
 
 
-def test_a_batch_mixes_devices_with_and_without_interface_traps() -> None:
-    """`prepare` gives the devices without interface traps zero traps on every edge, those
-    without charged bulk traps none, those with a constant mobility no field dependence, and
-    every device the most trap levels of any (the others
-    of density 0): each curve of a mixed batch is the one-device solver's."""
+@pytest.mark.parametrize(
+    "with_",
+    [["iface_charged_light", "iface_ions_light"], ["bulk_acceptor_light", "trapfiles_light"],
+     ["surface_light", "fieldmob_light"], ["langevin_field_light", "braun_light"]],
+    ids=["interface", "bulk", "contacts-mobility", "langevin-braun"],
+)  # fmt: skip
+def test_a_batch_mixes_devices_with_and_without_modules(with_: list[str]) -> None:
+    """`prepare` gives a device without a module what does nothing in it — no interface traps
+    on any edge, no charged bulk traps, infinite surface recombination, no field dependence of
+    the mobility, Langevin's rate or the generation — and every device the most trap levels of
+    any (the others of density 0): each curve of a batch of `thin_l1_light` (none of them) and
+    devices with them is the one-device solver's. One batch per pair of modules: the cost of a
+    batch is its tracing, which grows with the modules it has."""
     from jaxdd.batch import prepare, solve_batch
 
-    cases = ["thin_l1_light", "iface_charged_light", "iface_ions_light", "bulk_acceptor_light",
-             "trapfiles_light", "surface_light", "fieldmob_light",
-             "langevin_field_light", "braun_light"]  # fmt: skip
+    cases = ["thin_l1_light", *with_]
     devices = [build_device(read_setup(DATA / c / "simulation_setup.txt")) for c in cases]
     V = np.round(np.arange(-0.2, 1.3 + 1e-9, 0.1), 6)
     J, ok, _ = solve_batch(prepare(devices), V, bernoulli_name="simss")

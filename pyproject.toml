@@ -12,7 +12,8 @@ license = { text = "LGPL-3.0-only" }
 dependencies = ["jax>=0.4.30", "numpy>=2.0"]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0", "ruff>=0.5", "scipy>=1.11"]  # scipy: validation/fit.py
+#: pytest-xdist: the tests in parallel, one worker per physical core (tests/conftest.py)
+dev = ["pytest>=8.0", "pytest-xdist[psutil]>=3.5", "ruff>=0.5", "scipy>=1.11"]  # scipy: validation/fit.py
 #: benchmarks/plot.py
 bench = ["matplotlib>=3.8"]
 
@@ -27,3 +28,7 @@ target-version = "py311"
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
 ignore = ["RUF001", "RUF002", "RUF003"]
+
+[tool.pytest.ini_options]
+# In parallel, a worker per physical core (pytest-xdist); `-n 0` runs them in one process.
+addopts = "-n auto --dist worksteal"

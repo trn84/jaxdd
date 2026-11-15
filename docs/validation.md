@@ -262,7 +262,11 @@ convergence", and a rerun at tight tolerances. The cases where SimSS was wrong s
 
 ## The tests
 
-`pytest` runs on whatever JAX has (CPU or GPU) in under a minute:
+`pytest` runs on whatever JAX has (CPU or GPU), in parallel, one worker per physical core
+(pytest-xdist; `-n 0` for one process): on a 16-core desktop about 75 s, and 30 s once JAX's
+compilation cache (`.pytest_cache/jax`, `tests/conftest.py`) holds the programs; in one process
+it was 400 s. What is left is tracing, which JAX does not cache, and the gradients' finite
+differences, about 12 s each for the slowest:
 
 | Test | What it checks |
 |---|---|

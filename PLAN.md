@@ -8,23 +8,17 @@ the handbook.
 
 The order (2026-11-15, an estimate at the pace so far):
 
-1. Stage C to its end (section 4.1, step 1, on the A100): about a day.
-2. M4's first step, the graded mesh (2.1): 1–3 days, depending on whether it is enough.
-3. **Release 0.1.0**: the steady state (SimSS) and the transients (ZimT); a version, a
+1. M4's first step, the graded mesh (2.1): 1–3 days, depending on whether it is enough.
+2. **Release 0.1.0**: the steady state (SimSS) and the transients (ZimT); a version, a
    changelog, the README's installation, a wheel, CI, a pass over the handbook and the API.
    About a day.
-4. M6 (2.2), and the fused kernel if Stage C's speed decides for it (2.3, about 1–2 weeks):
-   0.2.
+3. M6 (2.2), and the fused kernel or a 5×5 sweep kernel, as the decision on Stage C's speed
+   goes (2.3, section 7; about 1–2 weeks): 0.2.
 
-0.2 Cl's second sampling run is done on the hub; its chain closes M7 (2.4). Not before the release: M8 (1.3), the measured cell's optics (2.4, waiting for n,k
-data), the steric ions (3, waiting for a source of `N_max`).
-
-### 1.1 Stage C: transients
-
-Begun: electrons, holes, traps and mobile ions in time, with the voltage given, at the open
-circuit and behind a series resistance, with ZimT's automatic stop, failure modes and output
-columns, reproduce ZimT 5.36, and are differentiable in their parameters. Its speed on the
-A100 is next (section 4.1).
+Stage C (ZimT's transients) and M7 (fits and their posteriors) are done (docs/model.md
+"Transients", docs/validation.md). Open from Stage C: the QFLS below Newton's floor (4.1). Not
+before the release: M8 (1.3), the measured cell's optics (2.4, waiting for n,k data), the steric
+ions (3, waiting for a source of `N_max`).
 
 ### 1.3 M8: the MI50 cards
 
@@ -54,7 +48,6 @@ about two A100s).
 |---|---|---|
 | **M4** | The grid in space (2.1) | 400 points or fewer meet the validation criteria on the hardest devices, or bucketing by grid size is justified |
 | **M6** | Adaptive parameter axes (2.2) | the refined axes meet a table's interpolation tolerance with fewer devices than hand-made ones |
-| **M7** | What fits still need (2.4): a second sampling run of 0.2 Cl; the curves are differentiable in the input's parameters, measured curves are fitted from many starts at once (`validation/fit_measured.py --starts N`, `jaxdd.fit`), and the posteriors of 0.1 and 0.6 Cl sampled around their best minimum by two independent runs that agree (`validation/sample_measured.py`) | every measured sample's posterior around the best of many starts, from two independent runs that agree with 1000 independent samples or more between them |
 
 Gradients are taken by implicit differentiation of the converged solution: the backward pass
 needs only the solution and the JAX residual, never the iterations that found it, so any forward
@@ -162,25 +155,14 @@ separate arrays, would spare a third of the blocks' writes and reads.
 Order: Stage B in JAX (done); then the kernel for the physics that has settled. A first
 measurement before deciding: the Newton step of Stage A's physics without ions as one CUDA
 kernel on devices without ions, against the JAX step's time on the A100. The fused kernel is not
-needed for the steady state; it is decided with Stage C's speed (section 4.1, step 1).
+needed for the steady state; Stage C's speed, now measured (docs/hardware.md "Transients"),
+decides it (section 7).
 
-### 2.4 M7: what fits still need
+### 2.4 What fits still need
 
-The curves are differentiable in the input's own parameters; a fit recovers a SimSS curve's
-parameters (`validation/fit.py`) and fits the measured curves of Heester et al. (2025), five
-intensities at once, to 0.55–2.7 % of the short-circuit current in minutes
-(`validation/fit_measured.py`), from 16 starts at once in 10.5 min (`--starts`, `jaxdd.fit`),
-and samples the posteriors around the best minimum, for 0.1 and 0.6 Cl by two independent runs
-that agree (`validation/sample_measured.py`, [docs/validation.md](docs/validation.md)). Left:
+The curves, steady and in time, are differentiable in the input's parameters; fits, many starts
+at once and the posteriors of the measured samples are in docs/validation.md. Left:
 
-- **A second run of 0.2 Cl's posterior.** 0.1 and 0.6 Cl are sampled around their best minimum
-  by two runs that agree (docs/validation.md); 0.2 Cl, whose best minimum is the cold fit's,
-  by one only (A100, seed 0, `benchmarks/samples/chain_02Cl.npz`, not committed). Its second
-  ran on the A100 hub (seed 1, 128 walkers, 2026-11-15, 75 min, 1287 independent samples) and
-  agrees by its log (every median within about 0.1 half-widths, the half-widths within 5 %);
-  its chain is still on the hub, to come here as `chain_02Cl_best_s1.npz` and be compared with the first as `benchmarks/samples/compare_seeds.py` compares
-  0.1 and 0.6 Cl's (it reads `chain_{SAMPLE}_best_s{0,1}.npz`: link or adapt), and the 0.2 Cl
-  column and the runs' sentence in docs/validation.md from both. M7 is then done.
 - **The optics for the measured cell**: the measured fits assume a uniform generation. The cell
   in its own orientation with the transfer-matrix profile is `tests/data/pin_anode_left_light`,
   but the paper's perovskite n,k data (Werner et al., ACS Energy Lett. 3, 742 (2018)) are not
@@ -205,79 +187,19 @@ density; open). Not started.
 
 ## 4 The physics in stages
 
-SimSS 5.36's steady state (Stages A and B) is done: an input runs on jaxdd or is refused with
-the reason named, and what jaxdd solves is in [docs/overview.md](docs/overview.md); the two
-inputs it refuses are SimSS's ionic regions that SimSS solves against what they say
-([docs/differences.md](docs/differences.md) §10). After it:
-
-- **Stage C: transients (ZimT).** Time-dependent drift-diffusion with mobile ions: scan-rate
-  hysteresis, transient photocurrent and photovoltage, trap filling. Its plan is section 4.1.
-  This is where a fused kernel is most likely needed (section 2.3).
+SimSS 5.36's steady state (Stages A and B) and ZimT 5.36's transients (Stage C) are done: an
+input runs on jaxdd or is refused with the reason named, and what jaxdd solves is in
+[docs/overview.md](docs/overview.md); the two inputs it refuses are SimSS's ionic regions that
+SimSS solves against what they say ([docs/differences.md](docs/differences.md) §10).
 
 ### 4.1 Stage C: transients, as ZimT 5.36 solves them
 
-**What ZimT is** (`ZimT/zimt.pas`, 600 lines, on `DDRoutines.pas`, which SimSS shares). It
-reads a list of `t Vext G_frac Track` from `tVGFile`; the first line must be `t = 0`, a steady
-state. At every line it solves one time step with the same `Main_Solver` as SimSS, with
-`dti = 1/Δt`:
-
-- **Electrons, holes and ions: implicit Euler** (Selberherr 6-4.32): the continuity equations
-  get `dti·(n − n_prev)` in each control volume; `dti = 0` is the steady state, so a step back to
-  `t = 0` is allowed.
-- **Traps: no new unknowns.** Each level's occupation follows the linear ODE
-  `df/dt = b − a·f` with `a`, `b` from `n`, `p` at the new time, solved over the step:
-  `f = b/a + (f_prev − b/a)·exp(−a·Δt)`, bulk and interface alike; the recombination in the
-  continuity equations is that ODE's capture integrated over the step, divided by `Δt`. The
-  occupations are state carried from step to step, explicit in `n`, `p` at the new time.
-- **Ions: full unknowns per grid point**, Scharfetter-Gummel fluxes, no flux through a region's
-  ends or the contacts, in every ionic region that is mobile (`UpdateIons` is always on: no
-  `preCond`, no `fixIons`). After each solve the region's density is rescaled to its total
-  (`Rescale_Ion_Density`, the trapezoid rule over the region): the discrete equation alone
-  does not conserve it (the region's end points take a whole control volume, a point at a
-  contact none). At convergence the state is therefore the scaled solution, not the discrete
-  equation's own: one unknown factor per region with the total as its constraint, which is
-  what Stage B's slots are.
-- **The current**: either form (`currDiffInt`) with `dti·(n − n_prev)` in the integral form's
-  integrand; the ions' currents and the displacement current `ε·dti·Δ(∂V/∂x)` added;
-  `Jint` the average over the grid.
-- **`Vext`**: given (`Vint = Vext`); with `R_series > 0` the `Vint` that gives it; `oc` the
-  open circuit (`Jext = 0`), at `t = 0` too. ZimT brackets `Vint` and runs Brent on whole
-  solves, up to 100 of them per step.
-- **Stopping**: `Track` 1 marks a reference state, 2 and 3 compare with it; five equal states
-  in a row stop the run (`MinCountStatic`). `failureMode` 0 stops at a failed step, 1 keeps it,
-  2 skips it.
-- **Output** `tJFile`: `t Vext Jext errJ Vint Jint G_frac`, the QFLS and the photo- and
-  recombination currents per layer and interface (bulk trapping per carrier, since the
-  two differ out of steady state), `JminLeft JminRight JShunt Jnion Jpion JD`.
-
-**How jaxdd solves it.** Newton on the whole step, as for the steady state: the same residual
-with the time terms, so ZimT's converged state is jaxdd's to round-off, as SimSS's is. A
-transient is a `lax.scan` over its steps, each one Newton solve from the step before; a batch
-is `vmap` over devices, each with its own `t`, `Vext`, `G_frac` (padded to one length). The
-steady state at `t = 0` is today's solver.
-
-- **Devices without mobile ions** keep the 3×3 blocks `(V, ln n, ln p)`; the trap occupations
-  ride along as state.
-- **With mobile ions** the blocks grow to 5×5 `(V, ln n, ln p, ln a, ln c)`, identity rows
-  where a species cannot be, and one slot per region (the rescaling). A batch takes 5×5 if
-  any device needs it. The sweep (scan and Pallas kernel) takes blocks of either size.
-
-**Steps**, each validated against ZimT 5.36 at `tolPois = tolDens = 1e-12` (at 1e-9 ZimT moves
-by 1.7e-7 of the scale; `zimt` in the image `jaxdd/simss:5.36`, its input read by `read_tvg`).
-Electrons, holes, traps and mobile ions in time, with the voltage given, at the open circuit
-and with a series resistance (`Vint` an unknown of each step), ZimT's automatic stop, failure
-modes and `tJFile` columns, and the gradients through time are done (`jaxdd.transient`,
-docs/model.md "Transients"); next:
-
-1. **Speed** (`validation/transient_bench.py`, `STEPS=transient benchmarks/apptainer.sh`): a
-   transient batch on the A100 (steps per second, Newton steps per time step, the
-   5×5 step's cost against the 3×3 one). Done when its numbers are in the handbook; with them
-   the fused kernel is decided (section 7).
-
-Open beside it: the QFLS where a carrier lies below Newton's floor of convergence, in the
-dark and in an ionic region's depletion zones (docs/model.md "Transients", up to 5e-3 V and
-3 V off ZimT's): a floor, or a last step for the output, that converges those densities
-without costing the ions' convergence (a lower floor alone converges them only without ions).
+Done: ZimT 5.36's transients reproduced, batched and differentiable (docs/model.md
+"Transients", docs/validation.md, docs/hardware.md for the speed). Open: the QFLS where a
+carrier lies below Newton's floor of convergence, in the dark and in an ionic region's
+depletion zones (up to 5e-3 V and 3 V off ZimT's): a floor, or a last step for the output,
+that converges those densities without costing the ions' convergence (a lower floor alone
+converges them only without ions).
 
 Where ZimT turns out wrong (the rescaling against conservation first), it is documented in
 docs/differences.md and the physically correct answer is a switch, as for SimSS.
@@ -368,5 +290,5 @@ microseconds per evaluation are needed.
 
 | Decision | When | With |
 |---|---|---|
-| The fused kernel as an optional mode (2.3) | after Stage C's step 1 (4.1) | the applications' needs (section 5) and a first measurement of a Stage A kernel |
+| The fused kernel as an optional mode (2.3), or first a 5×5 sweep kernel | now: Stage C's speed is measured (docs/hardware.md "Transients": a 5×5 Newton step 4.5× a 3×3 one, the lockstep 40 % more with ions) | the applications' needs (section 5) and a first measurement of a Stage A kernel |
 | The steric ion model and its `N_max` | when a source for `N_max` is found | its users: results with and without it differ at high ion density |

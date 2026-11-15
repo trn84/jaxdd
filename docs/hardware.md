@@ -52,6 +52,25 @@ is 16384 on each. Not split where the batch or the voltages are traced (inside `
 GPU, and at 4767 with 8192 per GPU; the grid study's small batches gain less (1.24× at 1024
 devices per GPU and 800 points, 1.45× at 512 and 1600), a GPU being busy only with thousands.
 
+**Transients** (`validation/transient_bench.py 16384 4096`, `STEPS=transient
+benchmarks/apptainer.sh`, 2026-11-15), on one A100-SXM4-40GB (`solve_transient` does not split a
+batch across GPUs), 16384 ZimT runs in batches of 4096, each device's trap, ion and doping
+densities drawn at random:
+
+| Workload | Transients/s | Time steps/s | Newton steps per time step: device, batch | One Newton step per device |
+|---|---|---|---|---|
+| traps, light on and off (241 steps, 3×3) | 564 | 136 000 | 2.34, 2.41 | 3.05 µs |
+| mobile ions, a sweep and back (241 steps, 5×5) | 93 | 22 400 | 2.32, 3.25 | 13.75 µs |
+| the photovoltage at the open circuit (151 steps) | 991 | 150 000 | 1.89, 2.06 | 3.25 µs |
+
+A time step without ions costs about what a voltage of a J-V curve does at the same batch
+(2140 curves of 61 voltages per second at 4096: 131 000 voltages/s). With ions a Newton step
+costs 4.5× a 3×3 one (the 5×5 blocks go through the scan, not the sweep kernel, and hold 25
+entries per block where the 3×3 hold 9), and the lockstep adds 40 %: the batch pays the slowest
+device's 3.25 Newton steps per time step where a device needs 2.32. The internal voltage's
+border at the open circuit costs 7 % per Newton step. On the RTX 4070 Ti SUPER at batch 64: 41,
+4.5 and 69 transients/s.
+
 **Time a solver from its third call on, or check that nothing compiles.** A benchmark that
 excludes the first call excludes one compilation. `jaxdd.batch._solve_batch._cache_size()`
 counts the compiled programs: it must not grow between the calls that are timed.

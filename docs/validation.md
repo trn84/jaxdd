@@ -258,28 +258,31 @@ so that the solver is never the larger error in what is computed from it.
   solved as one batch (differential evolution, the walkers started around each sample's best
   minimum: for 0.2 Cl the cold start's, for 0.1 and 0.6 Cl the best of 16 starts, above,
   `--from-multistart`; the prior uniform in the fitted coordinates within the bounds, the
-  likelihood Gaussian with σ the fit's rms misfit). 0.2 Cl: 128 walkers and 3000 steps, the first
-  1000 discarded, 77 min on an A100-SXM4-40GB (0.77 s per batch of 64 × 5 curves), acceptance
-  0.05, autocorrelation times 127–191 steps, about 1340 independent samples; one run so far.
-  0.1 and 0.6 Cl: two independent runs each (seeds 0 and 1) on the RTX 4070 Ti SUPER, 64 walkers
+  likelihood Gaussian with σ the fit's rms misfit). Two independent runs per sample (seeds 0
+  and 1). 0.2 Cl: on an A100-SXM4-40GB, 128 walkers and 3000 steps, the first 1000 discarded, 77
+  and 75 min (0.77 and 0.75 s per batch of 64 × 5 curves), acceptance 0.05, autocorrelation
+  times 127–199 steps, 1338 and 1287 independent samples.
+  0.1 and 0.6 Cl: on the RTX 4070 Ti SUPER, 64 walkers
   and 3000 steps, the first 1000 discarded (1.7–1.9 h each, 0.99–1.13 s per batch of 32 × 5),
   acceptance 0.05–0.07, autocorrelation times 115–189 steps, so the 2000 steps kept hold about 11
   of the longest and 680–750 independent samples per run: quantiles to a few percent, the tails
   rougher. The two runs give the same posteriors: every median within 0.11 half-widths of the
   other run's, every half-width within 17 % (the largest ratios 0.1 Cl's ETL mobility and 0.6
-  Cl's hole mobility, both at their bounds, and 0.6 Cl's electron mobility), with 1382 and 1507
-  independent samples between them. Median and 16–84 % half-width, both runs together:
+  Cl's hole mobility, both at their bounds, and 0.6 Cl's electron mobility; in 0.2 Cl within
+  0.10 half-widths and 11 %, the cation density at its bound), with 1382, 2626 and 1507
+  independent samples between them (`benchmarks/samples/compare_seeds.py`). Median and 16–84 %
+  half-width, both runs together:
 
   | | 0.1 Cl | 0.2 Cl | 0.6 Cl | bounds |
   |---|---|---|---|---|
   | `mu_n` (m²/Vs) | 2.06e-5 ×1.06 | 1.03e-4 ×1.09 | 6.0e-6 ×1.07 | 1e-6 – 1e-3 |
-  | `mu_p` | 9.1e-4 ×1.12 (↑ 63 %) | 9.3e-4 ×1.07 ↑ | 1.02e-6 ×1.02 ↓ | 1e-6 – 1e-3 |
-  | `N_t` (m⁻³) | 2.8e19 ×2.4 | 5.6e19 ×2.6 | 1.15e19 ×1.16 (↓ 62 %) | 1e19 – 1e23 |
+  | `mu_p` | 9.1e-4 ×1.12 (↑ 63 %) | 9.4e-4 ×1.07 ↑ | 1.02e-6 ×1.02 ↓ | 1e-6 – 1e-3 |
+  | `N_t` (m⁻³) | 2.8e19 ×2.4 | 5.5e19 ×2.6 | 1.15e19 ×1.16 (↓ 62 %) | 1e19 – 1e23 |
   | `Nti_htl` (m⁻²) | 5.5e12 ×1.14 | 1.0e11 ×1.02 ↓ | 1.06e14 ×1.07 | 1e11 – 1e15 |
   | `Nti_etl` | 1.8e11 ×1.7 | 1.08e14 ×1.02 | 1.04e11 ×1.05 ↓ | 1e11 – 1e15 |
-  | `k_direct` (m³/s) | 1.9e-16 ×11 | 5.4e-18 ×3.7 | 1.49e-17 ×1.14 | 1e-18 – 1e-15 |
+  | `k_direct` (m³/s) | 1.9e-16 ×11 | 5.3e-18 ×3.7 | 1.49e-17 ×1.14 | 1e-18 – 1e-15 |
   | `R_shunt` (Ω m²) | ≳ 15 | 1.42 ×1.22 | 0.43 ×1.4 | 1e-2 – 1e3 |
-  | `mu_htl` | 6.8e-8 ×11 | 1.6e-7 ×12 | 6.8e-6 ×1.43 (↑ 21 %) | 1e-8 – 1e-5 |
+  | `mu_htl` | 6.8e-8 ×11 | 1.5e-7 ×12 | 6.8e-6 ×1.43 (↑ 21 %) | 1e-8 – 1e-5 |
   | `mu_etl` | 1.04e-8 ×1.05 ↓ | 6.4e-6 ×1.06 | 1.21e-7 ×1.25 | 1e-8 – 1e-5 |
   | `Ev_htl` (eV) | 5.405 ±0.005 (↓ 40 %) | 5.417 ±0.007 | 5.442 ±0.004 | 5.4 – 5.6 |
   | `Ec_etl` (eV) | 4.063 ±0.003 | 3.900 ±0.000 ↓ | 4.015 ±0.005 | 3.9 – 4.3 |

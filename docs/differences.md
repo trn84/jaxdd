@@ -267,6 +267,45 @@ criteria on 99.6 % of the same devices, all at 800; both grids converge to the s
 SIMsalabim's grid with `grid="simss"` (also `device_parameters`), for a comparison with SimSS
 point by point; the curves then differ from the graded grid's by SimSS's grid error.
 
+## 13 The integral current in time (ZimT)
+
+**What.** ZimT's integral form of the current (`Calc_Curr_Int`, `currDiffInt = 2`, its default)
+builds each carrier's current along the device from `U = R − G + dti·(n − n_prev)` as
+`J[i] = J[i−1] ± q·L·h[i]·U[i]`: each point's `U` over the interval after it. The point's
+continuity equation, and Poisson's, hold in its control volume, `(h[i−1] + h[i])/2`. In the
+steady state this makes no difference: both carriers' `U` are the same and their sums cancel
+in the total. In time they differ by the charge's change, which Poisson's equation makes the
+displacement current's change from one interval to the next, in the control volume; summed
+over `h[i]` instead, the total current is not the same on every interval, and its average is
+off by about `½·q·L·Σ (h[i] − h[i−1])·dti·Δ(p − n)[i]`: an error of first order in the grid
+wherever its spacing changes, largest where charge builds up in time, near the interfaces
+and contacts. (`Calc_Curr_Int`'s comment relies on a uniform spacing near the interfaces;
+SIMsalabim's grid is uniform there over three intervals.) ZimT's sum for the constant `K`
+also starts with the left contact's own change in half an interval, a density no equation
+stores; it moves with finite surface recombination. The solution is not affected (but at the
+open circuit and behind a series resistance, where the current sets `Vint`), only the current
+read from it; the differential form (`currDiffInt = 1`) of the same solution has no such sum.
+
+Against the differential form on the graded grid at 6400 points, in units of the current's
+scale, at 400 / 1600 / 6400 points (`tests/data/zimt_*`):
+
+| | ZimT's sum, SIMsalabim's grid | the equations' current, SIMsalabim's grid | ZimT's sum, graded grid | the equations' current, graded grid |
+|---|---|---|---|---|
+| light on and off (`zimt_photo_light`) | 2.8e-3 / 1.5e-3 / 3.6e-4 | 8.3e-4 / 9.4e-4 / 1.9e-4 | 2.0e-3 / 6.0e-4 / 1.9e-4 | 5.4e-5 / 1.9e-6 / – |
+| with finite surface recombination (`zimt_photo_surface_light`) | 2.7e-2 / 7.6e-3 / 2.2e-3 | 8.5e-4 / 9.6e-4 / 1.9e-4 | 3.0e-2 / 7.8e-3 / 2.1e-3 | 4.0e-5 / 2.4e-6 / – |
+| a sweep in 2 × 100 ns (`zimt_sweep_light`) | 2.9e-3 / 5.9e-4 / 1.6e-4 | 2.5e-4 / 1.9e-4 / 3.2e-5 | 3.9e-3 / 7.9e-4 / 1.9e-4 | 9.2e-6 / 5.7e-7 / – |
+
+With traps the same as without (2.0e-3 / 6.0e-4 / 1.9e-4 against 5.2e-5 / 1.8e-6 on the graded
+grid); the photovoltage at the open circuit (`zimt_tpv_light`), of its excursion of 8.5 mV:
+2.0e-3 / 3.5e-4 / 7.9e-5 against 2.3e-4 / 1.1e-5. "The equations' current" is the differential
+form's and jaxdd's integral form's alike: the two agree to 5e-11 of the scale at every size.
+
+**jaxdd.** By default the integral form in time sums each point's `U` over its control volume
+and leaves the contact's change out (`batch._sum_widths`, docs/model.md "Transients"): the
+current the equations balance, the same on every interval, without reading it off single
+fluxes. ZimT's sums with `solve_transient(..., zimt_current=True)`, to 1e-9 of ZimT's scale on
+SIMsalabim's grid. The steady state is SIMsalabim's as it is.
+
 ## Not differences
 
 Reproduced on purpose, because they are part of the discrete equations SimSS defines:

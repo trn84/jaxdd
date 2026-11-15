@@ -38,6 +38,15 @@ def device_parameters(setup, *args, grid="simss", **kwargs):
     return _device_parameters(setup, *args, grid=grid, **kwargs)
 
 
+def zimt_transient(batch, tvg, **kwargs):
+    """`transient.solve_transient` as ZimT 5.36 computes: SIMsalabim's Bernoulli function and
+    ZimT's sums in the integral current (docs/differences.md §13); jaxdd's defaults are the
+    exact function and each point's control volume."""
+    from jaxdd.transient import solve_transient
+
+    return solve_transient(batch, tvg, bernoulli_name="simss", zimt_current=True, **kwargs)
+
+
 def test_bernoulli_is_finite_with_a_finite_derivative_at_zero() -> None:
     """The double where: neither B nor dB/dx sees 0/0."""
     assert float(bernoulli(0.0)) == 1.0
@@ -531,10 +540,9 @@ def test_transients_of_electrons_and_holes_reproduce_zimt(case: str) -> None:
     of time, and a sweep to 1.2 V and back in 2 × 100 ns whose displacement current is half
     the scale, in the integral and the differential form, with finite surface recombination."""
     from jaxdd.batch import prepare
-    from jaxdd.transient import solve_transient
 
     setup, tvg, ref = _zimt_case(case)
-    r = solve_transient(prepare([build_device(setup)]), tvg, bernoulli_name="simss")
+    r = zimt_transient(prepare([build_device(setup)]), tvg)
     assert r.converged.all()
     assert np.max(np.abs(r.J_ext[0] - ref["Jext"])) < 1e-9 * np.max(np.abs(ref["Jext"]))
 
@@ -547,10 +555,9 @@ def test_transients_with_traps_reproduce_zimt(case: str) -> None:
     traps. Each case's traps following their steady state at once would be 5e-3 to 6e-2 of the
     scale off (the occupations' dynamics are what is tested)."""
     from jaxdd.batch import prepare
-    from jaxdd.transient import solve_transient
 
     setup, tvg, ref = _zimt_case(case)
-    r = solve_transient(prepare([build_device(setup)]), tvg, bernoulli_name="simss")
+    r = zimt_transient(prepare([build_device(setup)]), tvg)
     assert r.converged.all()
     assert np.max(np.abs(r.J_ext[0] - ref["Jext"])) < 1e-9 * np.max(np.abs(ref["Jext"]))
 
@@ -563,22 +570,45 @@ def test_transients_with_mobile_ions_reproduce_zimt(case: str) -> None:
     differential current, 2 × 50 ms to 0.9 V (ZimT's Gummel iteration fails beyond, near the
     open circuit). The hysteresis is 1e-2 to 1e-1 of the scale."""
     from jaxdd.batch import prepare
-    from jaxdd.transient import solve_transient
 
     setup, tvg, ref = _zimt_case(case)
-    r = solve_transient(prepare([build_device(setup)]), tvg, bernoulli_name="simss")
+    r = zimt_transient(prepare([build_device(setup)]), tvg)
     assert r.converged.all()
     assert np.max(np.abs(r.J_ext[0] - ref["Jext"])) < 1e-7 * np.max(np.abs(ref["Jext"]))
+
+
+def test_the_integral_current_in_time_is_the_one_the_equations_balance() -> None:
+    """In time the integral form sums each point's `U` over its control volume, in which its
+    continuity equation and Poisson's hold (`batch._sum_widths`): the current of the
+    differential form of the same solution, to 1e-9 of the scale, on the graded grid (whose
+    spacing changes from point to point) through the light switched on with finite surface
+    recombination. ZimT's sums (`zimt_current`: over the interval after each point, the left
+    contact's change among them) are more than 1e-2 of the scale off there
+    (docs/differences.md §13)."""
+    from jaxdd.batch import prepare
+    from jaxdd.transient import solve_transient
+
+    setup, tvg, _ = _zimt_case("zimt_photo_surface_light")
+    tvg = _first_steps(tvg, 40)
+    differential = Setup(raw=dict(setup.raw, currDiffInt="1"), layers=setup.layers,
+                         directory=setup.directory)  # fmt: skip
+    batch = prepare([build_device(s, grid="graded") for s in (setup, differential)])
+    r = solve_transient(batch, tvg)
+    assert r.converged.all()
+    scale = np.max(np.abs(r.J_ext[1]))
+    assert np.max(np.abs(r.J_ext[0] - r.J_ext[1])) < 1e-9 * scale
+    zimt = solve_transient(batch, tvg, zimt_current=True)
+    assert np.max(np.abs(zimt.J_ext[0] - r.J_ext[1])) > 1e-2 * scale
+    assert np.array_equal(zimt.J_ext[1], r.J_ext[1])  # the differential form has no such sum
 
 
 def test_layer_voltages_as_zimt_writes_them() -> None:
     """`specialOutput = spv`: each layer's voltage drop (`VL1` …) through the sweep to 1.2 V
     and back, with every other column, as ZimT 5.36 writes them."""
     from jaxdd.batch import prepare
-    from jaxdd.transient import solve_transient
 
     setup, tvg, ref = _zimt_case("zimt_sweep_spv_light")
-    r = solve_transient(prepare([build_device(setup)]), tvg, bernoulli_name="simss")
+    r = zimt_transient(prepare([build_device(setup)]), tvg)
     assert r.converged.all()
     _check_columns(r, 0, ref, spv=True)
 
@@ -590,17 +620,17 @@ def test_ions_in_two_regions_per_species_against_zimt() -> None:
     default. With `zimt_ion_currents` ZimT's `Jext`, `Jnion` and `Jpion` to 1e-8 of the scale;
     without, the ions' currents those of both regions, 60 and 14 times ZimT's here."""
     from jaxdd.batch import prepare
-    from jaxdd.transient import solve_transient, tj_columns
+    from jaxdd.transient import tj_columns
 
     setup, tvg, ref = _zimt_case("zimt_regions2_light")
     batch = prepare([build_device(setup)])
     scale = np.max(np.abs(ref["Jext"]))
-    as_zimt = solve_transient(batch, tvg, bernoulli_name="simss", zimt_ion_currents=True)
+    as_zimt = zimt_transient(batch, tvg, zimt_ion_currents=True)
     assert as_zimt.converged.all()
     c = tj_columns(as_zimt)
     for name in ("Jext", "Jnion", "Jpion"):
         assert np.max(np.abs(c[name] - ref[name])) < 1e-8 * scale, name
-    every = tj_columns(solve_transient(batch, tvg, bernoulli_name="simss"))
+    every = tj_columns(zimt_transient(batch, tvg))
     for name in ("Jnion", "Jpion"):
         assert np.max(np.abs(every[name])) > 10 * np.max(np.abs(ref[name])), name
 
@@ -667,12 +697,11 @@ def test_transients_with_and_without_ions_in_a_batch() -> None:
     blocks (the others' ion rows held): each within 1e-7 of ZimT's scale, the `tJFile`'s
     columns (the ions' currents among them) but the QFLS as `_check_columns`."""
     from jaxdd.batch import prepare
-    from jaxdd.transient import solve_transient
 
     cases = [_zimt_case(c) for c in ("zimt_ions_slow_light", "zimt_region_diff_light",
                                      "zimt_photo_light", "zimt_traps_photo_light")]  # fmt: skip
     batch = prepare([build_device(setup) for setup, _, _ in cases])
-    r = solve_transient(batch, [tvg for _, tvg, _ in cases], bernoulli_name="simss")
+    r = zimt_transient(batch, [tvg for _, tvg, _ in cases])
     assert r.converged.all()
     for k, (_, _, ref) in enumerate(cases):
         assert np.max(np.abs(r.J_ext[k] - ref["Jext"])) < 1e-7 * np.max(np.abs(ref["Jext"]))
@@ -685,11 +714,10 @@ def test_transients_in_a_batch_reproduce_zimt() -> None:
     one level and of several beside devices without): each within 1e-9, and every column of
     ZimT's `tJFile` (`_check_columns`)."""
     from jaxdd.batch import prepare
-    from jaxdd.transient import solve_transient
 
     cases = [_zimt_case(c) for c in ZIMT_CASES + ZIMT_TRAP_CASES]
     batch = prepare([build_device(setup) for setup, _, _ in cases])
-    r = solve_transient(batch, [tvg for _, tvg, _ in cases], bernoulli_name="simss")
+    r = zimt_transient(batch, [tvg for _, tvg, _ in cases])
     assert r.converged.all()
     for k, (name, (_, _, ref)) in enumerate(zip(ZIMT_CASES + ZIMT_TRAP_CASES, cases, strict=True)):
         assert np.max(np.abs(r.J_ext[k] - ref["Jext"])) < 1e-9 * np.max(np.abs(ref["Jext"]))
@@ -703,10 +731,9 @@ def test_photovoltage_at_open_circuit_reproduces_zimt() -> None:
     solve: ZimT 5.36's photovoltage through a light pulse of 1 µs and 1 ms after, 151 steps,
     to 1e-10 V (ZimT's Brent to 1e-12 V); the current stays 0 to 1e-10 of the photocurrent."""
     from jaxdd.batch import prepare
-    from jaxdd.transient import solve_transient
 
     setup, tvg, ref = _zimt_case("zimt_tpv_light")
-    r = solve_transient(prepare([build_device(setup)]), tvg, bernoulli_name="simss")
+    r = zimt_transient(prepare([build_device(setup)]), tvg)
     assert r.converged.all()
     assert np.max(np.abs(r.V_int[0] - ref["Vint"])) < 1e-10
     assert np.array_equal(r.V_ext, r.V_int)  # no series resistance
@@ -736,10 +763,9 @@ def test_series_resistance_in_time_reproduces_zimt() -> None:
     given `Vext`: ZimT 5.36's `Jext` through the sweep to 1.2 V and back in 2 × 100 ns to 1e-9
     of its scale, `Vint` to 1e-9 V (`Vint` differs from `Vext` by up to 0.65 V)."""
     from jaxdd.batch import prepare
-    from jaxdd.transient import solve_transient
 
     setup, tvg, ref = _zimt_case("zimt_rseries_sweep_light")
-    r = solve_transient(prepare([build_device(setup)]), tvg, bernoulli_name="simss")
+    r = zimt_transient(prepare([build_device(setup)]), tvg)
     assert r.converged.all()
     assert np.max(np.abs(r.J_ext[0] - ref["Jext"])) < 1e-9 * np.max(np.abs(ref["Jext"]))
     assert np.max(np.abs(r.V_int[0] - ref["Vint"])) < 1e-9
@@ -755,10 +781,10 @@ def test_automatic_stop_reproduces_zimt(case: str) -> None:
     1e-12 V), so where their difference crosses it ZimT's own error decides the step. `Vint`
     of the steps kept to 1e-10 V."""
     from jaxdd.batch import prepare
-    from jaxdd.transient import STOP_STATIC, solve_transient
+    from jaxdd.transient import STOP_STATIC
 
     setup, tvg, ref = _zimt_case(case)
-    r = solve_transient(prepare([build_device(setup)]), tvg, bernoulli_name="simss")
+    r = zimt_transient(prepare([build_device(setup)]), tvg)
     rows = int(r.accepted[0].sum())
     assert r.stop[0] == STOP_STATIC and abs(rows - len(ref)) <= 1 and rows < len(tvg.t)
     assert r.accepted[0, :rows].all() and r.converged[0, :rows].all()
@@ -796,13 +822,13 @@ def test_failure_modes_as_zimt_treats_them() -> None:
     run through them alone; and stops where the step kept before a failed one is the
     reference (`Track` 1)."""
     from jaxdd.batch import prepare
-    from jaxdd.transient import STOP_FAILED, solve_transient
+    from jaxdd.transient import STOP_FAILED
 
     setup, tvg, _ = _zimt_case("zimt_photo_light")
     batch = prepare([build_device(setup)])
 
     def run(tvg_, **kw):
-        return solve_transient(batch, tvg_, max_iter=2, bernoulli_name="simss", **kw)
+        return zimt_transient(batch, tvg_, max_iter=2, **kw)
 
     keep_all = run(dataclasses.replace(tvg, failure_mode=1))
     failed = ~keep_all.converged[0]
@@ -831,12 +857,11 @@ def test_series_resistance_beside_given_voltages_and_ions_in_a_batch() -> None:
     resistance beside a device with the voltage given (its row `Vint = Vext`) and one with
     mobile ions (5×5 blocks with the voltage's border), each as it is alone."""
     from jaxdd.batch import prepare
-    from jaxdd.transient import solve_transient
 
     cases = [_zimt_case(c) for c in ("zimt_rseries_sweep_light", "zimt_photo_light",
                                      "zimt_ions_fast_light")]  # fmt: skip
     batch = prepare([build_device(setup) for setup, _, _ in cases])
-    r = solve_transient(batch, [tvg for _, tvg, _ in cases], bernoulli_name="simss")
+    r = zimt_transient(batch, [tvg for _, tvg, _ in cases])
     assert r.converged.all()
     for k, ((_, _, ref), tol) in enumerate(zip(cases, (1e-9, 1e-9, 1e-7), strict=True)):
         assert np.max(np.abs(r.J_ext[k] - ref["Jext"])) < tol * np.max(np.abs(ref["Jext"]))

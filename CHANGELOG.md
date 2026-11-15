@@ -7,6 +7,19 @@ the API, and says so here.
 
 ## [Unreleased]
 
+### Changed
+
+- **The current in time.** With the integral form of the current (`currDiffInt = 2`, ZimT's
+  default) `solve_transient` sums each density's change over its point's control volume, where
+  0.1.0 summed as ZimT 5.36 does (over the interval after each point, the left contact's
+  change among them). ZimT's sums converge at first order in the grid: on ZimT's cases at 400
+  points the current was 2e-3 to 3e-2 of its scale off, on either grid; it is now the current
+  the equations balance, the differential form's to 5e-11, 4e-5 to 9e-4 off at 400 points
+  (the grid's own error). Transients with `currDiffInt = 2` change by that much, the open
+  circuit's and a series resistance's voltages with them; the steady state and
+  `currDiffInt = 1` do not. ZimT's sums with the new `solve_transient(..., zimt_current=True)`
+  ([docs/differences.md](docs/differences.md) §13).
+
 ## [0.1.0] – 2026-11-15
 
 The first release: SimSS 5.36's steady state and ZimT 5.36's transients, batched over thousands

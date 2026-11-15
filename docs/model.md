@@ -349,14 +349,30 @@ and `dti = 0` is the steady state, so the first step (`t = 0`, which ZimT requir
 return to it are steady states. jaxdd adds these terms to the residual and its Jacobian
 (`solver._time_terms`) and solves each step by Newton as it solves a voltage
 (`jaxdd.transient`). The current takes each density's change into the integral form's
-integrand, `R − G + dti·(n − n_prev)` (at the contacts too, where finite surface recombination
-moves them), and adds the displacement current on each interval,
+integrand, `U = R − G + dti·(n − n_prev)`, and adds the displacement current on each interval,
 
 ```
 J_D[i] = ε[i]·dti·((V[i+1] − V[i]) − (V_prev[i+1] − V_prev[i])) / (L·h[i])
 ```
 
 to the average; the differential form is unchanged (ZimT's `Calc_Curr_Diff` has no time term).
+
+In time the integral form sums each point's `U` over the point's control volume,
+
+```
+J_n[i] = J_n[i−1] − q·L·½·(h[i−1] + h[i])·U_n[i]      (holes with the sign turned)
+```
+
+the volume in which its continuity equation and Poisson's hold (`batch._sum_widths`). The two
+carriers' `U` differ in time by the charge's change, which Poisson's equation makes the
+displacement current's change from one interval to the next, so `J_n + J_p + J_D` is the same
+on every interval, and the integral form gives the current the differential form gives (to
+5e-11 of the scale at 6400 points) without reading it off single fluxes. ZimT sums over the
+interval after each point, `h[i]`, and counts the left contact's change in half an interval;
+its current converges at first order in the grid where the spacing changes
+(`solve_transient(..., zimt_current=True)`, [differences.md](differences.md) §13). In the
+steady state both carriers' `U` are the same, their sums cancel in the total, and the width
+does not matter: there it is SIMsalabim's.
 
 **Traps** add no unknowns: each level's occupation is state carried from step to step. Over a
 step it follows `df/dt = b − a·f` with `a = C_n·(n + n_t0) + C_p·(p + p_t0)` and

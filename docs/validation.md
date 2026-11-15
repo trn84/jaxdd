@@ -93,6 +93,24 @@ so that the solver is never the larger error in what is computed from it.
   and gold, and on a 20/500/10 nm stack between glass, 150 nm ITO and silver, the profile on the
   grid is SimSS's within 4e-12 and the curves within 2e-7 and 6e-7 of SimSS's scale; a uniform
   profile (`genProfile = none`) within 2.4e-6.
+- **The current in time** (2026-11-15): ZimT's integral form sums each density's change over
+  the interval after its point; summed over the point's control volume
+  (jaxdd's default, [differences.md](differences.md) §13) it is the differential form's current
+  of the same solution to 5e-11 of the scale at 400, 1600 and 6400 points (light on and off
+  with and without traps and with finite surface recombination, sweeps with and without
+  interface traps and behind a series resistance; the photovoltage at the open circuit to
+  3.5e-12 of its excursion), and with mobile ions (`zimt_ions_fast_light`,
+  `zimt_ions_slow_light`, `zimt_region_slow_light`) to 8.5e-8, 3.1e-10 and 2.7e-11 at 6400
+  points, where ZimT's sums are 4.8e-6, 2.6e-8 and 2.7e-9 off (at fewer points the ions' own
+  error in space is the larger with either: 6.0e-4, 3.4e-4 and 1.2e-4 at 400). Against the differential form
+  on the graded grid at 6400 points ZimT's sums are, at 400 / 1600 / 6400 graded points,
+  2.0e-3 / 6.0e-4 / 1.9e-4 of the scale off through the light on and off, 3.0e-2 / 7.8e-3 /
+  2.1e-3 with surface recombination and 3.9e-3 / 7.9e-4 / 1.9e-4 through the sweep, where the
+  default is 5.4e-5 / 1.9e-6, 4.0e-5 / 2.4e-6 and 9.2e-6 / 5.7e-7 off (the sweep with charged
+  interface traps: 3.0e-3 / 6.2e-4 / 1.5e-4 against 5.1e-6 / 4.1e-7); on SIMsalabim's grid
+  2.8e-3 / 1.5e-3 / 3.6e-4, 2.7e-2 / 7.6e-3 / 2.2e-3 and 2.9e-3 / 5.9e-4 / 1.6e-4 against
+  8.3e-4 / 9.4e-4 / 1.9e-4, 8.5e-4 / 9.6e-4 / 1.9e-4 and 2.5e-4 / 1.9e-4 / 3.2e-5. The
+  comparisons with ZimT below take ZimT's sums (`zimt_current=True`).
 - **The grid on hard devices** (2026-11-15, `validation/grid.py` on an A100): `hard.py`'s 4096
   devices (frozen ions up to 4e18 cm⁻³, absorbers of 250–1000 nm, transport layers of 1–300 nm),
   each in the light and the dark, against the criteria (η within 1e-3 up to 1.0 V, `J_SC` within
@@ -129,9 +147,10 @@ so that the solver is never the larger error in what is computed from it.
   on both: up to 1.0 V the graded grid at 400 points is within 6e-4 of `J_SC` (3.3e-3 of the
   scale at 1.3 V, in high injection), SIMsalabim's within 2e-2 and not monotonically (800 points
   better than 1600); at 6400 points the two are 1.7e-4 apart. In time (ZimT's cases, against
-  the graded grid at 3200 points), the sweep with mobile ions: graded 400 points 5.3e-4 of the
-  scale, SIMsalabim's 4.1e-3 at 400 and 2.2e-3 at 3200; the light on and off with traps: 1.6e-3,
-  2.5e-3 and 6.6e-4; the same Newton steps per time step on both.
+  the differential current on the graded grid at 6400 points), the sweep with mobile ions
+  (`zimt_ions_fast_light`): graded 400 points 6.0e-4 of the scale, SIMsalabim's 4.0e-3 at 400
+  and 2.2e-3 at 3200; the light on and off with traps: 5.2e-5, 8.2e-4 and 6.6e-4; the same
+  Newton steps per time step on both.
 - **Mobile ions in time** (2026-11-15, Stage C): sweeps to a voltage and back under light with
   free ions, against ZimT 5.36 at tolerances of 1e-9: ions in the absorber of
   `steady_1e17_thin_light` over 2 × 5 s to 1.2 V (`tests/data/zimt_ions_slow_light`) and over
@@ -363,8 +382,9 @@ convergence", and a rerun at tight tolerances. The cases where SimSS was wrong s
 ## The tests
 
 The tests compare with SimSS's and ZimT's runs on their grid (`grid="simss"`, a wrapper of
-`build_device` and `device_parameters` in `tests/test_solver.py`); the graded grid's own tests
-name it. `pytest` runs on whatever JAX has (CPU or GPU), in parallel, one worker per physical core
+`build_device` and `device_parameters` in `tests/test_solver.py`), ZimT's with its sums in
+the integral current (`zimt_current=True`, the wrapper `zimt_transient`); the graded grid's
+own tests name it. `pytest` runs on whatever JAX has (CPU or GPU), in parallel, one worker per physical core
 (pytest-xdist; `-n 0` for one process): on a 16-core desktop about 75 s, and 30 s once JAX's
 compilation cache (`.pytest_cache/jax`, `tests/conftest.py`) holds the programs; in one process
 it was 400 s. What is left is tracing, which JAX does not cache, and the gradients' finite
@@ -400,6 +420,7 @@ jaxdd supports (JAX 0.4.31, NumPy 1.26, Python 3.11). The main ones:
 | `test_transients_with_mobile_ions_reproduce_zimt` | the four ZimT cases with mobile ions, to 1e-7 of ZimT's scale |
 | `test_transients_with_and_without_ions_in_a_batch` | devices with mobile ions beside devices with traps and with neither, in one batch of 5×5 blocks; every `tJFile` column but the QFLS |
 | `test_ions_in_two_regions_per_species_against_zimt` | two ion regions per species: ZimT's currents with `zimt_ion_currents`, every region's without |
+| `test_the_integral_current_in_time_is_the_one_the_equations_balance` | the integral form in time on the graded grid: the differential form's current to 1e-9 of the scale; ZimT's sums (`zimt_current`) more than 1e-2 off (differences.md §13) |
 | `test_layer_voltages_as_zimt_writes_them` | `specialOutput = spv`: each layer's voltage drop, with every other column |
 | `test_automatic_stop_reproduces_zimt` | `Track` 2 and 3 on the photovoltage after a pulse: ZimT's stop within one step |
 | `test_states_compare_as_zimt_compares_them` | `States_Are_Equal` under each `convVar` |

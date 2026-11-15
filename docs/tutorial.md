@@ -180,7 +180,10 @@ columns = tj_columns(r, 0)   # the rest of ZimT's tJFile, by ZimT's column names
 
 One `TVG` serves every device of the batch, or a list gives each its own (all of one length).
 Each step is one Newton solve by implicit Euler, from the step before, to `tol` within
-`max_iter` (200); `bernoulli_name="simss"` as for the steady state. Where any device of a
+`max_iter` (200); `bernoulli_name="simss"` as for the steady state. The integral current
+(`currDiffInt = 2`) sums each density's change over its point's control volume, which is the
+current the equations balance; ZimT's own sum, which converges slowly in the grid, with
+`zimt_current=True` ([differences.md](differences.md) §13), for a comparison with ZimT. Where any device of a
 batch has mobile ions, the whole batch takes the 5×5 blocks of the ions in time, and where any
 has an open circuit or a series resistance, the internal voltage is an unknown of every
 device's steps: batch such devices apart from the others where speed matters

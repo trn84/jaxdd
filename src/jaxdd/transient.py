@@ -9,7 +9,8 @@ steady states. The traps' occupations are state carried from step to step, each 
 solved exactly over the step from the densities at its end (`solver._trap_step`, ZimT's
 `Calc_f_tb`); each carrier's capture takes the occupation's mean over the step, so that
 electrons and holes recombine at different rates while traps fill or empty. The current adds
-each density's change to the integral form's integrand and the displacement current
+each density's change to the integral form's integrand, summed over each point's control
+volume (ZimT's sum with `zimt_current`, docs/differences.md §13), and the displacement current
 (`batch._current`). The steps are a `lax.scan`, the devices `vmap`.
 
 The internal voltage: given (`Vint = Vext`), or, at the open circuit (`Vext = oc`) and with a
@@ -207,15 +208,18 @@ def _states_equal(A, B, ctl):
 OC_GUESS = 0.0
 
 
-def _solve_one(d, t, V, oc, G_frac, track, ctl, B, tol, max_iter, ions, vint, ion_last):
+def _solve_one(
+    d, t, V, oc, G_frac, track, ctl, B, tol, max_iter, ions, vint, ion_last, zimt_current
+):
     """One device through its steps: the start as SIMsalabim's (`Init_Pot_Dens_Ions_Traps`,
     Poisson at the first voltage), then each step by Newton from the one before. With `ions` the
     mobile ions are unknowns of their own (`V, ln n, ln p, ln a, ln c` per point,
     `solver._assemble_ions`), from the steady state's Boltzmann profiles. With `vint` the internal
     voltage is one more unknown of each step (`batch._vint_row`), the external voltage `V` its
-    target (where `oc` is 0). The steps' `track` and the setup's control `ctl` (`failureMode`,
-    `convVar` and its tolerances) decide, as in ZimT's main loop, which steps are kept, where the
-    run stops, and so each step's `Δt`: from the last step kept."""
+    target (where `oc` is 0). `ion_last` and `zimt_current`: ZimT's currents (`solve_transient`'s
+    `zimt_ion_currents` and `zimt_current`). The steps' `track` and the setup's control `ctl`
+    (`failureMode`, `convVar` and its tolerances) decide, as in ZimT's main loop, which steps
+    are kept, where the run stops, and so each step's `Δt`: from the last step kept."""
     s, ion = d["s"], d["ion"]
     V_first = jnp.where(oc[0] > 0, OC_GUESS, V[0])
     d0, s0, ion0, V0 = jax.lax.stop_gradient((d, s, ion, V_first))
@@ -252,7 +256,8 @@ def _solve_one(d, t, V, oc, G_frac, track, ctl, B, tol, max_iter, ions, vint, io
         s_k = _time_terms(s, before, dti_k, fb, fi if traps else None)
         pad = jnp.zeros_like(fb[:1])
         tr = {"dti": dti_k, "n": jnp.exp(before[:, 1]), "p": jnp.exp(before[:, 2]),
-              "V": before[:, 0], "fb": jnp.concatenate([pad, fb, pad])}  # fmt: skip
+              "V": before[:, 0], "fb": jnp.concatenate([pad, fb, pad]),
+              "zimt_current": jnp.asarray(float(zimt_current))}  # fmt: skip
         if ions:
             ma, mc = _ion_membership(ion)
             tr["ions"] = {"a": jnp.exp(before[:, 3]) * ma, "c": jnp.exp(before[:, 4]) * mc}
@@ -354,11 +359,12 @@ def _solve_one(d, t, V, oc, G_frac, track, ctl, B, tol, max_iter, ions, vint, io
 
 
 @functools.partial(jax.jit, static_argnames=("bernoulli_name", "max_iter", "ions", "vint",
-                                             "ion_last"))  # fmt: skip
+                                             "ion_last", "zimt_current"))  # fmt: skip
 def _solve_batch(batch, t, V, oc, G_frac, track, ctl, tol, max_iter, bernoulli_name, ions, vint,
-                 ion_last):  # fmt: skip
+                 ion_last, zimt_current):  # fmt: skip
     one = functools.partial(_solve_one, B=BERNOULLI[bernoulli_name], tol=tol, max_iter=max_iter,
-                            ions=ions, vint=vint, ion_last=ion_last)  # fmt: skip
+                            ions=ions, vint=vint, ion_last=ion_last,
+                            zimt_current=zimt_current)  # fmt: skip
     J, J_ext, V_int, ok, its, columns, kept, stop = jax.vmap(one)(batch, t, V, oc, G_frac, track,
                                                                   ctl)  # fmt: skip
     V_ext = V_int + J_ext * batch["R_series"][:, None]
@@ -366,7 +372,8 @@ def _solve_batch(batch, t, V, oc, G_frac, track, ctl, tol, max_iter, bernoulli_n
 
 
 def solve_transient(batch, tvg: TVG | list[TVG], tol=1e-10, max_iter=200, bernoulli_name="exact",
-                    zimt_ion_currents=False, ions=None, vint=None) -> TransientResult:  # fmt: skip
+                    zimt_ion_currents=False, ions=None, vint=None,
+                    zimt_current=False) -> TransientResult:  # fmt: skip
     """A batch (`batch.prepare`) through ZimT's time steps `tvg`: one for every device, or one
     per device (all of one length). Each step's Newton to `tol` or `max_iter`. Where any device
     of the batch has an open circuit or a series resistance, the internal voltage is an unknown
@@ -374,7 +381,10 @@ def solve_transient(batch, tvg: TVG | list[TVG], tol=1e-10, max_iter=200, bernou
     `failureMode` and `Track` as ZimT's main loop has them (`TransientResult.accepted`, `stop`);
     the steps after a stop are solved too (the batch runs in lockstep) but not kept.
     `zimt_ion_currents`: with several regions of one species only the last one's current, as
-    ZimT 5.36 has it (docs/differences.md §11); by default every region's.
+    ZimT 5.36 has it (docs/differences.md §11); by default every region's. `zimt_current`: the
+    integral form's sums as ZimT 5.36 has them (each point's change over the interval after
+    it, the left contact's too), which converge at first order in the grid; by default over
+    each point's control volume, the current the equations balance (docs/differences.md §13).
 
     Differentiable in the batch (`batch.device_tree`): each step's derivatives those of its
     converged solution by the implicit function (`batch._converged_jvp`), carried from step to
@@ -404,7 +414,8 @@ def solve_transient(batch, tvg: TVG | list[TVG], tol=1e-10, max_iter=200, bernou
     with _quiet():
         J, J_ext, V_int, V_ext, ok, its, columns, kept, stop = _solve_batch(
             batch, t, V, jnp.asarray(oc, dtype=float), G, track, ctl, tol, max_iter,
-            bernoulli_name, bool(ions), bool(vint), zimt_ion_currents,
+            bernoulli_name, bool(ions), bool(vint), bool(zimt_ion_currents),
+            bool(zimt_current),
         )  # fmt: skip
     out = (lambda a: a) if traced else np.asarray
     xp = jnp if traced else np

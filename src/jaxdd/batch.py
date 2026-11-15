@@ -242,8 +242,8 @@ def _current(d, full, g_frac, B=bernoulli):
     is 1, averaged (`Calc_All_Currents`); the contacts' densities of finite surface
     recombination from `full`'s neighbours (Bernoulli function `B`). With `d["tr"]`, a time
     step from the state before it (`transient`): the change of each density in the integral
-    form's integrand, the mobile ions' currents and the displacement current
-    (`Calc_Displacement_Curr`). Its parts: `_current_parts`."""
+    form's integrand (summed as `_sum_widths` has it), the mobile ions' currents and the
+    displacement current (`Calc_Displacement_Curr`). Its parts: `_current_parts`."""
     parts, _ = _current_parts(d, full, g_frac, B)
     hh = d["h"][: d["x"].shape[0] - 1]
     return jnp.sum(hh * sum(parts.values())) / jnp.sum(hh)
@@ -272,12 +272,17 @@ def _current_parts(d, full, g_frac, B=bernoulli):
     if "ti" in d["s"]:
         R_int = _interface_points(n, p, d["s"]["ti"])[:2]
     dx = jnp.diff(x[: NP + 1])
+    width = _sum_widths(h[: NP + 1], tr)
+    zimt = tr is not None and tr.get("zimt_current", 0.0) > 0
 
     def carrier(sn, Vg, dens, mu, R, R_i, before):
         U = R + R_i - G * g_frac
         U = U.at[0].set(0.0).at[-1].set(0.0)
-        if tr is not None:  # the contacts' too: a finite surface recombination moves them
-            U = U + tr["dti"] * (dens - before)
+        if tr is not None:
+            # ZimT's takes the left contact's change too (a finite surface recombination moves
+            # it), in half an interval; no equation stores anything there.
+            change = tr["dti"] * (dens - before)
+            U = U + jnp.where(zimt, change, change.at[0].set(0.0))
         ev = jnp.exp(sn * Vg[: NP + 1] / Vt)
         int_u = jnp.concatenate([jnp.zeros(1), jnp.cumsum(0.5 * dx * (U[:NP] + U[1 : NP + 1]))])
         single = jnp.sum(0.5 * dx * (ev[:-1] / mu[:NP] + ev[1:] / mu[1 : NP + 1]))
@@ -287,7 +292,7 @@ def _current_parts(d, full, g_frac, B=bernoulli):
         K = (Vt * (sn * dens[NP + 1] * jnp.exp(sn * Vg[NP + 1] / Vt)
                    - sn * dens[0] * jnp.exp(sn * Vg[0] / Vt)) - sn * double) / single  # fmt: skip
         J = Q * K + jnp.concatenate(
-            [jnp.zeros(1), jnp.cumsum(sn * Q * L * h[1 : NP + 1] * U[1 : NP + 1])]
+            [jnp.zeros(1), jnp.cumsum(sn * Q * L * width[1 : NP + 1] * U[1 : NP + 1])]
         )
         if "curr_diff" in d:  # each interval's Scharfetter–Gummel flux (`Calc_Curr_Diff`)
             dV = sn * jnp.diff(Vg) / Vt
@@ -318,6 +323,21 @@ def _current_parts(d, full, g_frac, B=bernoulli):
     return parts, points
 
 
+def _sum_widths(hh, tr):
+    """The width each point's `U` takes in the integral form's sum along the device
+    (`J[i] = J[i − 1] ± q·L·width[i]·U[i]`, over the intervals' `hh`). SIMsalabim's is the
+    interval after the point, `h[i]`: the steady state's (no `tr`), where the two carriers'
+    sums cancel in the total, and ZimT's in time (`tr["zimt_current"]` 1). Over a time step it
+    is by default the point's control volume, `(h[i − 1] + h[i])/2`, in which its continuity
+    equation and Poisson's hold: the densities' change is then the displacement current's
+    change from interval to interval, and the total is the same on every interval
+    (docs/differences.md §13)."""
+    if tr is None:
+        return hh
+    volume = jnp.concatenate([hh[:1], 0.5 * (hh[:-1] + hh[1:])])
+    return jnp.where(tr.get("zimt_current", 0.0) > 0, hh, volume)
+
+
 def _ion_currents(d, full, tr, B):
     """The mobile ions' currents on each interval (NP + 1) over a time step, each region on its own
     (ZimT's `Calc_All_Currents`: `Calc_Curr_Int` of the region with the densities' change as its
@@ -330,6 +350,7 @@ def _ion_currents(d, full, tr, B):
     NP = x.shape[0] - 2
     V = full[:, 0]
     dx, hh = jnp.diff(x), h[: NP + 1]
+    width = _sum_widths(hh, tr)
     masks, totals, _ = _slots(ion)
     ka = ion["a_slots"].shape[0]
     out = [jnp.zeros(NP + 1), jnp.zeros(NP + 1)]
@@ -358,7 +379,7 @@ def _ion_currents(d, full, tr, B):
         ends = sn * (dens[last] * ev[last] - dens[first] * ev[first])
         K = (Vt * ends - sn * double) / single
         e = jnp.arange(NP + 1)
-        step = jnp.where(e > first, sn * Q * L * hh * U[: NP + 1], 0.0) * pair
+        step = jnp.where(e > first, sn * Q * L * width * U[: NP + 1], 0.0) * pair
         J = Q * K + jnp.cumsum(step)
         if "curr_diff" in d:
             dV = sn * jnp.diff(V) / Vt

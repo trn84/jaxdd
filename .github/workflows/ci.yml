@@ -39,10 +39,14 @@ jobs:
           - name: newest
             python: "3.13"
             pins: ""
+            workers: logical
           # What pyproject.toml promises at least: JAX 0.4.31 (the AMD MI50's image) and NumPy 1.26.
           - name: oldest
             python: "3.11"
             pins: "jax==0.4.31 jaxlib==0.4.31 numpy==1.26.4 scipy==1.11.4"
+            # Two workers: on JAX 0.4.31 each grows to about 6.4 GB over the suite (its compiled
+            # programs), and four outgrew the runner's 16 GB, which then cancelled the job.
+            workers: "2"
     env:
       JAX_PLATFORMS: cpu
     steps:
@@ -60,7 +64,7 @@ jobs:
           path: .pytest_cache/jax
           key: jax-${{ matrix.name }}-${{ hashFiles('src/**/*.py') }}
           restore-keys: jax-${{ matrix.name }}-
-      - run: .venv/bin/python -m pytest -q -n logical
+      - run: .venv/bin/python -m pytest -q -n ${{ matrix.workers }}
 
   build:
     runs-on: ubuntu-latest

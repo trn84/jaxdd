@@ -49,7 +49,8 @@ the GPUs, `solve_batch(..., devices=[...])` too. The batch is then the whole: 32
 is 16384 on each. Not split where the batch or the voltages are traced (inside `jax.jit`,
 `jax.jvp`, `jax.vmap`), nor in `jaxdd.transient`. On two A100-SXM4-40GB (`STEPS=gpus benchmarks/apptainer.sh`,
 2026-11-15) the benchmark runs at 5500 curves/s with 16384 devices per GPU, 2.01× the 2739 of one
-GPU, and at 4767 with 8192 per GPU.
+GPU, and at 4767 with 8192 per GPU; the grid study's small batches gain less (1.24× at 1024
+devices per GPU and 800 points, 1.45× at 512 and 1600), a GPU being busy only with thousands.
 
 **Time a solver from its third call on, or check that nothing compiles.** A benchmark that
 excludes the first call excludes one compilation. `jaxdd.batch._solve_batch._cache_size()`

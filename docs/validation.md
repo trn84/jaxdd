@@ -122,6 +122,21 @@ so that the solver is never the larger error in what is computed from it.
   Brent on whole solves at each step. The open circuit at `t = 0` is SimSS 5.36's `Voc`
   (1.0282617 V; SimSS at 1e-12 on 0.1 mV steps around it, a cubic through them,
   `thin_l1_voc_light`) to 1.1e-13 V.
+- **ZimT's output, its automatic stop and failures** (2026-11-15, Stage C). Every column of the
+  `tJFile` of the fourteen ZimT cases in `tests/data`: the currents and the recombination as
+  currents (per layer, at each interface, the minority carriers' at the contacts, the ions',
+  the displacement current) within 1e-7 of the scale, `errJ` within 3e-6, with
+  `specialOutput = spv` each layer's voltage drop within 1e-9 V. The QFLS within 1e-10 V where
+  every carrier lies above Newton's floor of convergence (the sweeps under light); not where
+  one lies below it (docs/model.md "Transients"): up to 5e-3 V in the dark after the light,
+  2e-2 V in a transport layer in the steady state, up to 3 V in a layer with an ionic region.
+  The automatic stop on the photovoltage after a pulse, against the steady state before it
+  (`Track` 2) and step by step (`Track` 3): ZimT stops after 118 and 119 of 182 steps, jaxdd a
+  step before each, where the states' difference crosses `tolPois` (1e-12 V) and ZimT's own
+  error, about as large, decides; `Vint` within 7.4e-12 V up to there. `failureMode` 0, 1 and
+  2 on steps made to fail. Two ion regions per species (`zimt_regions2_light`): ZimT keeps
+  only the last region's current (differences.md §11); with `zimt_ion_currents` jaxdd's
+  `Jext`, `Jnion`, `Jpion` within 1e-8 of the scale.
 - **Traps in time** (2026-11-15, Stage C): light on and off at short circuit with the
   absorber's traps neutral (`tests/data/zimt_traps_photo_light`, `thin_l1_light` itself), charged
   as acceptors (`zimt_acceptor_photo_light`) and three levels from a trap file with two at an
@@ -328,9 +343,14 @@ differences, about 12 s each for the slowest:
 | `test_voltages_from_experimental_data_and_simss_checks` | `useExpData` (`expJV`'s voltages, in the file's order) and SimSS's checks on the voltage parameters |
 | `test_transients_of_electrons_and_holes_reproduce_zimt` | the four ZimT cases without traps, to 1e-9 of ZimT's scale |
 | `test_transients_with_traps_reproduce_zimt` | the four ZimT cases with traps (neutral, charged, a trap file, interface), to 1e-9 |
-| `test_transients_in_a_batch_reproduce_zimt` | all eight as one batch, each device with its own steps |
+| `test_transients_in_a_batch_reproduce_zimt` | all eight as one batch, each device with its own steps; every `tJFile` column (the QFLS of the sweeps under light) |
 | `test_transients_with_mobile_ions_reproduce_zimt` | the four ZimT cases with mobile ions, to 1e-7 of ZimT's scale |
-| `test_transients_with_and_without_ions_in_a_batch` | devices with mobile ions beside devices with traps and with neither, in one batch of 5×5 blocks |
+| `test_transients_with_and_without_ions_in_a_batch` | devices with mobile ions beside devices with traps and with neither, in one batch of 5×5 blocks; every `tJFile` column but the QFLS |
+| `test_ions_in_two_regions_per_species_against_zimt` | two ion regions per species: ZimT's currents with `zimt_ion_currents`, every region's without |
+| `test_layer_voltages_as_zimt_writes_them` | `specialOutput = spv`: each layer's voltage drop, with every other column |
+| `test_automatic_stop_reproduces_zimt` | `Track` 2 and 3 on the photovoltage after a pulse: ZimT's stop within one step |
+| `test_states_compare_as_zimt_compares_them` | `States_Are_Equal` under each `convVar` |
+| `test_failure_modes_as_zimt_treats_them` | `failureMode` 0, 1, 2 on steps made to fail, `Δt` from the last step kept |
 | `test_the_ions_blocks_in_time_are_autodiff` | `_assemble_ions`' 5×5 blocks and slot columns against `jax.jacfwd`, over a step and in the steady state |
 | `test_photovoltage_at_open_circuit_reproduces_zimt` | the photovoltage at the open circuit through a light pulse, `Vint` to 1e-10 V of ZimT's |
 | `test_open_circuit_in_the_steady_state_is_simss_voc` | `oc` at `t = 0` against SimSS's `Voc` (`tests/data/thin_l1_voc_light`), to 1e-10 V |

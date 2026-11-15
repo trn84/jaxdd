@@ -395,6 +395,41 @@ brackets from it (13 Newton steps to `Voc` for `thin_l1_light`), each step after
 last voltage extrapolated as the state is; with a series resistance from `Vext` less the last
 current's drop. `solve_transient` returns `Vint` and `Vext = Vint + Jext·R_series` per step.
 
+**Stopping and failures**, as ZimT's main loop has them, per device (`TVG` carries the setup's
+`failureMode`, `convVar` and tolerances). A step not converged: `failureMode` 0 stops the run,
+1 keeps the step, 2 skips it, keeping it only in the steady state (`t = 0`), but stops where the
+last step kept is the reference. Each step's `Δt` is from the last step kept, so after a
+skipped step the next one is longer. `Track` 1 makes the last state kept the reference
+(if its step converged); 2 and 3 compare it with the reference (`States_Are_Equal`: the same
+`G_frac`, the potentials within `tolPois` in the Euclidean norm over the grid, then by
+`convVar` the densities each within `tolDens` relatively, the current within `tolCurr` or the
+smaller `errJ`, either or both), 3 then makes it the reference; five equal states in a row
+(`MinCountStatic`) stop the run after that step. The batch runs in lockstep, so a device's
+steps after its stop are solved but not kept: `TransientResult.accepted` marks the steps ZimT
+writes, `stop` why a device stopped. Two of ZimT's own ways are kept: its `tVGFile` forgets a
+`Track = 1` on its first line (a 2 or 3 after it is refused, as ZimT refuses it, though only
+when it reaches that line), and `convVar` 2–4 also loosen ZimT's own convergence (its solve
+stops once the current is within `tolCurr`), which jaxdd's does not follow: its states are
+converged as always. Where the states' difference crosses `tolPois` from one step to the next,
+ZimT's own error, which is about `tolPois`, decides the step it stops at: jaxdd stops within a
+step of it.
+
+**Output**: the rest of ZimT's `tJFile` (`Write_To_tJV_File`), per step and device, named as
+ZimT names them by `tj_columns`: `errJ` (the current's rms deviation over the grid from its
+average), per layer the QFLS averaged on the grid and the photocurrent and each carrier's
+direct and bulk recombination as currents, at each interface the interface traps'
+recombination of each carrier, the minority carriers' currents at the contacts, the shunt's,
+the ions' and the displacement current, and with `specialOutput = spv` each layer's voltage
+drop. The currents are `batch._current_parts`, what the average `Jint` is made of. ZimT's
+`varFile` (the profiles at each step) is not produced. The QFLS is `V_T·ln(n·p/n_i²)`, and a
+density below Newton's floor of convergence (`n_floor`, 1e-12 of the largest `N_c`, docs/solver.md)
+is not converged: it moves no current, but its logarithm moves the QFLS. Where every carrier
+of a layer lies above the floor (a device under light) the QFLS is ZimT's; in the dark, after
+the light, in a transport layer's minority carriers in the steady state and in the depletion
+zones of an ionic region it is not (docs/validation.md). A lower floor converges them in a
+device without ions (1e-20 of it: the QFLS ZimT's to 4e-6 V, 4 % more Newton steps), but with
+ions Newton then does not converge at all, so the floor stays.
+
 ## Constants
 
 SIMsalabim's, not CODATA's: `q = 1.6022e-19 C`, `k = 1.3807e-23 J/K`, `ε₀ = 8.8542e-12 F/m`. A

@@ -236,6 +236,20 @@ that let it enter (`ionsMayEnter`). Two cases come out against what the input sa
 does not do, and neither reading is clearly the one meant. Close the layer between the two
 regions (`ionsMayEnter = 0`), or give the ions a mobility in the layer they enter.
 
+## 11 The ions' current with several regions of one species (ZimT)
+
+**What.** ZimT 5.36's `Calc_All_Currents` computes each mobile region's ion current into one
+array per species, each region by `Calc_Curr_Int` (or `Calc_Curr_Diff`), which first sets the
+current outside the region to zero: the regions before it among it. Of several regions of one
+species only the last one's current is left, in the ions' columns of the `tJFile` (`Jnion`,
+`Jpion`), in `Jint` and so in `Jext`, and in the open circuit and series resistance, whose
+`Vint` is found from them. With anions and cations in both transport layers
+(`tests/data/zimt_regions2_light`, mobilities 1e-12 m²/Vs) ZimT's `Jnion` is 1/60 and its
+`Jpion` 1/14 of both regions' (2.5e-7 of the scale in `Jext` here; more with faster ions).
+
+**jaxdd.** Every region's current, by default; ZimT's with
+`solve_transient(..., zimt_ion_currents=True)`, to 1e-8 of the scale.
+
 ## Not differences
 
 Reproduced on purpose, because they are part of the discrete equations SimSS defines:

@@ -98,6 +98,14 @@ to 1 ms after (120 steps, logarithmic); `Voc` 1.0283 V, 1.0368 V at the pulse's 
 `zimt_rseries_sweep_light/`: `resist_light` (`R_series = 2e-4`, `R_shunt = 0.3` Ω m²) through the
 sweep of `zimt_sweep_light`. ZimT 5.36 at `tolPois = tolDens = tolVint = 1e-12`,
 `failureMode = 0`.
+`zimt_track_tpv_light/`, `zimt_track_tpv3_light/`: `zimt_tpv_light` with ZimT's automatic stop:
+the steady state at `t = 0` twice, the second `Track = 1` (ZimT forgets a 1 on the first line),
+the decay at 1 sun continued to 1 s, each of its steps `Track = 2` (compared with the steady
+state) or `3` (with the step before); ZimT 5.36 stops after 118 and 119 of 182 steps.
+`zimt_sweep_spv_light/`: `zimt_sweep_light` with `specialOutput = spv` (each layer's voltage
+drop in the `tJFile`). `zimt_regions2_light/`: `two_regions_light` (anions and cations in both
+transport layers, two regions per species) as a ZimT input through the sweep of
+`zimt_ions_fast_light`, ZimT 5.36 at `tolPois = tolDens = 1e-9`.
 `thin_l1_voc_light/`: `thin_l1_light` from SimSS 5.36 at `tolPois = tolDens = 1e-12` on 0.1 mV
 steps from 1.0280 to 1.0285 V, around its `Voc`: the reference for the open circuit at `t = 0`.
 

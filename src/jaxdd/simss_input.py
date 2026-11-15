@@ -156,7 +156,10 @@ class TVG:
     `oc`, the open circuit), `G_frac` and `track` (0–3, ZimT's automatic stop). `dti` is
     1/Δt from the step before, 0 at `t = 0` (a steady state: the first step, or a return
     to it). ZimT takes Δt from the last step it accepted, so where it skips a failed step
-    (`failureMode = 2`) the next one is longer than here."""
+    (`failureMode = 2`) the next one is longer (`transient.solve_transient` does as ZimT).
+    With them the setup's `failureMode` (0 stop at a failed step, 1 keep it, 2 skip it),
+    `convVar` (what two states compare by, `Track` 2 and 3) and the tolerances that
+    comparison takes (`tolPois` V, `tolDens`, `tolCurr` A/m²)."""
 
     t: np.ndarray
     Vext: np.ndarray
@@ -164,6 +167,11 @@ class TVG:
     G_frac: np.ndarray
     track: np.ndarray
     dti: np.ndarray
+    failure_mode: int = 1
+    conv_var: int = 1
+    tol_pois: float = 1e-6
+    tol_dens: float = 1e-6
+    tol_curr: float = 1e-3
 
 
 def read_tvg(setup: Setup) -> TVG:
@@ -211,10 +219,21 @@ def read_tvg(setup: Setup) -> TVG:
                              "least one Track=1")  # fmt: skip
         rows.append((t, v, oc, g, int(track), dti))
         previous = t
+        if len(rows) == 1:  # ZimT forgets the first line's Track=1 (its main loop resets it)
+            reference = False
     if not rows or rows[0][0] != 0:
         raise ValueError("tVGFile did not specify steady-state (t=0)")
     t, v, oc, g, track, dti = (np.array(c) for c in zip(*rows, strict=True))
-    return TVG(t=t, Vext=v, oc=oc.astype(bool), G_frac=g, track=track, dti=dti)
+    raw = setup.raw
+    failure_mode, conv_var = int(raw.get("failureMode", 1)), int(raw.get("convVar", 1))
+    if failure_mode not in (0, 1, 2):
+        raise ValueError("Invalid failureMode selected.")
+    if conv_var not in (1, 2, 3, 4):
+        raise ValueError("Invalid convVar selected.")
+    return TVG(t=t, Vext=v, oc=oc.astype(bool), G_frac=g, track=track, dti=dti,
+               failure_mode=failure_mode, conv_var=conv_var,
+               tol_pois=float(raw.get("tolPois", 1e-6)), tol_dens=float(raw.get("tolDens", 1e-6)),
+               tol_curr=float(raw.get("tolCurr", 1e-3)))  # fmt: skip
 
 
 def ion_regions(setup: Setup, species: str) -> list[tuple[int, int, bool]]:

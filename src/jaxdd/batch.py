@@ -104,7 +104,21 @@ def _device_tree(dev: Device, xp=np) -> dict:
     }  # fmt: skip
     if dev.curr_diff:  # `currDiffInt = 1`; without the key the integral form alone
         tree["curr_diff"] = 1.0
+    tree["layers"] = _layer_masks(dev)
     return tree
+
+
+def _layer_masks(dev: Device) -> dict:
+    """Each layer's intervals (`i0 ≤ i < i1`, layers × NP + 1) and its first and last points
+    (layers × NP + 2), for the output's averages per layer (`transient._columns`)."""
+    NP = len(dev.x) - 2
+    nl = len(dev.i0)
+    cells, first, last = np.zeros((nl, NP + 1)), np.zeros((nl, NP + 2)), np.zeros((nl, NP + 2))
+    for j, (a, b) in enumerate(zip(dev.i0, dev.i1, strict=True)):
+        cells[j, a:b] = 1.0
+        first[j, a] = 1.0
+        last[j, b] = 1.0
+    return {"cells": cells, "first": first, "last": last}
 
 
 def device_tree(structure: Structure, params: dict) -> dict:
@@ -163,6 +177,9 @@ def prepare(devices: list[Device]) -> dict:
     if any("curr_diff" in t for t in trees):  # the differential current; the others integral
         for t in trees:
             t.setdefault("curr_diff", 0.0)
+    most = max(t["layers"]["cells"].shape[0] for t in trees)  # layers: padded with empty ones
+    for t in trees:
+        t["layers"] = {k: np.pad(v, ((0, most - len(v)), (0, 0))) for k, v in t["layers"].items()}
     _pad_levels(trees)
     return jax.tree_util.tree_map(lambda *leaves: jnp.asarray(np.stack(leaves)), *trees)
 
@@ -225,7 +242,18 @@ def _current(d, full, g_frac, B=bernoulli):
     is 1, averaged (`Calc_All_Currents`); the contacts' densities of finite surface
     recombination from `full`'s neighbours (Bernoulli function `B`). With `d["tr"]`, a time
     step from the state before it (`transient`): the change of each density in the integral
-    form's integrand, and the displacement current (`Calc_Displacement_Curr`)."""
+    form's integrand, the mobile ions' currents and the displacement current
+    (`Calc_Displacement_Curr`). Its parts: `_current_parts`."""
+    parts, _ = _current_parts(d, full, g_frac, B)
+    hh = d["h"][: d["x"].shape[0] - 1]
+    return jnp.sum(hh * sum(parts.values())) / jnp.sum(hh)
+
+
+def _current_parts(d, full, g_frac, B=bernoulli):
+    """`_current`'s parts on each interval (NP + 1), with SIMsalabim's sign (turned with the
+    anode on the left): `Jn`, `Jp`, and over a time step `Ja`, `Jc` (the anions' and cations',
+    with mobile ions) and `JD`; and on the points what the output's columns take: the densities,
+    the generation and each carrier's direct, bulk and interface recombination."""
     full = _with_contacts(full, d["s"], d["Vt"], B)
     V, n, p = full[:, 0], jnp.exp(full[:, 1]), jnp.exp(full[:, 2])
     Vt, x, h, L = d["Vt"], d["x"], d["h"], d["L"]
@@ -272,32 +300,43 @@ def _current(d, full, g_frac, B=bernoulli):
 
     mu_n, mu_p = _field_mobilities(d["mu_n"], d["mu_p"], V, d["s"])
     before_n, before_p = (None, None) if tr is None else (tr["n"], tr["p"])
-    Jn = carrier(-1.0, V + d["offset_n"], n, mu_n, Rn, R_int[0], before_n)
-    Jp = carrier(1.0, V + d["offset_p"], p, mu_p, Rp, R_int[1], before_p)
-    total = Jn + Jp
-    if tr is not None and "ions" in tr:  # mobile ions in time: their currents (ZimT's Jnion, Jpion)
-        full = _ion_full(full, d["ion"], Vt, B, tr["dti"])
-        total = total + _ion_currents(d, full, tr, B)
+    # With the anode on the left SIMsalabim turns every current's sign.
+    sign = -d["left_elec"]
+    parts = {
+        "Jn": sign * carrier(-1.0, V + d["offset_n"], n, mu_n, Rn, R_int[0], before_n),
+        "Jp": sign * carrier(1.0, V + d["offset_p"], p, mu_p, Rp, R_int[1], before_p),
+    }
+    if tr is not None and "ions" in tr:  # mobile ions in time (ZimT's Jnion, Jpion)
+        Ja, Jc = _ion_currents(d, _ion_full(full, d["ion"], Vt, B, tr["dti"]), tr, B)
+        parts["Ja"], parts["Jc"] = sign * Ja, sign * Jc
     if tr is not None:  # the displacement current on each interval
         dV, dV_before = jnp.diff(V), jnp.diff(tr["V"])
-        total = total + d["eps"][: NP + 1] * (dV - dV_before) * tr["dti"] / (L * h[: NP + 1])
-    hh = h[: NP + 1]
-    # With the anode on the left SIMsalabim turns every current's sign.
-    return -d["left_elec"] * (jnp.sum(hh * total) / jnp.sum(hh))
+        parts["JD"] = sign * d["eps"][: NP + 1] * (dV - dV_before) * tr["dti"] / (L * h[: NP + 1])
+    direct = rec["kd"] * (n * p - rec["ni2"])
+    points = {"V": V, "n": n, "p": p, "gen": G * g_frac, "direct": direct, "bulk_n": Rn - direct,
+              "bulk_p": Rp - direct, "int_n": R_int[0], "int_p": R_int[1]}  # fmt: skip
+    return parts, points
 
 
 def _ion_currents(d, full, tr, B):
     """The mobile ions' currents on each interval (NP + 1) over a time step, each region on its own
     (ZimT's `Calc_All_Currents`: `Calc_Curr_Int` of the region with the densities' change as its
     integrand, or `Calc_Curr_Diff` with `curr_diff`), as the carriers' (`_current`): no
-    recombination, so the current across a layer interface is the one before it; 0 outside."""
+    recombination, so the current across a layer interface is the one before it; 0 outside.
+    The anions' and the cations' apart. With `tr["ion_last"]` 1 each species' last region's
+    alone, as ZimT 5.36 has it with several (each region's `Calc_Curr_Int` zeroes the current
+    outside it, the ones before it among it; docs/differences.md §11)."""
     Vt, x, h, L, ion = d["Vt"], d["x"], d["h"], d["L"], d["ion"]
     NP = x.shape[0] - 2
     V = full[:, 0]
     dx, hh = jnp.diff(x), h[: NP + 1]
     masks, totals, _ = _slots(ion)
     ka = ion["a_slots"].shape[0]
-    out = jnp.zeros(NP + 1)
+    out = [jnp.zeros(NP + 1), jnp.zeros(NP + 1)]
+    idx = jnp.arange(masks.shape[0])
+    last_a = jnp.max(jnp.where((totals > 0) & (idx < ka), idx, -1))
+    last_c = jnp.max(jnp.where((totals > 0) & (idx >= ka), idx, -1))
+    only_last = tr.get("ion_last", 0.0) > 0
     for k in range(masks.shape[0]):
         anion = k < ka
         sn = -1.0 if anion else 1.0
@@ -326,8 +365,9 @@ def _ion_currents(d, full, tr, B):
             flux = sn * Q * mu[: NP + 1] * Vt * (dens[1:] * B(-dV) - dens[:-1] * B(dV)) / (L * hh)
             J = jnp.where(d["curr_diff"] > 0, flux, J)
         J = jnp.where(d["iface"], jnp.roll(J, 1), J)
-        out = out + jnp.where((pair > 0) & (totals[k] > 0), J, 0.0)
-    return out
+        counted = (totals[k] > 0) & (~only_last | (k == (last_a if anion else last_c)))
+        out[0 if anion else 1] = out[0 if anion else 1] + jnp.where((pair > 0) & counted, J, 0.0)
+    return tuple(out)
 
 
 def _poisson_solve(y, d, s, ion, Vint, max_iter):

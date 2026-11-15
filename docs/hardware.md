@@ -42,7 +42,9 @@ covers thousands of devices. On an A100-SXM4-40GB batch 16384 gives about 2800 c
 
 **Several GPUs in one process.** `solve_batch` splits a batch along its devices across every
 GPU the process sees (`shard_map`; the devices are independent, so the GPUs do not talk), each
-solving its share; a batch is padded to a whole number per GPU. `CUDA_VISIBLE_DEVICES` chooses
+solving its share; a batch is padded to a whole number per GPU, and the results come back
+through the host onto one device, so that nothing after a pass is an operation across the GPUs
+(a scatter across them, run by XLA with collectives, hung both GPUs of a host with an old driver). `CUDA_VISIBLE_DEVICES` chooses
 the GPUs, `solve_batch(..., devices=[...])` too. The batch is then the whole: 32768 on two GPUs
 is 16384 on each. Not split where the batch or the voltages are traced (inside `jax.jit`,
 `jax.jvp`, `jax.vmap`), nor in `jaxdd.transient`. On two A100-SXM4-40GB (`STEPS=gpus benchmarks/apptainer.sh`,

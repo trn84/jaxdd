@@ -66,8 +66,9 @@ The study: `J(V)` and `η` at 200, 400, 800, 1600 points, uniform against graded
 r-adaptive, on the hardest devices known (`L_diff/d` 0.1–0.2, ions at 1e18 cm⁻³, thick undoped
 layers). Its baseline, SIMsalabim's own grid at 200 to 3200 points on `hard.py`'s
 devices against the criteria, is `validation/grid.py` (`STEPS=grid benchmarks/apptainer.sh`),
-run on one A100 (2026-11-15; a first run on two lost both GPUs at 1600 points, the driver
-hung, not reproduced on one). Against 3200 points, of 4096 hard devices in the light and the dark:
+run on one A100 (2026-11-15; a first run on two hung both GPUs at 1600 points, in the second
+pass's scatter across the GPUs, since removed (9deb5ee); to be confirmed on two:
+`GRID_ARGS="4096 4096 800,1600" STEPS="info grid" benchmarks/apptainer.sh`). Against 3200 points, of 4096 hard devices in the light and the dark:
 
 | `NP` | meet both criteria | η: median, 99 %, max | `J_SC`: median, 99 % |
 |---|---|---|---|

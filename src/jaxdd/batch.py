@@ -1,4 +1,4 @@
-"""Many devices at once: the solver of `solver.py` as one pure function, `vmap`ped (M3).
+"""Many devices at once: the solver of `solver.py` as one pure function, `vmap`ped.
 
 Every device of a batch has the same number of grid points (SIMsalabim's `NP`) and the same
 voltages; everything else — layers, doping, ions, pre-bias — may differ. A device is a pytree of
@@ -528,19 +528,25 @@ def _newton_solve(y, logs, d, s, ion, Vint, g_frac, B, tol, max_iter, strict=Fal
     With `vint` the internal voltage is an unknown, the last of `logs` (its start), and `Vint`
     the target `(oc, Vext)` of its row (`_vint_row`)."""
     guess = jax.lax.stop_gradient((y, logs))
-    return _converged(B, max_iter, strict, vint, guess, (d, s, ion, Vint, g_frac), tol)
+    y, logs, J, done, it = _converged(B, max_iter, strict, vint, guess,
+                                      (d, s, ion, Vint, g_frac), tol)  # fmt: skip
+    return y, logs, J, done > 0, it.astype(int)
 
 
 @functools.partial(jax.custom_jvp, nondiff_argnums=(0, 1, 2, 3))
 def _converged(B, max_iter, strict, vint, guess, params, tol):
-    """`_newton_solve` from `guess`, without derivatives of its own."""
+    """`_newton_solve` from `guess`, without derivatives of its own; the flag and the count as
+    floats, so that their tangents are zeros in every JAX (an integer output's tangent is
+    `float0` in newer JAX and of the output's own type in older)."""
     d, s, ion, Vint, g_frac = params
-    return _newton_loop(*guess, d, s, ion, Vint, g_frac, B, tol, max_iter, strict, vint)
+    y, logs, J, done, it = _newton_loop(*guess, d, s, ion, Vint, g_frac, B, tol, max_iter,
+                                        strict, vint)  # fmt: skip
+    return y, logs, J, done.astype(float), jnp.asarray(it, dtype=float)
 
 
 @_converged.defjvp
 def _converged_jvp(B, max_iter, strict, vint, primals, tangents):
-    """Implicit differentiation (M7): at a root of `_residual`, `∂r/∂y·ẏ = −∂r/∂θ·θ̇`. One linear
+    """Implicit differentiation: at a root of `_residual`, `∂r/∂y·ẏ = −∂r/∂θ·θ̇`. One linear
     solve with Newton's own Jacobian, whatever the iterations were; its transpose, for reverse
     mode, the same sweep on the transposed blocks (`custom_linear_solve`). A voltage not
     converged (or not finite) gets zero derivatives, so that it cannot spoil a gradient summed
@@ -548,10 +554,9 @@ def _converged_jvp(B, max_iter, strict, vint, primals, tangents):
     guess, params, tol = primals
     out = _converged(B, max_iter, strict, vint, guess, params, tol)
     y, logs, _, done, it = out
-    valid = done & jnp.all(jnp.isfinite(y)) & jnp.all(jnp.isfinite(logs))
+    valid = (done > 0) & jnp.all(jnp.isfinite(y)) & jnp.all(jnp.isfinite(logs))
     y_dot, logs_dot, J_dot = _tangent(B, vint, valid, y, logs, params, tangents[1])
-    zero = functools.partial(np.zeros, dtype=jax.dtypes.float0)
-    return out, (y_dot, logs_dot, J_dot, zero(np.shape(done)), zero(np.shape(it)))
+    return out, (y_dot, logs_dot, J_dot, jnp.zeros_like(done), jnp.zeros_like(it))
 
 
 @functools.partial(jax.checkpoint, static_argnums=(0, 1))
@@ -561,6 +566,13 @@ def _tangent(B, vint, valid, y, logs, params, params_dot):
     linearisation: these are computed again in the backward pass."""
     y = jnp.where(valid, y, 0.0)
     logs = jnp.where(valid, logs, 0.0)
+    # The tangents of integer and boolean leaves (masks, counts) as `float0`, which `jax.jvp`
+    # takes for them: JAX before 0.4.36 or so hands a custom JVP rule their tangents as bools.
+    params_dot = jax.tree_util.tree_map(
+        lambda p, t: t if jnp.issubdtype(jnp.result_type(p), jnp.inexact)
+        else np.zeros(np.shape(p), dtype=jax.dtypes.float0),
+        params, params_dot,
+    )  # fmt: skip
 
     def residual(params):
         d, s, ion, Vint, g_frac = params

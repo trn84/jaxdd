@@ -2,8 +2,9 @@
 
 jaxdd is a one-dimensional drift-diffusion solver for semiconductor devices, perovskite solar
 cells first. It solves the same discrete equations as
-[SIMsalabim](https://github.com/kostergroup/SIMsalabim) 5.36 (its steady-state program SimSS),
-reads SIMsalabim's own input files, and is validated against SimSS's output. What it adds is
+[SIMsalabim](https://github.com/kostergroup/SIMsalabim) 5.36 (its steady-state program SimSS
+and its transient program ZimT), reads SIMsalabim's own input files, and is validated against
+SimSS's and ZimT's output. What it adds is
 scale: written in JAX, it solves thousands to hundreds of thousands of devices at once, on a GPU
 or on every core of a CPU.
 
@@ -68,11 +69,13 @@ solves against the input, [differences.md](differences.md) §10). What comes nex
 
 ## Where jaxdd follows SIMsalabim, and where it does not
 
-jaxdd solves SIMsalabim's **discrete equations**: the same grid, the same Scharfetter–Gummel
-discretisation in the generalised potentials, the same treatment of interfaces, the same
-integral current, SIMsalabim's physical constants (`q`, `k`, `ε₀` to five digits). A converged
-jaxdd solution is therefore SimSS's solution, not merely a similar one, and the two can be
-compared to round-off.
+jaxdd solves SIMsalabim's **discrete equations**: the same Scharfetter–Gummel discretisation
+in the generalised potentials, the same treatment of interfaces, the same integral current,
+SIMsalabim's physical constants (`q`, `k`, `ε₀` to five digits). On SIMsalabim's grid
+(`grid="simss"`) a converged jaxdd solution is therefore SimSS's solution, not merely a similar
+one, and the two can be compared to round-off. Its own grid, the default, is graded towards
+every layer's ends and converges with fewer points; on it the curves differ from SimSS's by
+SimSS's grid error ([model.md](model.md#the-grid), [differences.md](differences.md) §12).
 
 It solves them **differently**: SimSS iterates Poisson's equation and the two continuity
 equations in turn (Gummel), one device at a time; jaxdd takes a coupled Newton step on all
@@ -100,10 +103,13 @@ and offers a switch that reproduces SimSS's number. Each such case is in
 
 | Path | What |
 |---|---|
+| `src/jaxdd/__init__.py` | the API at the top level (`jaxdd.read_setup`, `jaxdd.solve_batch`, …) and `jaxdd.__version__` |
 | `src/jaxdd/simss_input.py` | reading SIMsalabim's input files, from a directory (`read_setup`) or from texts (`setup_from_texts`); `check_supported` |
-| `src/jaxdd/device.py` | SIMsalabim's grid and every static array of one device: its structure and parameters (`device_parameters`), the arrays from them in NumPy (`build_device`) or JAX (`device_arrays`) |
+| `src/jaxdd/device.py` | the grid (jaxdd's graded one or SIMsalabim's) and every static array of one device: its structure and parameters (`device_parameters`), the arrays from them in NumPy (`build_device`) or JAX (`device_arrays`) |
 | `src/jaxdd/solver.py` | the discrete equations, the Newton step, the block sweep; `solve_jv` for one device |
 | `src/jaxdd/batch.py` | the same solver as one pure function, `vmap`ped: `prepare`, `solve_batch` |
+| `src/jaxdd/transient.py` | ZimT's transients of a batch: `solve_transient`, `tj_columns` |
+| `src/jaxdd/optics.py` | the generation profile by the transfer-matrix method (`genProfile = calc`) |
 | `src/jaxdd/sweep.py` | the batch's block sweep in one GPU kernel (Pallas), and the switch between it and the scan |
 | `src/jaxdd/fit.py` | least squares from many starts at once: scipy's `least_squares` from each, their curves and Jacobians solved as one batch (`least_squares_many`) |
 | `src/jaxdd/constants.py` | SIMsalabim's physical constants |
@@ -113,6 +119,8 @@ and offers a switch that reproduces SimSS's number. Each such case is in
 | `rocm/` | running on AMD MI50 (gfx906) cards ([hardware.md](hardware.md)) |
 | `simss/` | building SimSS, the reference, with the patch for frozen ions ([README](../simss/README.md)) |
 | `PLAN.md` | what is planned and what may come |
+| `CHANGELOG.md` | what changed from one release to the next |
+| `.github/workflows/ci.yml` | lint, the tests on the newest and the oldest supported JAX, the wheel; a release on a tag |
 | `NOTICE`, `COPYING*` | licence and attribution |
 
 ## Licence and attribution

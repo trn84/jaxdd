@@ -1751,7 +1751,7 @@ def _scaled(batch, a):
 
 
 def test_gradients_of_the_curves_are_finite_differences() -> None:
-    """M7: reverse mode (`jax.grad`) through `solve_batch`, by implicit differentiation of each
+    """Reverse mode (`jax.grad`) through `solve_batch`, by implicit differentiation of each
     converged voltage, in five arrays of the batch and in the voltages; on devices without ions,
     with free ions and with ions frozen after a pre-bias (the gradient through the frozen
     profile). The gradient is forward mode's (`jax.jvp`, the same tangents, transposed) to
@@ -1869,7 +1869,7 @@ def test_the_device_in_jax_is_numpys(case: str) -> None:
 
 
 def test_gradients_in_physical_parameters_are_finite_differences() -> None:
-    """M7: the gradient of the curves in a layer's parameters, through `device_tree` and
+    """The gradient of the curves in a layer's parameters, through `device_tree` and
     `solve_batch`: the absorber's electron mobility and thickness (the grid moves, its points per
     layer stay), a transport layer's band edge, the ion density, the temperature and a work
     function; against central finite differences along a random direction."""
@@ -1903,7 +1903,7 @@ def test_gradients_in_physical_parameters_are_finite_differences() -> None:
 
 
 def test_a_fit_recovers_the_parameters_of_a_simss_curve() -> None:
-    """M7: from a start 1.4–1.7× off, `validation/fit.py` (least squares, its Jacobian by
+    """From a start 1.4–1.7× off, `validation/fit.py` (least squares, its Jacobian by
     `jax.jacfwd` through the converged solution) recovers the absorber's trap density and
     mobilities and the left work function from SimSS's curve; the direct recombination, which
     this curve barely determines (its singular value is 2.5e-6 of the largest), to 10 %."""

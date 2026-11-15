@@ -1,4 +1,5 @@
-"""A SIMsalabim device on SIMsalabim's grid: the static arrays the solver reads.
+"""A SIMsalabim device on its grid, jaxdd's graded one or SIMsalabim's: the static arrays the
+solver reads.
 
 Follows SIMsalabim 5.36 (`Units/DDRoutines.pas`: `Make_Grid`, `Define_Layers`,
 `Update_Gen_Pot`, `Init_Generation_Profile`, `Init_Trapping`, `Calc_Elec_Mob`), so that both
@@ -469,7 +470,7 @@ def device_parameters(
     braun: str = "exact",
     grid: str = "graded",
 ) -> tuple[Structure, dict]:
-    """A SIMsalabim input (Stage A, `check_supported` first) as its `Structure` and its
+    """A SIMsalabim input (`check_supported` first) as its `Structure` and its
     parameters: a dict of `LAYER_PARAMETERS`, each an array over the layers, and `T`, `W_L`,
     `W_R`, `G_frac`, `V_pre`, the generation profile's file (`gen_x`, `gen_G`) and the external
     circuit's `R_series` and `R_shunt` (Ω m², `R_shunt` ≤ 0 none). Trap files add their levels,
@@ -883,7 +884,7 @@ def device_arrays(structure: Structure, p: dict, xp=np) -> Device:
 def build_device(setup: Setup, grid_split: str = "exact", surface: str = "extraction",
                  langevin: str = "layer", braun: str = "exact",
                  grid: str = "graded") -> Device:  # fmt: skip
-    """The device of a SIMsalabim input (Stage A, `check_supported` first), in NumPy. `grid_split`
+    """The device of a SIMsalabim input (`check_supported` first), in NumPy. `grid_split`
     "simss" shares the grid points among the layers as SimSS's 10-byte reals do
     (`layer_points`; docs/differences.md §5), for a comparison point by point; `surface` how
     finite surface recombination at the contacts acts (`SURFACE_MODELS`); `langevin` which

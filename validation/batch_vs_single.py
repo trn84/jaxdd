@@ -1,4 +1,4 @@
-"""M3: the batched solver against the one-device solver and against SimSS, on CPU.
+"""The batched solver against the one-device solver and against SimSS, on CPU.
 
     .venv/bin/python validation/batch_vs_single.py CASE_DIR [CASE_DIR ...]
 

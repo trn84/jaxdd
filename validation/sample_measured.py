@@ -1,4 +1,4 @@
-"""The uncertainty of a fit to measured curves (M7), by sampling: a posterior of the parameters
+"""The uncertainty of a fit to measured curves, by sampling: a posterior of the parameters
 `validation/fit_measured.py` fits, by an affine-invariant ensemble sampler over the batch.
 
     .venv/bin/python validation/sample_measured.py [SAMPLE] [--device mirrored|anode]

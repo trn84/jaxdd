@@ -1,4 +1,4 @@
-"""A fit of a transient by its gradients through time (Stage C, M7): a device's parameters
+"""A fit of a transient by its gradients through time: a device's parameters
 recovered from its own transient.
 
     .venv/bin/python validation/fit_transient.py CASE [--steps N] [--start S] [--fit NAME:LAYER ...]

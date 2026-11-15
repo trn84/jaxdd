@@ -945,13 +945,13 @@ def _assemble_ions(full, s, Vt, g_frac, logs, ion, B=bernoulli):
 
 
 #: Grid points per kernel in the block Thomas sweep: unrolling lets XLA fuse several of the
-#: sweep's sequential steps into one kernel, which on a GPU is what the sweep costs (M3).
+#: sweep's sequential steps into one kernel, which on a GPU is what the sweep costs.
 SWEEP_UNROLL = 8
 
 
 def _inverse3(m):
     """The inverse of 3×3 matrices (`... × 3 × 3`) by the adjugate: elementwise arithmetic only,
-    so that XLA fuses it instead of calling a batched LU per grid point (M3). The rows are
+    so that XLA fuses it instead of calling a batched LU per grid point. The rows are
     scaled to their terms' size (`_stencils`), which keeps the determinant well away from
     round-off."""
     a, b, c = m[..., 0, 0], m[..., 0, 1], m[..., 0, 2]
@@ -998,14 +998,14 @@ def _mm(a, b):
     """`a @ b` for small blocks (`... × r × m` times `... × m × k`), written as multiply and sum
     so that XLA fuses it with the arithmetic around it. `@` on such small matrices becomes a
     batched GEMM of its own on a GPU: a kernel per product, launched in every step of a sweep
-    and every level of the reduction (M3)."""
+    and every level of the reduction."""
     return jnp.sum(a[..., :, :, None] * b[..., None, :, :], axis=-2)
 
 
 def _block_thomas(A, B, C, d):
     """Solve the block-tridiagonal system `A[i]·x[i−1] + B[i]·x[i] + C[i]·x[i+1] = d[i]`.
 
-    Parallel cyclic reduction and a hybrid of it with this sweep were built and measured (M3,
+    Parallel cyclic reduction and a hybrid of it with this sweep were built and measured (in
     commits 13a1f61, 9fda49c) and taken out again: slower everywhere — on an A100 at batch 16384
     the sweep 1198 devices/s, the hybrid 824, PCR about a third of the sweep, its log₂ N passes
     over every block bandwidth-bound. docs/solver.md."""
@@ -1051,7 +1051,7 @@ def _newton_step(y, logs, bounds, s, ion, Vt, g_frac, bernoulli_name="exact"):
         return _ion_constraints(V_full, logs_, ion)
 
     g = constraints(full[1:-1, 0], logs)
-    # K outputs of NP + K inputs: reverse mode, K passes (forward mode took NP; M3).
+    # K outputs of NP + K inputs: reverse mode, K passes (forward mode took NP).
     dg_dV, D = jax.jacrev(constraints, argnums=(0, 1))(full[1:-1, 0], logs)  # K × NP, K × K
     # A slot without ions: its normalisation is held (an identity row).
     D = D + jnp.diag(_held(ion))

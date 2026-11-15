@@ -12,6 +12,7 @@ The files come from a directory (`read_setup`) or from a mapping of file names t
 from __future__ import annotations
 
 import io
+import os
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -49,9 +50,9 @@ def parse_parameters(text: str) -> dict[str, str]:
     return values
 
 
-def read_parameter_file(path: Path) -> dict[str, str]:
+def read_parameter_file(path: str | os.PathLike) -> dict[str, str]:
     """`{name: value}` of a SIMsalabim parameter file."""
-    return parse_parameters(path.read_text())
+    return parse_parameters(Path(path).read_text())
 
 
 @dataclass(frozen=True)
@@ -273,8 +274,9 @@ def _layers(raw: dict[str, str], read) -> tuple[Layer, ...]:
     return tuple(layers)
 
 
-def read_setup(path: Path) -> Setup:
-    """The setup file and every layer file `l1`, `l2`, … it names."""
+def read_setup(path: str | os.PathLike) -> Setup:
+    """The setup file and every layer file `l1`, `l2`, … it names, found beside it."""
+    path = Path(path)
     raw = read_parameter_file(path)
     layers = _layers(raw, lambda file: (path.parent / file).read_text())
     return Setup(raw=raw, layers=layers, directory=path.parent)
@@ -287,16 +289,6 @@ def setup_from_texts(files: Mapping[str, str], setup: str = "simulation_setup.tx
     return Setup(raw=raw, layers=_layers(raw, lambda file: files[file]), files=dict(files))
 
 
-#: Stage A (docs/overview.md, "Scope") and the modules of Stage B so far (bulk and interface
-#: traps, neutral or charged, one level or several from a trap file; series and shunt
-#: resistance; the generation profile; the left electrode as the anode; finite surface
-#: recombination at the contacts and 'sfb' work functions; Langevin recombination; the
-#: field-dependent mobility and generation; either form of the current, `currDiffInt` 1 or
-#: 2). Mobile ions in regions of one layer or several (`ion_regions`), any per species, steady
-#: (free at every voltage) or held after a pre-bias (`preCond`, `fixIons`, as SimSS with
-#: `simss/fixed_ions.patch`: Poisson leaves them) or from the start (`fixIons` alone). The
-#: voltages are the caller's (`simss_voltages` gives SimSS's, for either `Vdist`). Anything
-#: else is refused by name, never approximated.
 def ion_region_problems(setup: Setup) -> list[str]:
     """What jaxdd does not take of the ionic regions (`ion_regions`): SimSS 5.36's two quirks
     with regions of several layers, which it would solve differently from what the input says
@@ -317,7 +309,20 @@ def ion_region_problems(setup: Setup) -> list[str]:
 
 
 def check_supported(setup: Setup) -> None:
-    """Raise `NotImplementedError` naming every parameter outside what jaxdd supports."""
+    """Raise `NotImplementedError` naming every parameter outside what jaxdd solves.
+
+    jaxdd solves SimSS 5.36's steady state with all of its modules (docs/overview.md, "Scope"):
+    traps in the bulk and at interfaces, neutral or charged, one level or several from a trap
+    file; series and shunt resistance; the generation profile from a file, uniform or by the
+    transfer-matrix method; either electrode the cathode; finite surface recombination and
+    'sfb' work functions; Langevin recombination; field-dependent mobility and generation;
+    either form of the current (`currDiffInt` 1 or 2); mobile ions in regions of one layer or
+    several (`ion_regions`), free at every voltage, frozen after a pre-bias (`preCond`,
+    `fixIons`, as SimSS with `simss/fixed_ions.patch`) or held from the start (`fixIons`
+    alone); and ZimT 5.36's transients of the same devices. What it refuses are the inputs SimSS
+    refuses itself and two of SimSS's ionic regions it would solve against what the input says
+    (`ion_region_problems`, docs/differences.md §10); anything else is refused by name, never
+    approximated."""
     problems = []
     if float(setup.raw.get("currDiffInt", 2)) not in (1.0, 2.0):
         problems.append(f"currDiffInt = {setup.raw['currDiffInt']} (SimSS has 1 and 2)")
@@ -325,4 +330,4 @@ def check_supported(setup: Setup) -> None:
         problems.append("R_series < 0 or R_shunt = 0 (SimSS refuses both)")
     problems += ion_region_problems(setup)
     if problems:
-        raise NotImplementedError("not in jaxdd's Stage A:\n  " + "\n  ".join(problems))
+        raise NotImplementedError("outside what jaxdd solves:\n  " + "\n  ".join(problems))

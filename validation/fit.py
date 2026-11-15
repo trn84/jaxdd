@@ -1,4 +1,4 @@
-"""A fit by gradients (M7): a device's parameters recovered from its SimSS curve.
+"""A fit by gradients: a device's parameters recovered from its SimSS curve.
 
     .venv/bin/python validation/fit.py CASE_DIR [--start S] [--fix NAME ...] [--noise SIGMA]
 

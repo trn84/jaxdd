@@ -1,4 +1,4 @@
-"""Least squares from many starts at once (M7): scipy's `least_squares` from every start, their
+"""Least squares from many starts at once: scipy's `least_squares` from every start, their
 evaluations solved together.
 
 `least_squares_many(residuals, theta0, lo, hi)` minimises `½·|r(θ)|²` within `lo ≤ θ ≤ hi` from

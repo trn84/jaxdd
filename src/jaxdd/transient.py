@@ -1,4 +1,4 @@
-"""Transients as ZimT 5.36 solves them (Stage C, PLAN.md section 4.1): a batch of devices
+"""Transients as ZimT 5.36 solves them: a batch of devices
 through a list of time steps `(t, Vext, G_frac)` (`simss_input.read_tvg`).
 
 Each step is one Newton solve of the whole system with implicit Euler in time (ZimT's
@@ -376,7 +376,7 @@ def solve_transient(batch, tvg: TVG | list[TVG], tol=1e-10, max_iter=200, bernou
     `zimt_ion_currents`: with several regions of one species only the last one's current, as
     ZimT 5.36 has it (docs/differences.md §11); by default every region's.
 
-    Differentiable in the batch (`batch.device_tree`, M7): each step's derivatives those of its
+    Differentiable in the batch (`batch.device_tree`): each step's derivatives those of its
     converged solution by the implicit function (`batch._converged_jvp`), carried from step to
     step by the state, in forward mode (`jax.jvp`, `jax.jacfwd`). Where `batch` is traced the
     result holds JAX arrays, and `ions` (any mobile ions: 5×5 blocks) and `vint` (the internal

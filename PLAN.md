@@ -6,21 +6,16 @@ the handbook.
 
 ## 1 Open now
 
-The order (2026-11-15, an estimate at the pace so far):
-
-1. **Release 0.1.0**: the steady state (SimSS) and the transients (ZimT), on jaxdd's graded
-   grid by default and SIMsalabim's as `grid="simss"` for SimSS comparisons (decided
-   2026-11-15); a version, a changelog, the README's installation, a wheel, CI, a pass over the
-   handbook and the API. About a day.
-2. M6 (2.2), and the fused kernel if it is decided for (2.3, section 7; about 1–2 weeks): 0.2.
+0.1.0 is released (CHANGELOG.md). Next (2026-11-15, an estimate at the pace so far): M6 (2.2),
+and the fused kernel if it is decided for (2.3, section 7; about 1–2 weeks): 0.2.
 
 Stage C (ZimT's transients), M4 (the graded grid) and M7 (fits and their posteriors) are done
 (docs/model.md, docs/validation.md). Open: the QFLS below Newton's floor (4.1); the light
 switched on and off with traps is 1.6e-3 of the scale off on the graded grid at 400 points,
 little better than SIMsalabim's 2.5e-3 where the steady state is ten times better (where the
-error sits: the first picoseconds, the generation profile on the grid?). Not
-before the release: M8 (1.3), the measured cell's optics (2.4, waiting for n,k data), the steric
-ions (3, waiting for a source of `N_max`).
+error sits: the first picoseconds, the generation profile on the grid?). Waiting: M8 (1.3), the
+measured cell's optics (2.4, waiting for n,k data), the steric ions (3, waiting for a source of
+`N_max`).
 
 ### 1.3 M8: the MI50 cards
 

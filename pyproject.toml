@@ -1,24 +1,66 @@
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling>=1.27"]
 build-backend = "hatchling.build"
 
 [project]
 name = "jaxdd"
-version = "0.0.1"
+version = "0.1.0"
 description = "A batched 1D drift-diffusion solver in JAX, after SIMsalabim"
 readme = "README.md"
 requires-python = ">=3.11"
-license = { text = "LGPL-3.0-only" }
-dependencies = ["jax>=0.4.30", "numpy>=2.0"]
+license = "LGPL-3.0-only"
+license-files = ["COPYING", "COPYING.LESSER", "NOTICE"]
+authors = [{ name = "Bugra Turan" }]
+keywords = ["drift-diffusion", "solar cells", "perovskite", "SIMsalabim", "JAX", "GPU"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Physics",
+]
+# The oldest tested: JAX 0.4.31 with NumPy 1.26 (the CI's oldest job; the AMD MI50's image).
+dependencies = ["jax>=0.4.31", "numpy>=1.26"]
 
 [project.optional-dependencies]
+#: an NVIDIA GPU: the CUDA jaxlib
+cuda12 = ["jax[cuda12]"]
+#: jaxdd.fit (least squares from many starts) and validation/fit.py
+fit = ["scipy>=1.11"]
 #: pytest-xdist: the tests in parallel, one worker per physical core (tests/conftest.py)
-dev = ["pytest>=8.0", "pytest-xdist[psutil]>=3.5", "ruff>=0.5", "scipy>=1.11"]  # scipy: validation/fit.py
+dev = ["pytest>=8.0", "pytest-xdist[psutil]>=3.5", "ruff>=0.5", "scipy>=1.11"]
 #: benchmarks/plot.py
 bench = ["matplotlib>=3.8"]
 
+[project.urls]
+Homepage = "https://github.com/trn84/jaxdd"
+Documentation = "https://github.com/trn84/jaxdd/blob/main/docs/README.md"
+Changelog = "https://github.com/trn84/jaxdd/blob/main/CHANGELOG.md"
+Issues = "https://github.com/trn84/jaxdd/issues"
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/jaxdd"]
+
+# The source distribution: the package, its tests with their SimSS and ZimT references and the
+# scripts they use (validation/, benchmarks/), the handbook; nothing else of the repository.
+[tool.hatch.build.targets.sdist]
+include = [
+    "/src",
+    "/tests",
+    "/validation",
+    "/benchmarks/*.py",
+    "/docs",
+    "/README.md",
+    "/CHANGELOG.md",
+    "/COPYING",
+    "/COPYING.LESSER",
+    "/NOTICE",
+    "/pyproject.toml",
+]
+exclude = ["__pycache__"]
 
 [tool.ruff]
 line-length = 100

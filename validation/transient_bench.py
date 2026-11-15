@@ -1,4 +1,4 @@
-"""Throughput of transients (Stage C, PLAN.md §4.1): batches of ZimT runs, on whatever JAX runs.
+"""Throughput of transients: batches of ZimT runs, on whatever JAX runs.
 
     python validation/transient_bench.py [N] [batch]     # e.g. 16384 4096 on an A100, 64 64 here
 

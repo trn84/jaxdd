@@ -1,6 +1,7 @@
 # The device model and its discretisation
 
-jaxdd's equations are SIMsalabim 5.36's, point for point (`Units/DDRoutines.pas`). This page
+jaxdd's equations are SIMsalabim 5.36's (`Units/DDRoutines.pas`), on SIMsalabim's grid point for
+point, by default on jaxdd's graded grid (below). This page
 states them as jaxdd implements them; the names in brackets are SIMsalabim's routines, for a
 reader who wants to check one against the other. Units are SI, energies in eV, potentials in V.
 
@@ -415,7 +416,7 @@ last voltage extrapolated as the state is; with a series resistance from `Vext` 
 current's drop. `solve_transient` returns `Vint` and `Vext = Vint + Jext·R_series` per step.
 
 **Gradients through time.** A transient is differentiable in its parameters
-(`batch.device_tree`, as the steady state's for M7's fits): each step's derivatives are those
+(`batch.device_tree`, as the steady state's for its fits): each step's derivatives are those
 of its converged solution by the implicit function (`batch._converged_jvp`, with the internal
 voltage's border where it is an unknown), and they reach the next step through the state it
 starts from (the densities and potential before it, the traps' occupations, the ions), so

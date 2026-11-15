@@ -1,4 +1,4 @@
-"""A fit to measured curves (M7): the five light intensities of one sample of Heester et al.
+"""A fit to measured curves: the five light intensities of one sample of Heester et al.
 (2025) at once, by gradients.
 
     .venv/bin/python validation/fit_measured.py [SAMPLE ...] [--start cold|paper]

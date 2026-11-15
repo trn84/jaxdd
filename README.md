@@ -5,25 +5,61 @@ hundreds of thousands of devices at once on a data-centre GPU (A100/H100). It fo
 model of [SIMsalabim](https://github.com/kostergroup/SIMsalabim) and is validated against its
 output: anyone who sweeps SimSS over a parameter grid can run the same input files in batches.
 
-It reads SIMsalabim's input files and solves one device or a batch of thousands
-(`jaxdd.batch.solve_batch`), with ions free or frozen after a pre-bias, on CPU and GPU. Against
-SimSS 5.36 it agrees to 1e-6 of the current scale with SimSS's own Bernoulli approximation;
-where the two differ by more, it has so far been SimSS's error, documented in
-[`docs/differences.md`](docs/differences.md). On one A100 about 2800 J-V curves per second, on
-a 16-core desktop CPU about 730: 60× and 16× SimSS on all cores of that desktop.
+It reads SIMsalabim's input files and solves one device or a batch of thousands: the J-V curves
+of SimSS 5.36's steady state, with ions free or frozen after a pre-bias, and the transients of
+ZimT 5.36, on CPU and GPU, differentiable in the input's parameters. Against SimSS 5.36 it agrees
+to 1e-6 of the current scale with SimSS's own Bernoulli approximation; where the two differ by
+more, it has so far been SimSS's error, documented in [`docs/differences.md`](docs/differences.md).
+On one A100 about 2800 J-V curves per second, on a 16-core desktop CPU about 730: 60× and 16×
+SimSS on all cores of that desktop.
 
 **How it works and how to use it:** the handbook in [`docs/`](docs/README.md) (overview,
 tutorial, model, solver with flowcharts, batching, hardware, validation).
-**What is planned:** [`PLAN.md`](PLAN.md).
+**What changed:** [`CHANGELOG.md`](CHANGELOG.md). **What is planned:** [`PLAN.md`](PLAN.md).
 
-## Try it
+## Install
+
+Python 3.11 or newer. The release, from GitHub:
+
+```bash
+pip install "jaxdd @ git+https://github.com/trn84/jaxdd@v0.1.0"            # CPU
+pip install "jaxdd[cuda12] @ git+https://github.com/trn84/jaxdd@v0.1.0"    # an NVIDIA GPU
+```
+
+or the wheel attached to the [release](https://github.com/trn84/jaxdd/releases/tag/v0.1.0)
+(`pip install jaxdd-0.1.0-py3-none-any.whl`, with `"jax[cuda12]"` on an NVIDIA GPU). jaxdd is
+pure Python on JAX ≥ 0.4.31 and NumPy ≥ 1.26; the extra `fit` adds SciPy for `jaxdd.fit`.
+With a CUDA jaxlib, JAX uses the GPU by default; `JAX_PLATFORMS=cpu` forces the CPU.
+
+For the tests, the validation scripts and the benchmarks, from a clone:
 
 ```bash
 git clone https://github.com/trn84/jaxdd.git && cd jaxdd
-python -m venv .venv && .venv/bin/pip install -e ".[dev]"     # add "jax[cuda12]" on an NVIDIA GPU
-.venv/bin/python -m pytest -q                                   # against SimSS's own curves
+python -m venv .venv && .venv/bin/pip install -e ".[dev]"     # ".[dev,cuda12]" on an NVIDIA GPU
+.venv/bin/python -m pytest -q                                   # against SimSS's and ZimT's curves
 .venv/bin/python validation/bench.py 64 64                      # J-V curves per second
 ```
+
+## Use
+
+```python
+import numpy as np
+import jaxdd
+
+setup = jaxdd.read_setup("tests/data/thin_l1_light/simulation_setup.txt")   # SIMsalabim's files
+jaxdd.check_supported(setup)            # NotImplementedError naming anything jaxdd does not solve
+V = np.linspace(-0.2, 1.3, 61)
+
+res = jaxdd.solve_jv(jaxdd.build_device(setup), V)       # one device: res.J, res.converged
+
+cases = ["thin_l1_light", "frozen_1e17_x1_thin_light", "steady_1e17_thin_light"]
+devices = [jaxdd.build_device(jaxdd.read_setup(f"tests/data/{c}/simulation_setup.txt"))
+           for c in cases]                               # many: one grid size NP for all
+J, converged, iterations = jaxdd.solve_batch(jaxdd.prepare(devices), V)   # devices × voltages
+```
+
+The [tutorial](docs/tutorial.md) goes through it: the options, gradients and fits, transients,
+building devices in code, comparing with SimSS.
 
 ## Speed
 

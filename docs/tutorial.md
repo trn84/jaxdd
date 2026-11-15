@@ -3,16 +3,25 @@
 ## Install
 
 ```bash
+pip install "jaxdd @ git+https://github.com/trn84/jaxdd@v0.1.0"            # CPU
+pip install "jaxdd[cuda12] @ git+https://github.com/trn84/jaxdd@v0.1.0"    # an NVIDIA GPU
+python -c "import jax, jaxdd; print(jaxdd.__version__, jax.devices())"
+```
+
+or, for the tests and the scripts of `validation/` (the examples below read the devices of
+`tests/data/`), from a clone:
+
+```bash
 git clone https://github.com/trn84/jaxdd.git && cd jaxdd
-python -m venv .venv && .venv/bin/pip install -e ".[dev]"
-.venv/bin/pip install "jax[cuda12]"          # only on an NVIDIA GPU
-.venv/bin/python -c "import jax; print(jax.devices())"
+python -m venv .venv && .venv/bin/pip install -e ".[dev]"     # ".[dev,cuda12]" on an NVIDIA GPU
 .venv/bin/python -m pytest -q
 ```
 
-jaxdd needs Python ≥ 3.11, JAX ≥ 0.4.30 and NumPy. It switches JAX to 64-bit floats when it is
-imported. With a CUDA jaxlib installed, JAX uses the GPU by default; `JAX_PLATFORMS=cpu` forces
-the CPU.
+jaxdd needs Python ≥ 3.11, JAX ≥ 0.4.31 and NumPy ≥ 1.26; `jaxdd.fit` needs SciPy too (the
+extra `fit`). It switches JAX to 64-bit floats when it is imported. With a CUDA jaxlib
+installed, JAX uses the GPU by default; `JAX_PLATFORMS=cpu` forces the CPU. What the `jaxdd`
+package offers at its top level (`jaxdd.solve_batch`, …) is what this tutorial uses; the
+modules (`jaxdd.device`, `jaxdd.batch`, …) hold the rest.
 
 ## One device
 
@@ -21,15 +30,11 @@ layer (`l1`, `l2`, ... in the setup), and the generation profile it names. The r
 four such devices under `tests/data/`.
 
 ```python
-from pathlib import Path
-
 import numpy as np
 
-from jaxdd.device import build_device
-from jaxdd.simss_input import check_supported, read_setup
-from jaxdd.solver import solve_jv
+from jaxdd import build_device, check_supported, read_setup, solve_jv
 
-setup = read_setup(Path("tests/data/thin_l1_light/simulation_setup.txt"))
+setup = read_setup("tests/data/thin_l1_light/simulation_setup.txt")
 check_supported(setup)              # NotImplementedError naming anything outside the scope
 dev = build_device(setup)           # the graded grid and every static array (NumPy)
 
@@ -40,8 +45,8 @@ res.converged    # per voltage
 res.iterations   # Newton steps per voltage
 ```
 
-`read_setup` takes a `Path`; the layer files and the generation profile are found relative to
-it. `simss_voltages(setup)` (from `jaxdd.simss_input`) gives the voltages SimSS would run, in its
+`read_setup` takes the setup file's path; the layer files and the generation profile are found
+relative to it. `simss_voltages(setup)` gives the voltages SimSS would run, in its
 order: `Vmin` to `Vmax` by `Vstep` or logarithmically towards `Vacc` (`Vdist`), up or down
 (`Vscan`), or `expJV`'s with `useExpData`. `solve_jv` solves the voltages in the order given, each
 from the solution at the one before.
@@ -57,17 +62,17 @@ to step through, about 20 curves per second on one CPU core. For many devices us
 ## Many devices
 
 ```python
-from jaxdd.batch import prepare, solve_batch
+from jaxdd import prepare, solve_batch
 
 cases = ["thin_l1_light", "frozen_1e17_x1_thin_light", "steady_1e17_thin_light"]
-devices = [build_device(read_setup(Path(f"tests/data/{c}/simulation_setup.txt"))) for c in cases]
+devices = [build_device(read_setup(f"tests/data/{c}/simulation_setup.txt")) for c in cases]
 
 batch = prepare(devices)            # every array stacked along a new first axis
 J, converged, iterations = solve_batch(batch, V)     # each: devices × voltages
 ```
 
 The voltages are the internal ones. With a shunt resistance `J` includes its current; with a
-series resistance the external voltage of each point is `batch.external_voltages(batch, V, J)`
+series resistance the external voltage of each point is `jaxdd.external_voltages(batch, V, J)`
 (SimSS's external circuit, [model.md](model.md)).
 
 The devices of one batch may differ in everything but the number of grid points `NP` (and they
@@ -118,8 +123,7 @@ the generation profile `gen_x`, `gen_G`, and with trap files their levels, `bulk
 `build_device`'s formulas in `jax.numpy`:
 
 ```python
-from jaxdd.batch import device_tree
-from jaxdd.device import device_parameters
+from jaxdd import device_parameters, device_tree
 
 structure, params = device_parameters(setup)
 
@@ -155,6 +159,36 @@ device whose pre-bias did not converge is flagged at every voltage. Mask by the 
 using the curves (for a table, a fit or a training set). The `iterations` show where a batch
 spends its time ([batching.md](batching.md)).
 
+## Transients
+
+ZimT's runs take the same devices through its time steps: a `tVGFile` named by the setup
+(`t`, `Vext` or `oc` for the open circuit, `G_frac`, `Track`), read by `read_tvg`, and solved
+for a batch by `solve_transient`:
+
+```python
+from jaxdd import read_tvg, solve_transient, tj_columns
+
+setup = read_setup("tests/data/zimt_tpv_light/simulation_setup.txt")   # a photovoltage
+tvg = read_tvg(setup)
+r = solve_transient(prepare([build_device(setup)]), tvg)
+r.V_ext[0]       # V per step: here the open-circuit voltage through a pulse of light
+r.J_ext[0]       # A/m² per step, ZimT's Jext; J, V_int the internal ones
+r.converged[0]   # per step
+r.accepted[0]    # the steps ZimT writes (not one it skips, nor one after its automatic stop)
+columns = tj_columns(r, 0)   # the rest of ZimT's tJFile, by ZimT's column names
+```
+
+One `TVG` serves every device of the batch, or a list gives each its own (all of one length).
+Each step is one Newton solve by implicit Euler, from the step before, to `tol` within
+`max_iter` (200); `bernoulli_name="simss"` as for the steady state. Where any device of a
+batch has mobile ions, the whole batch takes the 5×5 blocks of the ions in time, and where any
+has an open circuit or a series resistance, the internal voltage is an unknown of every
+device's steps: batch such devices apart from the others where speed matters
+([hardware.md](hardware.md), "Transients"). A transient is differentiable in the batch in
+forward mode (`jax.jvp`, `jax.jacfwd`; `validation/fit_transient.py` fits one); inside a
+transformation give `ions` and `vint` explicitly. It is not split across GPUs. What jaxdd
+reproduces of ZimT, and what not, is in [model.md](model.md) "Transients".
+
 ## Building devices in code
 
 `build_device` takes a `Setup`, which is the parsed files as strings. To vary parameters
@@ -162,9 +196,9 @@ without writing files, change the strings and build again; `validation/bench.py`
 (`variant_setups`) does exactly this:
 
 ```python
-from jaxdd.simss_input import Layer, Setup
+from jaxdd import Layer, Setup
 
-base = read_setup(Path("tests/data/thin_l1_light/simulation_setup.txt"))
+base = read_setup("tests/data/thin_l1_light/simulation_setup.txt")
 layers = [dict(ly.raw) for ly in base.layers]
 layers[1]["N_t_bulk"] = "3e21"                       # trap density of the absorber, m⁻³
 variant = Setup(raw=dict(base.raw), layers=tuple(Layer(r) for r in layers),
@@ -176,7 +210,7 @@ Without any files, give `setup_from_texts` the texts by file name, under the nam
 file uses (`l1`, `l2`, …, `genProfile`):
 
 ```python
-from jaxdd.simss_input import setup_from_texts
+from jaxdd import setup_from_texts
 
 setup = setup_from_texts({
     "simulation_setup.txt": setup_text,

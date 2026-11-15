@@ -156,8 +156,9 @@ sweep's kernel.
 gfx906 left ROCm's supported list with ROCm 6.3, and from JAX 0.5 on XLA compiles through
 Triton, which refuses gfx906. What runs is JAX 0.4.31 in the image
 `rocm/jax-community:rocm6.0.3-jax0.4.31-py3.11.10`, with `ROCM_PATH=/opt/rocm` set. jaxdd
-supports JAX ≥ 0.4.30 for this reason; its tests pass on 0.4.31 (with NumPy 1.26), and its
-curves agree with the current JAX's to 9e-7 of the current scale.
+supports JAX ≥ 0.4.31 for this reason: the CI runs the tests on JAX 0.4.31 with NumPy 1.26 and
+Python 3.11 beside the newest JAX, and the curves agree with the current JAX's to 9e-7 of the
+current scale.
 
 ```bash
 git clone https://github.com/trn84/jaxdd.git && cd jaxdd

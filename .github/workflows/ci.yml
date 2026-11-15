@@ -1,0 +1,125 @@
+# Lint, the test suite on the CPU (the newest and the oldest supported JAX), the wheel built and
+# installed on its own; on a tag v*, a release with the wheel and the source distribution.
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  RUFF: "ruff@0.17.4"
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - run: uvx "$RUFF" check .
+      - run: uvx "$RUFF" format --check $(git ls-files '*.py')
+
+  tests:
+    name: tests (${{ matrix.name }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: newest
+            python: "3.13"
+            pins: ""
+          # What pyproject.toml promises at least: JAX 0.4.31 (the AMD MI50's image) and NumPy 1.26.
+          - name: oldest
+            python: "3.11"
+            pins: "jax==0.4.31 jaxlib==0.4.31 numpy==1.26.4 scipy==1.11.4"
+    env:
+      JAX_PLATFORMS: cpu
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - name: Install
+        run: |
+          uv venv .venv --python "${{ matrix.python }}"
+          uv pip install --python .venv/bin/python -e ".[dev]" ${{ matrix.pins }}
+          .venv/bin/python -c "import jax, numpy; print('JAX', jax.__version__, 'NumPy', numpy.__version__)"
+      # The persistent compilation cache of tests/conftest.py: a later run loads what this one
+      # compiled; a stale entry is never hit, only kept.
+      - uses: actions/cache@v4
+        with:
+          path: .pytest_cache/jax
+          key: jax-${{ matrix.name }}-${{ hashFiles('src/**/*.py') }}
+          restore-keys: jax-${{ matrix.name }}-
+      - run: .venv/bin/python -m pytest -q -n logical
+
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - run: uv build
+      # The wheel alone, outside the source tree: it imports, knows its version, and solves.
+      - name: Install the wheel and solve a device
+        env:
+          JAX_PLATFORMS: cpu
+        run: |
+          uv venv /tmp/wheel --python 3.12
+          uv pip install --python /tmp/wheel/bin/python dist/*.whl
+          cd /tmp && /tmp/wheel/bin/python - "$GITHUB_WORKSPACE" <<'EOF'
+          import sys, tomllib
+          from pathlib import Path
+
+          import numpy as np
+
+          import jaxdd
+
+          root = Path(sys.argv[1])
+          want = tomllib.loads((root / "pyproject.toml").read_text())["project"]["version"]
+          assert jaxdd.__version__ == want, (jaxdd.__version__, want)
+          assert Path(jaxdd.__file__).is_relative_to("/tmp/wheel"), jaxdd.__file__
+          setup = jaxdd.read_setup(root / "tests/data/thin_l1_light/simulation_setup.txt")
+          jaxdd.check_supported(setup)
+          res = jaxdd.solve_jv(jaxdd.build_device(setup), np.array([0.0, 0.5, 1.0]))
+          assert res.converged.all(), res
+          print("jaxdd", jaxdd.__version__, "J =", res.J)
+          EOF
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v') && github.server_url == 'https://github.com'
+    needs: [lint, tests, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      # The tag is the version in pyproject.toml; the notes are its section of CHANGELOG.md.
+      - name: Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          version=$(python3 -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+          [ "$TAG" = "v$version" ] || { echo "tag $TAG, pyproject.toml $version"; exit 1; }
+          awk -v v="$version" '$0 ~ "^## \\[" v "\\]" {on=1; next} /^## \[/ {on=0} on' CHANGELOG.md > notes.md
+          [ -s notes.md ] || { echo "no section for $version in CHANGELOG.md"; exit 1; }
+          # The changelog's links into the repository, absolute at the tag.
+          sed -i "s#](docs/#](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/blob/${TAG}/docs/#g" notes.md
+          gh release create "$TAG" dist/* --title "jaxdd $version" --notes-file notes.md --verify-tag

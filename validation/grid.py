@@ -1,4 +1,4 @@
-"""M4: how many grid points the hard devices need, on SIMsalabim's grid and on the graded one
+"""How many grid points the hard devices need, on SIMsalabim's grid and on the graded one
 (PLAN.md 2.1).
 
     python validation/grid.py [N] [batch] [NPs] [grids]   # 4096 4096 on an A100; 16 8 100,200

@@ -741,7 +741,8 @@ def _mesh(devices):
 
 def _run(batch, voltages, tol, max_iter, start_iter, bernoulli_name, strict, mesh):
     """One pass on one device, or split across `mesh`: the batch padded to a whole number of
-    devices per accelerator by repeating its last device, the padding dropped again."""
+    devices per accelerator by repeating its last device, the padding dropped again, the results
+    on one device."""
     if mesh is None:
         return _solve_batch(batch, voltages, tol, max_iter, start_iter, bernoulli_name, strict)
     n = jax.tree_util.tree_leaves(batch)[0].shape[0]
@@ -751,7 +752,10 @@ def _run(batch, voltages, tol, max_iter, start_iter, bernoulli_name, strict, mes
         idx = np.concatenate([np.arange(n), np.full(m - n, n - 1)])
         batch = jax.tree_util.tree_map(lambda leaf: leaf[idx], batch)
     out = _solve_sharded(batch, voltages, tol, max_iter, start_iter, bernoulli_name, strict, mesh)
-    return tuple(o[:n] for o in out)
+    # The results through the host onto one device: what follows (the second pass's scatter,
+    # the caller's sums) is then never an operation across the GPUs, which XLA would run with
+    # collectives (NCCL); on a host with an old driver such a scatter hung both GPUs.
+    return tuple(jnp.asarray(np.asarray(o)[:n]) for o in out)
 
 
 def external_voltages(batch, voltages, J):

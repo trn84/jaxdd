@@ -1645,7 +1645,8 @@ def test_a_trap_level_outside_the_gap_is_refused(tmp_path) -> None:
 def test_a_batch_split_across_devices_is_the_batch_on_one() -> None:
     """`solve_batch` across two devices (two XLA host devices here, the GPUs of a process on a
     GPU host): a batch of five, padded to six, gives the curves, flags and Newton steps of the
-    batch on one device; the padding is dropped."""
+    batch on one device; the padding is dropped; with a second pass for the stragglers too,
+    its results back on one device (no operation across the devices)."""
     code = """
 import sys, jax, numpy as np
 sys.path.insert(0, "validation")
@@ -1660,6 +1661,13 @@ assert np.array_equal(np.asarray(ok1), np.asarray(ok2)) and np.asarray(ok1).all(
 assert np.array_equal(np.asarray(it1), np.asarray(it2))
 scale = np.asarray(batch["J_scale"])[:, None]
 assert np.max(np.abs(np.asarray(J1) - np.asarray(J2)) / scale) < 1e-10
+# The second pass (a first pass of 2 Newton steps leaves stragglers): its results written back
+# into the first's, which lie on one device.
+J3, ok3, it3 = solve_batch(batch, V, first_max_iter=2, devices=jax.devices()[:1])
+J4, ok4, it4 = solve_batch(batch, V, first_max_iter=2)
+assert len(J4.sharding.device_set) == 1
+assert np.array_equal(np.asarray(ok3), np.asarray(ok4)) and np.asarray(ok3).all()
+assert np.max(np.abs(np.asarray(J3) - np.asarray(J4)) / scale) < 1e-10
 print("ok")
 """
     env = {**os.environ, "JAX_PLATFORMS": "cpu",

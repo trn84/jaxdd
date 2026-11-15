@@ -10,6 +10,7 @@ dist/
 data/*.npz
 # Validation results written by scripts
 validation/*.json
+validation/grid_*.npz
 rocm/*.log
 # The Apptainer route (benchmarks/apptainer.sh): image, the container's venv, the log
 *.sif

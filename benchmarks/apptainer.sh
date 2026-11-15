@@ -35,9 +35,10 @@
 #   gpus       validation/bench.py on one GPU (CUDA_VISIBLE_DEVICES=0) and on all the job's GPUs,
 #              the batch split across them (solve_batch's devices): 16384 per GPU, and 16384 in
 #              all; not in the default steps (a host with several GPUs)
-#   grid       validation/grid.py 4096 4096: M4's baseline, the hard devices in the light and the
-#              dark on SIMsalabim's grid at 200 to 3200 points (about 15 min); not in the
-#              default steps
+#   grid       validation/grid.py ${GRID_ARGS:-4096 4096}: M4's baseline, the hard devices in the
+#              light and the dark on SIMsalabim's grid at 200 to 3200 points (about 15 min on one
+#              A100); saved per grid size and resumed (validation/grid_<N>.npz); not in the
+#              default steps. GRID_ARGS="4096 4096 1600,3200" for some sizes only
 #   run        benchmarks/run.py: GPU at batch 4096 and 16384, jaxdd on this job's CPU cores;
 #              writes benchmarks/results/<label>.json for benchmarks/plot.py
 #   chunk      validation/chunk.py on the batch file CHUNK (a real workload built elsewhere and
@@ -125,7 +126,8 @@ if [ "${1:-}" = "--inside" ]; then
                 "$py" validation/bench.py 65536 16384
                 ;;
             grid)
-                (cd validation && "$py" grid.py 4096 4096)
+                # shellcheck disable=SC2086
+                (cd validation && "$py" grid.py ${GRID_ARGS:-4096 4096})
                 ;;
             run)
                 # No SimSS in the container: jaxdd on the GPU and on this job's cores only.
@@ -195,6 +197,7 @@ COMMIT="$(git rev-parse --short=12 HEAD)$(git diff --quiet || echo ' with local 
 export APPTAINERENV_STEPS="$STEPS" APPTAINERENV_LABEL="$LABEL" APPTAINERENV_JAXDD_COMMIT="$COMMIT"
 [ -n "${SAMPLES:-}" ] && export APPTAINERENV_SAMPLES="$SAMPLES"
 [ -n "${SAMPLE_ARGS:-}" ] && export APPTAINERENV_SAMPLE_ARGS="$SAMPLE_ARGS"
+[ -n "${GRID_ARGS:-}" ] && export APPTAINERENV_GRID_ARGS="$GRID_ARGS"
 if [[ " $STEPS " == *" chunk "* ]]; then
     [ -f "${CHUNK:-}" ] || { echo "the chunk step needs CHUNK=<batch file>"; exit 1; }
     export APPTAINERENV_CHUNK="$(realpath "$CHUNK")"

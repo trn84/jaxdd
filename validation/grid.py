@@ -11,10 +11,15 @@ voltage up to 1.0 V, `J_SC` within 0.1 %. Prints, per `NP`, the share of devices
 them, the median, 99th percentile and largest error of each, the unconverged voltages, and
 curves per second. `batch` is the batch at 400 points; at `NP` points it is `batch·400/NP`
 (at least 16), as the memory a device takes grows with `NP`.
+
+Each grid size's curves are saved as soon as they are solved, to `grid_<N>.npz` (beside this
+script, not committed); a run that finds the file takes the sizes it holds from it, so one that
+was stopped goes on where it stopped, and sizes can be added later.
 """
 
 import sys
 import time
+from pathlib import Path
 
 import jax
 import numpy as np
@@ -61,11 +66,19 @@ def main(n: int = 16, batch: int = 8, nps: str = "200,400,800,1600,3200") -> Non
     setups = pairs(n)
     up_to = V <= 1.0 + 1e-9
     sc = int(np.argmin(np.abs(V)))
+    saved = Path(__file__).with_name(f"grid_{n}.npz")
+    store = dict(np.load(saved)) if saved.exists() else {}
     results = {}
     for NP in grid_sizes:
+        if f"J_{NP}" in store:
+            results[NP] = (store[f"J_{NP}"], store[f"ok_{NP}"], store[f"scale_{NP}"])
+            print(f"NP {NP:5d}: from {saved.name}", flush=True)
+            continue
         size = max(16, batch * 400 // NP)
         J, ok, scale, seconds = solve(setups, NP, size)
         results[NP] = (J, ok, scale)
+        store.update({f"J_{NP}": J, f"ok_{NP}": ok, f"scale_{NP}": scale})
+        np.savez(saved, **store)
         print(f"NP {NP:5d}: {2 * n / seconds:8.1f} curves/s (batch {size}), unconverged "
               f"voltages {int((~ok).sum())} of {ok.size}", flush=True)  # fmt: skip
     J_ref, ok_ref, scale = results[grid_sizes[-1]]

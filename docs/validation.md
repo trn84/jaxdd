@@ -119,7 +119,20 @@ so that the solver is never the larger error in what is computed from it.
   are a choice on these devices (β 2–16 and `d₀` 0.3 pm–0.1 nm tried: 93–99.8 % at 400 points;
   the first attempt, boundary layers a few Debye lengths of the doping and ions wide, met them on
   22 % at most): the hard devices' worst errors were at interfaces with accumulated ions, whose
-  fields make the densities change on picometres.
+  fields make the densities change on picometres. With the same points it costs Newton nothing
+  more: 2.82 Newton steps per voltage on both grids at 400 points, the batch paying 4.30.
+
+  The committed SimSS cases (25, `tests/data`) on both grids against the graded one at 3200
+  points: the graded one at 400 points within 1e-5–3e-4 of the curve's scale on all but one;
+  SIMsalabim's at 3200 within 3e-5–1e-4 where the transport layers are thick (the `pin_` and
+  `region_` cases), 7e-4–1.6e-3 where they are 1 nm (its five points). The one,
+  `frozen_1e17_x1_thin_light` (ions frozen at full accumulation, 1 nm layers), converges slower
+  on both: up to 1.0 V the graded grid at 400 points is within 6e-4 of `J_SC` (3.3e-3 of the
+  scale at 1.3 V, in high injection), SIMsalabim's within 2e-2 and not monotonically (800 points
+  better than 1600); at 6400 points the two are 1.7e-4 apart. In time (ZimT's cases, against
+  the graded grid at 3200 points), the sweep with mobile ions: graded 400 points 5.3e-4 of the
+  scale, SIMsalabim's 4.1e-3 at 400 and 2.2e-3 at 3200; the light on and off with traps: 1.6e-3,
+  2.5e-3 and 6.6e-4; the same Newton steps per time step on both.
 - **Mobile ions in time** (2026-11-15, Stage C): sweeps to a voltage and back under light with
   free ions, against ZimT 5.36 at tolerances of 1e-9: ions in the absorber of
   `steady_1e17_thin_light` over 2 × 5 s to 1.2 V (`tests/data/zimt_ions_slow_light`) and over

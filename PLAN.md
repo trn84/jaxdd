@@ -11,7 +11,9 @@ The order (2026-11-15, an estimate at the pace so far):
 1. M4's graded mesh (2.1): its A100 run on 4096 hard devices, then M4 is done.
 2. **Release 0.1.0**: the steady state (SimSS) and the transients (ZimT); a version, a
    changelog, the README's installation, a wheel, CI, a pass over the handbook and the API.
-   About a day.
+   SIMsalabim's grid stays the default (decided 2026-11-15); README and tutorial recommend
+   `grid="graded"` for tables, fits and parameter studies, saying that its curves differ from
+   SimSS's by SimSS's own grid error. About a day.
 3. M6 (2.2), and the fused kernel if the A100's numbers with the 5×5 sweep kernel decide for
    it (2.3, section 7; about 1–2 weeks): 0.2.
 
@@ -75,8 +77,12 @@ both criteria at 400 points on 99.8 % of 512 hard devices against a converged re
 SIMsalabim's grid meets them on 25 % (docs/validation.md "The grid on hard devices", docs/model.md).
 To close M4: the same on the A100 with 4096 devices
 (`STEPS=grid GRID_ARGS="4096 4096 200,300,400,800,1600,3200 simss,graded"`, the simss sizes from
-the earlier run), then steps 2 and 3 are not needed; and whether the graded grid becomes the
-default where no SimSS comparison is wanted (tables, fits), a decision for the release.
+the earlier run), then steps 2 and 3 are not needed. The graded grid becomes the default in 0.2
+(`grid="simss"` for SimSS comparisons) when the A100 confirms it; the committed cases and two
+transients already run on it (docs/validation.md). Open there: the light switched on and off
+with traps is 1.6e-3 of the scale off at 400 points, little better than SIMsalabim's 2.5e-3,
+where the steady state is ten times better: where that error sits (the first picoseconds, the
+generation profile on the grid?).
 
 ### 2.2 M6: fewer devices instead of faster ones
 

@@ -306,6 +306,18 @@ current the equations balance, the same on every interval, without reading it of
 fluxes. ZimT's sums with `solve_transient(..., zimt_current=True)`, to 1e-9 of ZimT's scale on
 SIMsalabim's grid. The steady state is SIMsalabim's as it is.
 
+## 14 Ions bounded by their sites (jaxdd's, off by default)
+
+**What.** SIMsalabim distributes free ions by Boltzmann's statistics, which let them stack
+without limit: frozen at full accumulation, 1e18 cm⁻³ of them reach 1.5e21 cm⁻³ at the
+interfaces, close to the halide sites' 1.2e22 cm⁻³. That is SIMsalabim's model, not an error in
+its equations.
+
+**jaxdd.** SIMsalabim's by default. A layer's `N_max_anion`, `N_max_cation` bound each mobile
+species by its sites (docs/model.md, "Ions bounded by their sites"); they change what an ion
+density means at the high end, so curves with and without them are not to be mixed. SimSS does
+not read these parameters.
+
 ## Not differences
 
 Reproduced on purpose, because they are part of the discrete equations SimSS defines:

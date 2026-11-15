@@ -107,6 +107,19 @@ first solved at the first voltage with them neutral, and that solution is the st
 coupled solve with their charge (`solve_jv` and the batch; the gradients do not see it, a start
 has none). Devices without charged bulk traps skip it, to the bit.
 
+**Why ions bounded by their sites start from Boltzmann's.** On the way from Poisson's start to
+the solution, Newton passes states that would pile the ions far beyond their sites. Boltzmann's
+ions pass through them; bounded ones (docs/model.md) saturate there, their density no longer
+answers the potential, and Newton can cycle with every step at its cap: on 1024 devices of
+`validation/hard.py`, 2 to 29 of them (sites of 1.21e28 to 1e26 m⁻³) did not converge at the
+pre-bias, where Boltzmann's ions reach a thousandth of the sites. So a device with sites is
+first solved at its first voltage with Boltzmann's ions, then with the bounded ones from there.
+Where the bound changes the solution much (ions piled by Boltzmann's 50–80 times beyond their
+sites, at a few times their mean density in sites) that second solve may not converge; it then
+starts from Poisson's solution with the bounded ions, which is closer. Devices without sites
+skip both, to the bit. The normalisations of a start (`_ion_logs`) are the bounded ions' too,
+by a few Newton steps on their number from Boltzmann's closed form.
+
 **Why extrapolate.** Along a J-V curve the solution changes smoothly with the voltage. Starting
 each voltage from the linear extrapolation of the last two solutions (SIMsalabim's
 `Extrapolate_Solution`) instead of from the last one saves Newton steps at every voltage;

@@ -11,8 +11,9 @@ handbook or the commit message, not here.
 complete.
 
 1. **Release 0.2.** What came since 0.1.0 (CHANGELOG.md, "Unreleased": the tables with refined
-   axes, the current in time, the QFLS below Newton's floor) as a release, so that its users
-   can pin it. **Done when** the tag `v0.2.0` is pushed and the CI has made the release.
+   axes, the current in time, the QFLS below Newton's floor, the ions bounded by their sites)
+   as a release, so that its users can pin it. **Done when** the tag `v0.2.0` is pushed and
+   the CI has made the release.
 
 ## 2 Waiting
 
@@ -35,31 +36,14 @@ as a hand-written HIP kernel beside JAX.
 criteria, at a throughput worth the cards (four MI50 are, for this bandwidth-bound FP64 solver,
 about two A100s).
 
-### 2.2 The optics for the measured cell (waiting for n,k data)
-
-The measured fits assume a uniform generation. The cell in its own orientation with the
-transfer-matrix profile is `tests/data/pin_anode_left_light`, but the paper's perovskite n,k
-data (Werner et al., ACS Energy Lett. 3, 742 (2018)) are not among SIMsalabim's files; a
-stand-in's profile would be a different assumption, not a better one. **Done when** the measured
-fits in docs/validation.md are repeated with the computed profile.
-
-### 2.3 A steric limit on ion accumulation (waiting for a source of `N_max`)
-
-Frozen at full accumulation, 1e18 cm⁻³ of ions pile up in nanometre layers at the interfaces at
-1.5e21 cm⁻³, 1500 times their mean and close to the perovskite's lattice-site density
-(~1e22 cm⁻³). Boltzmann statistics let ions stack without limit; real vacancies cannot.
-
-The proposal: the modified Poisson–Boltzmann (Bikerman) occupancy for the ions, saturating at a
-site density `N_max`, in the free steady state and so in the frozen profile. It departs from
-SimSS (documented in docs/differences.md, switchable, SimSS's Boltzmann the reproduction), and
-it changes what an ion density means at the high end, so results with and without it must not
-be mixed: to be decided with its users. Its convergence must be validated on exactly the hard
-devices (flag, never guess). **Done when** `N_max` has a source (a literature value for the
-halide vacancy site density) and the model is validated against the Boltzmann one where the
-two must agree.
-
 ## 3 Later
 
+- **Ions bounded by their sites in time.** The steady state has them (docs/model.md), a
+  transient refuses them: in time the ions need a flux of their own, nonlinear diffusion at a
+  constant mobility or a modified drift at a constant diffusivity (the same steady state,
+  different dynamics; Abdel, Courtier, Farrell 2023), a choice for its users. **Done when** one
+  (or both, switchable) is in `solve_transient`, against IonMonger's or ChargeTransport.jl's
+  transients where those exist.
 - **Samples that are not a tensor product**, sparse grids (Smolyak) or scattered samples with a
   surrogate (a GP or a small network): a feature that lies across the axes costs a tensor
   product its points everywhere ([docs/validation.md](docs/validation.md#a-table-with-refined-axes)),

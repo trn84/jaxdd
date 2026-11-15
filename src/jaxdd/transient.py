@@ -409,6 +409,17 @@ def solve_transient(batch, tvg: TVG | list[TVG], tol=1e-10, max_iter=200, bernou
         ion = batch["ion"]
         ions = bool(np.any(np.asarray(ion["a_totals"]) > 0)
                     or np.any(np.asarray(ion["c_totals"]) > 0))  # fmt: skip
+    s = batch["s"]
+
+    def bounded():  # a mobile ion with sites (`solver.occupancy`); traced, any batch with them
+        return traced or any(np.any(np.asarray(s[f"{k}_inv"]) * np.asarray(s[f"{k}_mask"]) > 0)
+                             for k in ("a", "c"))  # fmt: skip
+
+    if ions and "a_inv" in s and bounded():
+        raise NotImplementedError(
+            "mobile ions bounded by their sites (N_max_anion, N_max_cation) in time: the "
+            "steric limit is solved in the steady state only (docs/model.md)"
+        )
     if vint is None:
         vint = bool(oc.any() or np.any(np.asarray(batch["R_series"]) > 0))
     with _quiet():

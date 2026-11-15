@@ -15,7 +15,8 @@
 #
 # Each time:
 #   cd ~/jaxdd && git pull
-#   benchmarks/apptainer.sh                       # every step, about 20 min on an A100
+#   benchmarks/apptainer.sh                       # the default steps, about 20 min on an A100
+#   STEPS=all benchmarks/apptainer.sh             # all of a full measurement, about 40 min
 #   STEPS="breakdown bench" benchmarks/apptainer.sh
 # Ctrl+C ends only the following of the log; the run goes on. To follow it again:
 #   tail -F benchmarks/apptainer.log
@@ -30,6 +31,9 @@
 #   bench      validation/bench.py 65536 16384: curves per second
 #   hard       validation/hard.py 16384 16384: a hard workload (frozen ions over a wide range,
 #              light and dark), two passes against one, the Newton steps a batch pays
+#   steric     validation/hard.py 16384 16384 N_MAX for each of ${STERIC_ARGS:-1.21e28 2e27 1e26}:
+#              the hard workload with the absorber's ions bounded by that many sites (m⁻³), its
+#              curves against Boltzmann's; not in the default steps (a few minutes on an A100)
 #   slots      validation/slots.py 16384 4096: devices with two mobile ion regions per species
 #              against one, through the sweep kernel and the scan (about 5 min)
 #   gpus       validation/bench.py on one GPU (CUDA_VISIBLE_DEVICES=0) and on all the job's GPUs,
@@ -56,6 +60,9 @@
 #              with UPLOAD (below) the results go to a shared folder as they come:
 #                STEPS=sample UPLOAD=https://HOST/s/TOKEN benchmarks/apptainer.sh
 #
+# STEPS=all runs every step of a full measurement: info tests breakdown bench hard steric slots
+# transient run (about 40 min on an A100; not gpus, grid, chunk, sample).
+#
 # Settings (environment): STEPS; CHUNK, the batch file of the chunk step; SAMPLES and SAMPLE_ARGS
 # for the sample step; UPLOAD, a public share link of a Nextcloud or ownCloud folder with upload
 # rights (https://HOST/s/TOKEN): the log and the sample step's chains are uploaded to it every
@@ -72,6 +79,7 @@ IMAGE="${IMAGE:-docker://nvidia/cuda:12.9.1-base-ubuntu24.04}"
 VENV="${VENV:-$ROOT/.venvct}"
 LOG="$ROOT/benchmarks/apptainer.log"
 STEPS="${STEPS:-info tests breakdown bench hard slots run}"
+[ "$STEPS" = "all" ] && STEPS="info tests breakdown bench hard steric slots transient run"
 
 say() { printf '\n== %s  %s\n' "$(date '+%F %T')" "$*"; }
 
@@ -122,6 +130,12 @@ if [ "${1:-}" = "--inside" ]; then
             hard)
                 "$py" validation/hard.py 16384 16384
                 ;;
+            steric)
+                for n in ${STERIC_ARGS:-1.21e28 2e27 1e26}; do
+                    say "steric N_max = $n"
+                    "$py" validation/hard.py 16384 16384 "$n" || echo "!! steric $n failed (exit $?)"
+                done
+                ;;
             slots)
                 "$py" validation/slots.py 16384 4096
                 ;;
@@ -158,7 +172,7 @@ if [ "${1:-}" = "--inside" ]; then
                 done
                 ;;
             *)
-                echo "unknown step $step (info tests breakdown bench hard slots gpus grid run chunk transient sample)"
+                echo "unknown step $step (info tests breakdown bench hard steric slots gpus grid run chunk transient sample)"
                 ;;
         esac || echo "!! step $step failed (exit $?); going on"
     done

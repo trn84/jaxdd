@@ -117,7 +117,7 @@ To differentiate in the input's own parameters — a layer's mobility, thickness
 or ion density, the temperature, a work function — build the device in JAX from them.
 `device_parameters` splits an input into its **structure** (points per layer, which layers
 generate, hold traps or ions, the pre-bias sequence) and its **parameters** (a dict: each of
-`device.LAYER_PARAMETERS` an array over the layers, and `T`, `W_L`, `W_R`, `G_frac`, `V_pre`,
+`device.LAYER_PARAMETERS` and `device.ION_SITE_PARAMETERS` an array over the layers, and `T`, `W_L`, `W_R`, `G_frac`, `V_pre`,
 the generation profile `gen_x`, `gen_G`, and with trap files their levels, `bulk_trap_E`,
 `bulk_trap_N`, `int_trap_E`, `int_trap_N`, layers × levels); `device_tree` makes the batch's arrays from both, by
 `build_device`'s formulas in `jax.numpy`:

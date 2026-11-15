@@ -307,6 +307,48 @@ Anions and cations each have a density `N` and a mobility in a layer. Three case
 Two of SimSS's regions of several layers are refused: those it would solve against the input
 ([differences.md](differences.md) §10).
 
+### Ions bounded by their sites (jaxdd's, off by default)
+
+Boltzmann's profile lets free ions pile up without limit: frozen at full accumulation, 1e18
+cm⁻³ of them reach 1.5e21 cm⁻³ in nanometre layers at the interfaces. Real ions sit on lattice
+sites, at most one each. A layer's `N_max_anion` and `N_max_cation` (m⁻³, in its parameter
+file or the parameters' dict, `device.ION_SITE_PARAMETERS`; SIMsalabim has neither) bound each
+mobile species by its density of sites, the occupancy of a site (the Fermi–Dirac integral of
+order −1, Bikerman's modified Poisson–Boltzmann):
+
+```
+n_anion(x)  = N_max / (1 + exp(−(ln C_a + V(x)/V_T − ln N_max)))  =  b / (1 + b/N_max),
+b = C_a·exp(+V(x)/V_T)        (cations with −V)
+```
+
+`b` is Boltzmann's density with the same normalisation, which `C_a` again sets to the region's
+number of ions; far below `N_max` the two are equal, and with `N_max` infinite (the default)
+the profile is Boltzmann's to the bit (`solver.occupancy`). The free steady state takes it, and
+so the frozen profile after a pre-bias. A layer's mean density must lie below its sites
+(refused otherwise). Whether a device has sites at all is part of its structure
+(`Structure.ion_sites`, any finite `N_max` in the input): the parameters' `N_max` then move
+them, differentiably; set in the parameters of an input without any, they do nothing.
+
+What `N_max` is: a model parameter between the mean density and the density of the sites. The
+halide sites are `3/a³` (three per unit cell), 1.21e22 cm⁻³ for MAPbI₃ (a = 6.28 Å; Abdel,
+Courtier, Farrell, Opt. Quantum Electron. 55, 884 (2023), after Eames et al., Nat. Commun. 6,
+7497 (2015)) and 1.17–1.26e22 cm⁻³ for the FA/Cs perovskites' pseudo-cubic `a` of about
+6.2–6.36 Å; the A-site cations' `1/a³` about 4e21 cm⁻³. Drift-diffusion codes take it far
+lower, as a parameter that limits the accumulation: IonMonger's template 2e21 cm⁻³ (`Plim`,
+off by default, against a mean of 1.6e19; Clarke et al., J. Comput. Electron. 22, 364 (2023)),
+ChargeTransport.jl's parameter files 1e21 and 1e20 cm⁻³ (62 and 100 times their mean). Which
+defect each of SimSS's species stands for is the input's to say: the halide vacancies, positive,
+are its cations; its anions, negative, cation vacancies or halide interstitials, each with its
+own sites.
+
+In time the ions would need a flux of their own (nonlinear diffusion at a constant mobility,
+or a modified drift at a constant diffusivity: the same steady state, different transients;
+Abdel et al.); `solve_transient` refuses mobile ions bounded by their sites by name. Newton
+starts from the solution with Boltzmann's ions ([solver.md](solver.md)) and converges at their
+steps on the hard devices with the sites of the lattice or the codes
+([validation.md](validation.md)); where the ions fill much of their layer (sites a few times
+their mean density) a voltage may not converge, and is reported so.
+
 ## The current (`Calc_Curr_Int`, `Calc_Curr_Diff`, `Calc_All_Currents`)
 
 The terminal current is not read off a single Scharfetter–Gummel flux. SIMsalabim's integral

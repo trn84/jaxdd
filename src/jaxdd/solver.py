@@ -216,6 +216,9 @@ def _stencils(dev: Device, xp=np) -> dict[str, jnp.ndarray]:
         "sP": 1.0 / (Q * dev.N_c[i]),
         "sC": 1.0 / (xp.maximum(dev.mu_n[i], dev.mu_p[i]) * dev.Vt * dev.N_c[i] * h[i]),
     }  # fmt: skip
+    if _has_sites(dev):  # ions bounded by their sites: 1/N_max (`occupancy`), 0 unbounded
+        out["a_inv"] = _inverse_sites(dev.anion_max, NP + 2, xp)[i]
+        out["c_inv"] = _inverse_sites(dev.cation_max, NP + 2, xp)[i]
     if dev.trap_charge is not None:  # charged bulk traps, only where there are any
         out["tq"], out["tcwe"] = dev.trap_charge[i], dev.trap_cwe[i]
     if dev.interface is not None:  # on the edges (`Device.interface`), only where there are any
@@ -608,11 +611,50 @@ def _interface_terms(n, p, ti):
     return at_points(value), own, up, down
 
 
+def _occupancy(z, inv):
+    on = inv > 0
+    safe = jnp.where(on, inv, 1.0)
+    u = jnp.where(on, z + jnp.log(safe), 0.0)
+    sat = jax.nn.sigmoid(u) / safe
+    boltz = jnp.exp(jnp.where(on, 0.0, z))
+    return jnp.where(on, sat, boltz), jnp.where(on, sat * jax.nn.sigmoid(-u), boltz)
+
+
+@jax.custom_jvp
+def _bounded(z, inv):
+    return _occupancy(z, inv)[0]
+
+
+@_bounded.defjvp
+def _bounded_jvp(primals, tangents):
+    """`n·(1 − n·inv)` in `z` as `σ(u)·σ(−u)/inv`, without autodiff's `σ·(1 − σ)`, which loses
+    the digits where the ions fill their sites; `−n²` in `inv` where it is positive (0 where
+    it is 0: there `inv = 1/N_max` has no derivative in an infinite `N_max`, and Boltzmann's
+    `n²` may overflow)."""
+    z, inv = primals
+    dz, dinv = tangents
+    n, dn = _occupancy(z, inv)
+    return n, dn * dz + jnp.where(inv > 0, -n * n, 0.0) * dinv
+
+
+def occupancy(z, inv):
+    """A mobile ion's density at `z = ln C ± V/V_T` and its derivative in `z`: Boltzmann's
+    `exp(z)` where `inv` (1/N_max) is 0, else bounded by its sites, `exp(z)/(1 + exp(z)/N_max)`
+    (the Fermi–Dirac integral of order −1, Bikerman's steric limit; docs/model.md), by the
+    logistic function so that neither branch overflows."""
+    return _bounded(z, inv), _occupancy(z, inv)[1]
+
+
 def _ion_densities(V, la, lc, s, Vt):
     """Anions and cations at a point: fixed, plus Boltzmann in V where they are mobile (the
-    zero-current profile of SIMsalabim's `Calc_Ion_Distribution_Steady_State`)."""
-    anion = s["a_fix"] + s["a_mask"] * jnp.exp(la + V / Vt)
-    cation = s["c_fix"] + s["c_mask"] * jnp.exp(lc - V / Vt)
+    zero-current profile of SIMsalabim's `Calc_Ion_Distribution_Steady_State`), bounded by
+    their sites where `N_max` is finite (`occupancy`)."""
+    if "a_inv" not in s:
+        anion = s["a_fix"] + s["a_mask"] * jnp.exp(la + V / Vt)
+        cation = s["c_fix"] + s["c_mask"] * jnp.exp(lc - V / Vt)
+        return anion, cation
+    anion = s["a_fix"] + s["a_mask"] * occupancy(la + V / Vt, s["a_inv"])[0]
+    cation = s["c_fix"] + s["c_mask"] * occupancy(lc - V / Vt, s["c_inv"])[0]
     return anion, cation
 
 
@@ -747,8 +789,14 @@ def _assemble(full, s, Vt, g_frac, la, lc, B=bernoulli):
     dnet_p = jnp.stack([dV_mid, -dRp_n, -dRp_p], -1)
     elec = hm[:, 0] * Fn[1:] - hp[:, 0] * Fn[:-1] + fac * (gen - Rn)
     hole = hp[:, 0] * Fp[:-1] - hm[:, 0] * Fp[1:] + fac * (gen - Rp)
-    anion = s["a_mask"] * jnp.exp(la + Vm / Vt)
-    cation = s["c_mask"] * jnp.exp(lc - Vm / Vt)
+    if "a_inv" in s:  # bounded by their sites: the density and its derivative differ
+        anion, d_anion = occupancy(la + Vm / Vt, s["a_inv"])
+        cation, d_cation = occupancy(lc - Vm / Vt, s["c_inv"])
+        anion, d_anion = s["a_mask"] * anion, s["a_mask"] * d_anion
+        cation, d_cation = s["c_mask"] * cation, s["c_mask"] * d_cation
+    else:
+        anion = d_anion = s["a_mask"] * jnp.exp(la + Vm / Vt)
+        cation = d_cation = s["c_mask"] * jnp.exp(lc - Vm / Vt)
     poisson = (
         s["fac_l"] * V[:-2]
         + s["fac_m"] * Vm
@@ -758,7 +806,7 @@ def _assemble(full, s, Vt, g_frac, la, lc, B=bernoulli):
 
     P_A = jnp.stack([s["fac_l"], zm, zm], -1)
     P_C = jnp.stack([s["fac_u"], zm, zm], -1)
-    P_B = jnp.stack([s["fac_m"] - Q * (anion + cation) / Vt, -Q * nm, Q * pm], -1)
+    P_B = jnp.stack([s["fac_m"] - Q * (d_anion + d_cation) / Vt, -Q * nm, Q * pm], -1)
     if "tq" in s:  # charged bulk traps: their charge in Poisson, from the point's own densities
         Qt, dQ_n = jax.jvp(lambda a: _trap_charge(a, pm, s), (nm,), (nm,))
         _, dQ_p = jax.jvp(lambda b: _trap_charge(nm, b, s), (pm,), (pm,))
@@ -800,8 +848,8 @@ def _assemble(full, s, Vt, g_frac, la, lc, B=bernoulli):
         Bb = Bb.at[:, 2, 2].add(-fac * tr["dti"] * pm * s["sC"])
     F = jnp.stack([poisson * s["sP"], elec * s["sC"], hole * s["sC"]], -1)
     U = jnp.stack([
-        jnp.stack([-Q * anion * s["sP"], zm, zm], -1),
-        jnp.stack([Q * cation * s["sP"], zm, zm], -1),
+        jnp.stack([-Q * d_anion * s["sP"], zm, zm], -1),
+        jnp.stack([Q * d_cation * s["sP"], zm, zm], -1),
     ], -1)  # fmt: skip
     return F, A, Bb, C, U
 
@@ -831,6 +879,17 @@ def _slot_columns(U, ion):
     return jnp.concatenate([a, c], -1)
 
 
+def _slot_inv(ion):
+    """Each slot's 1/N_max over the full grid (K × NP + 2, `occupancy`): its species'; None
+    without sites."""
+    if "a_inv" not in ion:
+        return None
+    ka, kc = ion["a_slots"].shape[0], ion["c_slots"].shape[0]
+    n = ion["a_slots"].shape[1]
+    return jnp.concatenate([jnp.broadcast_to(ion["a_inv"], (ka, n)),
+                            jnp.broadcast_to(ion["c_inv"], (kc, n))])  # fmt: skip
+
+
 def _held(ion):
     """1 for a slot without ions, whose normalisation is held (an identity row), else 0."""
     return jnp.where(_slots(ion)[1] > 0, 0.0, 1.0)
@@ -840,7 +899,9 @@ def _ion_constraints(V_full, logs, ion):
     """Each slot's number of ions over its total, less 1 (trapezoidal over its region, as
     SIMsalabim's `Rescale_Ion_Density`); 0 for a slot without ions."""
     masks, totals, sign = _slots(ion)
-    dens = masks * jnp.exp(logs[:, None] + sign[:, None] * V_full / ion["Vt"])
+    z = logs[:, None] + sign[:, None] * V_full / ion["Vt"]
+    inv = _slot_inv(ion)
+    dens = masks * (jnp.exp(z) if inv is None else occupancy(z, inv)[0])
     pair = masks[:, 1:] * masks[:, :-1]
     number = jnp.sum(0.5 * (dens[:, 1:] + dens[:, :-1]) * pair * ion["hL"], axis=1)
     return jnp.where(totals > 0, number / jnp.where(totals > 0, totals, 1.0) - 1.0, 0.0)
@@ -1132,14 +1193,42 @@ _poisson_jac = jax.vmap(jax.jacfwd(_poisson_row, argnums=(0, 1, 2)), in_axes=_P_
 _poisson_val = jax.vmap(_poisson_row, in_axes=_P_AXES)
 
 
+#: Newton steps of `_ion_logs` for ions bounded by their sites, and the largest of them.
+ION_LOG_STEPS = 40
+ION_LOG_START_CAP = 20.0
+
+
 def _ion_logs(V_full, ion):
-    """The normalisations that put each slot's total into its region at `V` (`_slots`)."""
+    """The normalisations that put each slot's total into its region at `V` (`_slots`):
+    Boltzmann's in closed form; for ions bounded by their sites (`occupancy`) from there by
+    Newton on the logarithm of their number, which rises with the normalisation (Boltzmann's
+    puts fewer bounded ions into the region than it should, so it starts below)."""
     masks, totals, sign = _slots(ion)
-    dens = masks * jnp.exp(sign[:, None] * V_full / ion["Vt"])
     pair = masks[:, 1:] * masks[:, :-1]
-    number = jnp.sum(0.5 * (dens[:, 1:] + dens[:, :-1]) * pair * ion["hL"], axis=1)
-    number = jnp.where(totals > 0, number, 1.0)
-    return jnp.where(totals > 0, jnp.log(jnp.where(totals > 0, totals, 1.0) / number), 0.0)
+
+    def number(dens):
+        return jnp.sum(0.5 * (dens[:, 1:] + dens[:, :-1]) * pair * ion["hL"], axis=1)
+
+    has = totals > 0
+    total = jnp.where(has, totals, 1.0)
+    shift = sign[:, None] * V_full / ion["Vt"]
+    boltz = jnp.where(has, jnp.log(total / jnp.where(has, number(masks * jnp.exp(shift)), 1.0)),
+                      0.0)  # fmt: skip
+    inv = _slot_inv(ion)
+    if inv is None:
+        return boltz
+    bounded = has & jnp.any(masks * inv > 0, axis=1)
+
+    def step(_, logs):
+        occ, d_occ = occupancy(logs[:, None] + shift, inv)
+        num, d_num = number(masks * occ), number(masks * d_occ)
+        ok = bounded & (num > 0) & (d_num > 0)
+        num, d_num = jnp.where(ok, num, 1.0), jnp.where(ok, d_num, 1.0)
+        d = jnp.where(ok, -jnp.log(num / total) * num / d_num, 0.0)
+        return logs + jnp.clip(d, -ION_LOG_START_CAP, ION_LOG_START_CAP)
+
+    refined = jax.lax.fori_loop(0, ION_LOG_STEPS, step, boltz)
+    return jnp.where(bounded, refined, boltz)
 
 
 @jax.jit
@@ -1242,8 +1331,31 @@ def _ion_setup(dev: Device) -> dict:
     a_slots, a_totals = slots(dev.anion_mask, dev.anion_total, dev.anion_slots, dev.anion_totals)
     c_slots, c_totals = slots(dev.cation_mask, dev.cation_total, dev.cation_slots,
                               dev.cation_totals)  # fmt: skip
-    return {"Vt": dev.Vt, "hL": dev.h[:-1] * dev.L, "a_slots": a_slots, "a_totals": a_totals,
-            "c_slots": c_slots, "c_totals": c_totals}  # fmt: skip
+    out = {"Vt": dev.Vt, "hL": dev.h[:-1] * dev.L, "a_slots": a_slots, "a_totals": a_totals,
+           "c_slots": c_slots, "c_totals": c_totals}  # fmt: skip
+    if _has_sites(dev):
+        out["a_inv"] = _inverse_sites(dev.anion_max, len(dev.x), xp)
+        out["c_inv"] = _inverse_sites(dev.cation_max, len(dev.x), xp)
+    return out
+
+
+def _has_sites(dev: Device) -> bool:
+    """Whether the device's ions are bounded by their sites (`Device.anion_max`)."""
+    return dev.anion_max is not None or dev.cation_max is not None
+
+
+def _inverse_sites(n_max, size, xp=np):
+    """1/N_max at each point (`occupancy`), 0 where it is infinite or not given."""
+    if n_max is None:
+        return xp.zeros(size)
+    return 1.0 / n_max
+
+
+def _unbounded(s: dict, ion: dict) -> tuple[dict, dict]:
+    """`s` and `ion` with the ions' sites removed: Boltzmann's ions, the start of a solve with
+    bounded ones (`solve_jv`, `batch._solve_one`)."""
+    return ({k: v for k, v in s.items() if k not in ("a_inv", "c_inv")},
+            {k: v for k, v in ion.items() if k not in ("a_inv", "c_inv")})  # fmt: skip
 
 
 def _freeze(s: dict, ion: dict, y, logs, bounds, Vt) -> tuple[dict, dict]:
@@ -1253,8 +1365,7 @@ def _freeze(s: dict, ion: dict, y, logs, bounds, Vt) -> tuple[dict, dict]:
     V = y[:, 0]
     la, lc = _point_logs(logs, ion)
     s = dict(s)
-    s["a_fix"] = s["a_fix"] + s["a_mask"] * jnp.exp(la + V / Vt)
-    s["c_fix"] = s["c_fix"] + s["c_mask"] * jnp.exp(lc - V / Vt)
+    s["a_fix"], s["c_fix"] = _ion_densities(V, la, lc, s, Vt)
     s["a_mask"] = jnp.zeros_like(s["a_mask"])
     s["c_mask"] = jnp.zeros_like(s["c_mask"])
     ion = dict(ion)
@@ -1320,20 +1431,32 @@ def solve_jv(dev: Device, voltages: np.ndarray, g_frac: float | None = None,
                 return y, logs, True, steps
         return y, logs, False, steps
 
-    for _ in range(max_iter):
-        y, size = _poisson_step(y, bounds_at(first), s, ion, dev.Vt)
-        if float(size) < 1e-8:
-            break
-    logs = _ion_logs(
-        jnp.concatenate([bounds_at(first)[0][:1], y[:, 0], bounds_at(first)[1][:1]]), ion
-    )
+    def poisson_start(y, s_, ion_):
+        for _ in range(max_iter):
+            y, size = _poisson_step(y, bounds_at(first), s_, ion_, dev.Vt)
+            if float(size) < 1e-8:
+                break
+        b = bounds_at(first)
+        return y, _ion_logs(jnp.concatenate([b[0][:1], y[:, 0], b[1][:1]]), ion_)
+
+    # Ions bounded by their sites: from the solution with Boltzmann's ions, else (where that
+    # does not converge bounded) from Poisson's with the bounded ions (docs/solver.md).
+    s_free, ion_free = _unbounded(s, ion) if "a_inv" in s else (s, ion)
+    y0 = y
+    y, logs = poisson_start(y0, s_free, ion_free)
     if "tq" in s:
         # Charged bulk traps: from the start Newton finds no way to the solution (each density
         # step moves the traps' charge and so the potential, every step at its cap); from the
         # solution with the traps neutral it does, in a few steps (docs/solver.md).
-        y_n, logs_n, ok, _ = settle(y, logs, dict(s, tq=jnp.zeros_like(s["tq"])), ion, first)
+        neutral = dict(s_free, tq=jnp.zeros_like(s["tq"]))
+        y_n, logs_n, ok, _ = settle(y, logs, neutral, ion_free, first)
         if ok:
             y, logs = y_n, logs_n
+    if "a_inv" in s:
+        y_b, logs_b, ok, _ = settle(y, logs, s_free, ion_free, first)
+        if ok:
+            y_b, logs_b, ok, _ = settle(y_b, logs_b, s, ion, first)
+        y, logs = (y_b, logs_b) if ok else poisson_start(y0, s, ion)
     if dev.pre_cond:
         y, logs, ok, _ = settle(y, logs, s, ion, dev.V_pre)
         if not ok:

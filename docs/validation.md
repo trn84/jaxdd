@@ -295,10 +295,19 @@ so that the solver is never the larger error in what is computed from it.
   parameters, not the parameters one by one — the paper's own point. The 0.6 Cl sample, with the
   largest band step to the ETL in the paper's fit, is the one the assumptions do not reach.
   With the cell in its own orientation and the transfer-matrix profile instead
-  (`--device anode`, a stand-in perovskite's n,k data), the misfits are 0.86, 0.75 and 2.4 %:
-  no better, and the fitted parameters move by up to a factor of 20 between the two assumptions
-  about the generation (0.2 Cl: the ETL interface's traps 1.1e14 against 2.4e13 m⁻²). What these
-  curves say about a single parameter depends on the unstated assumptions as much as on the data.
+  (`--device anode`), the misfits are no better. With the paper's n,k data for the perovskite
+  (its supporting information names Werner et al., ACS Energy Lett. 3, 742 (2018); of their
+  Table S4 the composition at the samples' band gap of 1.65–1.68 eV, CsBr10%-1:2, read from a
+  file by `--nk`, the data not redistributable) they are 0.81, 0.75 and 2.44 %, with SIMsalabim's
+  `nk_peroTripleCat` as a stand-in 0.86, 0.75 and 2.4 %; the generation's scale ends at 1.04,
+  0.99 and 1.04 (the stack's 188 A/m² in the absorber at 1 sun against 187–196 A/m² measured,
+  the stand-in's 210). The back electrode is Ag in the paper's text and Al in its supporting
+  information; Al (SIMsalabim's `nk_Al`, `--back`) generates 177 A/m², the scale ends 5 % higher
+  and the misfits are the same to 1e-4. The fitted parameters move by up to a factor of 20
+  between a uniform and a computed generation (0.2 Cl: the ETL interface's traps 1.1e14 against
+  3.2e13 m⁻² with Werner's data, 2.4e13 with the stand-in's), little between the two n,k data.
+  What these curves say about a single parameter depends on the unstated assumptions as much as
+  on the data.
 - **Many starts at once** (`fit_measured.py --starts 16`, `jaxdd.fit.least_squares_many`,
   2026-11-14): the same fit from 16 starts (the cold one, the paper's values and 14 of a Sobol
   sequence in the box), every start scipy's `least_squares` as alone, their curves and
@@ -312,6 +321,11 @@ so that the solver is never the larger error in what is computed from it.
   sampler's σ the lower minima are e⁵⁹ and e¹⁵⁸ more likely, and the posteriors below are
   sampled around them. 64 starts for 0.6 Cl (24 min, 1.6× the time of 16 per evaluation for 4×
   the starts) find the same best, from 8 starts.
+  With the computed generation and Werner's n,k data (`--device anode --nk …`, 2026-11-15,
+  12 min per sample) the best of 16 starts are 0.658, 0.552 and 1.96 %, where the uniform
+  generation's are 0.701, 0.553 and 1.93 %: the optics do not make the curves easier to fit.
+  The best minima lie elsewhere in the box again (0.6 Cl: the cations at their bound of
+  1e23 m⁻³, the HTL interface's traps 4.5e14 m⁻²).
 
 - **The fit's uncertainty, by sampling** (`validation/sample_measured.py`, 2026-11-14): a posterior
   of the same fourteen parameters, by an ensemble sampler whose walkers' five intensities are
@@ -382,6 +396,19 @@ so that the solver is never the larger error in what is computed from it.
   measure is the fit under these assumptions as much as the cells. With σ the rms misfit the widths are a lower bound: the misfit is systematic and smooth
   in the voltage, not independent noise, and where the posterior is close to Gaussian its widths
   scale with σ (`--sigma`).
+- **Ions bounded by their sites** (`validation/hard.py 1024 256 N_max`, 2026-11-15, RTX 4070
+  Ti SUPER): `hard.py`'s 1024 devices (1e15–4e18 cm⁻³ of ions frozen at one of five
+  accumulations), the absorber's two species bounded by the halide sites' 1.21e28 m⁻³, by
+  IonMonger's 2e27 and by 1e26 (Driftfusion's in ChargeTransport.jl). Every voltage of every
+  device converges, at the Newton steps of Boltzmann's ions (2.81 per voltage needed, 3.95 paid);
+  174 curves/s against 227 without sites, the start's two more solves (docs/solver.md). The
+  curves' largest difference from Boltzmann's over their scale, median / 99 % / most: 5.8e-7 /
+  2.1e-4 / 1.6e-3 at 1.21e28, 3.5e-6 / 1.3e-3 / 9.6e-3 at 2e27, 7.1e-5 / 2.5e-2 / 0.17 at 1e26.
+  At the lattice's sites the bound is a correction of 1e-3 at most to these devices; as the
+  parameter the codes take it is the model. On the 1 nm stack with 1e23 m⁻³ of each species
+  (`tests/data/steady_1e17_thin_light`, Boltzmann's ions up to 3.9e25 m⁻³), free at every
+  voltage from −0.5 to 1.4 V, every voltage converges with 1.2e23, 3e23, 8e23, 2e24 and 1e26 m⁻³
+  of sites; with 5e23 the three from −0.5 to −0.4 V do not (reported unconverged).
 
 When jaxdd and SimSS disagree, check SimSS first: its `errJ` at that voltage, its log for "No
 convergence", and a rerun at tight tolerances. The cases where SimSS was wrong so far are all in
@@ -461,6 +488,7 @@ jaxdd supports (JAX 0.4.31, NumPy 1.26, Python 3.11). The main ones:
 | `test_batch_matches_the_one_device_solver` | `solve_batch` against `solve_jv` |
 | `test_a_dark_scan_with_a_density_far_below_the_floor_converges` | a dark scan with densities far below the convergence floor: every voltage converges, the current monotone and zero at 0 V, SimSS's curve (the extrapolated start, [solver.md](solver.md)) |
 | `test_free_ions_keep_their_number` | the ions' constraint holds to round-off |
+| `tests/test_steric.py` | ions bounded by their sites: Boltzmann's curve to the bit without sites and to 1e-10 with 1e35 m⁻³; at 10–100× the mean density no density above the sites, one electrochemical potential over the layer, the number kept; the start's normalisation; the blocks against autodiff in saturation; batch against one device, frozen against free at the pre-bias; the gradient in `N_max`; a hard device that cycled from Poisson's start converges from Boltzmann's; refused in time, and below the mean density |
 | `test_the_block_sweep_solves_the_block_tridiagonal_system` | the sweep against a dense solve |
 | `test_short_circuit_current_never_exceeds_the_generation` | an invariant |
 | `test_bernoulli_*` | finite value and derivative at 0, `B(−x) = B(x) + x`, SimSS's series within its own error |
@@ -519,7 +547,8 @@ as arguments. SimSS itself is built by [`simss/`](../simss/README.md).
 | `validation/shortcuts.py CASE_DIR …` | the batched solver with its shortcuts against `strict=True` |
 | `validation/bench.py [N] [batch]` | curves per second ([hardware.md](hardware.md)) |
 | `validation/breakdown.py [batch]` | one Newton step's time, part by part |
-| `validation/fit_measured.py [SAMPLE …] [--start cold\|paper] [--device mirrored\|anode] [--starts N]` | a fit to the measured curves of Heester et al. (2025), five intensities at once; from N starts at once |
+| `validation/hard.py [N] [batch] [N_max]` | a hard workload, frozen ions over a wide range ([batching.md](batching.md)); with `N_max` the ions bounded by their sites, against Boltzmann's |
+| `validation/fit_measured.py [SAMPLE …] [--start cold\|paper] [--device mirrored\|anode] [--nk FILE] [--back FILE] [--starts N]` | a fit to the measured curves of Heester et al. (2025), five intensities at once; the absorber's and back electrode's n,k data from files outside the repository; from N starts at once |
 | `validation/sample_measured.py [SAMPLE] [--move de\|stretch] [--walkers W] [--steps S] [--sigma F] [--out FILE] [--from-multistart]` | the fit's posterior by an ensemble sampler over the batch; the chain to an `.npz`; around the best of `fit_measured.py --starts N` |
 | `validation/axes.py [tol] [chunk] [test_points] [max_size]` | a table of a perovskite cell over four axes: refined axes against even ones, the error at random points |
 | `validation/fit.py CASE_DIR [--start S] [--fix NAME …] [--noise σ]` | a fit by gradients to the case's SimSS curve, from a perturbed start; what the curve determines (singular values) |

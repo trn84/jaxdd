@@ -43,6 +43,7 @@ from jaxdd.solver import (
     _interface_points,
     _ion_constraints,
     _ion_constraints_time,
+    _ion_densities,
     _ion_full,
     _ion_logs,
     _ion_setup,
@@ -55,6 +56,7 @@ from jaxdd.solver import (
     _slot_columns,
     _slots,
     _stencils,
+    _unbounded,
     _with_contacts,
     bernoulli,
     density_steps,
@@ -163,6 +165,12 @@ def prepare(devices: list[Device]) -> dict:
                 t["s"].setdefault(k, np.ones_like(t["s"]["hm"]))
             if True in braun:
                 t["s"].setdefault("br_romberg", np.zeros_like(t["s"]["hm"]))
+    if any("a_inv" in t["s"] for t in trees):  # ions bounded by their sites; the others none
+        for t in trees:
+            t["s"].setdefault("a_inv", np.zeros_like(t["s"]["hm"]))
+            t["s"].setdefault("c_inv", np.zeros_like(t["s"]["hm"]))
+            t["ion"].setdefault("a_inv", np.zeros(len(t["x"])))
+            t["ion"].setdefault("c_inv", np.zeros(len(t["x"])))
     if any("tq" in t["s"] for t in trees):  # charged bulk traps; the others none
         for t in trees:
             t["s"].setdefault("tq", np.zeros_like(t["s"]["Nt"]))
@@ -752,8 +760,7 @@ def _freeze(s, ion, y, logs, Vt, flag):
     """With `flag`, the mobile ions of `y` as fixed densities (`solver._freeze`)."""
     V = y[:, 0]
     la, lc = _point_logs(logs, ion)
-    anion = s["a_fix"] + s["a_mask"] * jnp.exp(la + V / Vt)
-    cation = s["c_fix"] + s["c_mask"] * jnp.exp(lc - V / Vt)
+    anion, cation = _ion_densities(V, la, lc, s, Vt)
     s = dict(s)
     s["a_fix"] = jnp.where(flag, anion, s["a_fix"])
     s["c_fix"] = jnp.where(flag, cation, s["c_fix"])
@@ -775,15 +782,33 @@ def _solve_one(d, voltages, B, tol, max_iter, start_iter, strict):
     # The start: no derivatives (`_newton_solve` has them, of its converged solution; reverse
     # mode has none through a while loop).
     d0, s0, ion0, first0 = jax.lax.stop_gradient((d, s, ion, first))
-    y = _poisson_solve(_initial(d0, first0)[1:-1], d0, s0, ion0, first0, start_iter)
     bounds = _bounds(d0, first0)
-    logs = _ion_logs(jnp.concatenate([bounds[0][:1], y[:, 0], bounds[1][:1]]), ion0)
+
+    def poisson_start(s_, ion_):
+        y = _poisson_solve(_initial(d0, first0)[1:-1], d0, s_, ion_, first0, start_iter)
+        return y, _ion_logs(jnp.concatenate([bounds[0][:1], y[:, 0], bounds[1][:1]]), ion_)
+
+    # Ions bounded by their sites: from the solution with Boltzmann's, else from Poisson's
+    # with the bounded ions (`solver.solve_jv`).
+    sb, ionb = s0, ion0
+    s0, ion0 = _unbounded(s0, ion0) if "a_inv" in s0 else (s0, ion0)
+    y, logs = poisson_start(s0, ion0)
     if "tq" in s0:  # charged bulk traps: from the solution with them neutral (`solver.solve_jv`)
         neutral = dict(s0, tq=jnp.zeros_like(s0["tq"]))
         y_n, logs_n, _, ok_n, _ = _newton_solve(
             y, logs, d0, neutral, ion0, first0, d0["g_frac"], B, tol, start_iter, strict
         )
         y, logs = jnp.where(ok_n, y_n, y), jnp.where(ok_n, logs_n, logs)
+    if "a_inv" in s:
+        y_b, logs_b, _, ok_b, _ = _newton_solve(
+            y, logs, d0, s0, ion0, first0, d0["g_frac"], B, tol, start_iter, strict
+        )
+        y_b, logs_b, _, ok_s, _ = _newton_solve(
+            y_b, logs_b, d0, sb, ionb, first0, d0["g_frac"], B, tol, start_iter, strict
+        )
+        y_d, logs_d = poisson_start(sb, ionb)
+        ok_b = ok_b & ok_s
+        y, logs = jnp.where(ok_b, y_b, y_d), jnp.where(ok_b, logs_b, logs_d)
     y, logs, _, pre_ok, _ = _newton_solve(
         y, logs, d, s, ion, first, g_frac, B, tol, start_iter, strict
     )

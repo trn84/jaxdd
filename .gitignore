@@ -17,3 +17,5 @@ rocm/*.log
 .venvct/
 benchmarks/*.log
 benchmarks/samples/
+# Data that may not be redistributed, kept beside the scripts that read them
+validation/data/local/

@@ -126,12 +126,14 @@ def best_of_many(sample: str, device: str):
     """The best end of `fit_measured.py SAMPLE --starts N` (its saved file), with its residuals
     and Jacobian as `least_squares` gives them (`x`, `fun`, `jac`)."""
     import jax
-    from fit_measured import ROOT
+    from fit_measured import multistart_path
 
-    path = ROOT / "benchmarks" / "samples" / f"multistart_{sample}.npz"
+    path = multistart_path(sample, device)
     saved = np.load(path)
     if str(saved["device"]) != device:
         raise SystemExit(f"{path.name} is for the {saved['device']} device, not {device}")
+    if any(k in saved and str(saved[k]) for k in ("nk", "back")):
+        raise SystemExit(f"{path.name} is for other n,k data than the device's")
     x = saved["theta"][int(np.argmin(saved["cost"]))]
     res = problem(sample, device)["residuals"]
     fun = np.asarray(res(jnp.asarray(x)))

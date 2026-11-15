@@ -342,6 +342,11 @@ class Device:
     # ions' fluxes take in time (`jaxdd.transient`); the steady state needs none.
     mu_anion: np.ndarray | None = None
     mu_cation: np.ndarray | None = None
+    # The ions' sites at each point (m⁻³, the layer's `N_max_anion`, `N_max_cation`; jaxdd's,
+    # not SIMsalabim's): a mobile ion's density is bounded by them (`solver.occupancy`, Bikerman's
+    # steric limit), infinite (or None) for SIMsalabim's Boltzmann.
+    anion_max: np.ndarray | None = None
+    cation_max: np.ndarray | None = None
 
 
 @dataclass(frozen=True)
@@ -386,6 +391,10 @@ class Structure:
     optics: dict | None = None
     left_elec: int = -1
     curr_diff: bool = False  # `currDiffInt = 1` (`Device.curr_diff`)
+    #: Whether any layer bounds its ions by their sites (a finite `N_max_anion` or
+    #: `N_max_cation`): the device then carries them (`Device.anion_max`); without, a site
+    #: density set in the parameters does nothing.
+    ion_sites: bool = False
     anion_region: np.ndarray = None  # per layer: its mobile region's index, −1 none
     cation_region: np.ndarray = None
 
@@ -419,6 +428,11 @@ LAYER_PARAMETERS = (
     "E_t_bulk", "N_anion", "N_cation", "mu_anion", "mu_cation", "N_t_int", "E_t_int", "C_n_int",
     "C_p_int", "G_ehp", "P0", "a", "k_f",
 )  # fmt: skip
+
+#: jaxdd's own per-layer parameters, not SIMsalabim's: each ion species' density of sites
+#: (m⁻³), a mobile ion's density bounded by it (`solver.occupancy`); infinite, Boltzmann's
+#: unbounded density, where a layer file does not name it.
+ION_SITE_PARAMETERS = ("N_max_anion", "N_max_cation")
 
 
 def _named(layer: Layer, name: str) -> bool:
@@ -471,7 +485,8 @@ def device_parameters(
     grid: str = "graded",
 ) -> tuple[Structure, dict]:
     """A SIMsalabim input (`check_supported` first) as its `Structure` and its
-    parameters: a dict of `LAYER_PARAMETERS`, each an array over the layers, and `T`, `W_L`,
+    parameters: a dict of `LAYER_PARAMETERS` and `ION_SITE_PARAMETERS`, each an array over the
+    layers, and `T`, `W_L`,
     `W_R`, `G_frac`, `V_pre`, the generation profile's file (`gen_x`, `gen_G`) and the external
     circuit's `R_series` and `R_shunt` (Ω m², `R_shunt` ≤ 0 none). Trap files add their levels,
     layers × levels: `bulk_trap_E`, `bulk_trap_N` (eV, m⁻³) and `int_trap_E`, `int_trap_N`
@@ -632,6 +647,18 @@ def device_parameters(
         return float(ly.raw.get(name, "0")) if name in optional else ly.f(name)
 
     params = {name: np.array([value(ly, name) for ly in layers]) for name in LAYER_PARAMETERS}
+    for name in ION_SITE_PARAMETERS:
+        params[name] = np.array([float(ly.raw.get(name, "inf")) for ly in layers])
+    structure = dataclasses.replace(structure, ion_sites=bool(any(
+        np.isfinite(params[name]).any() for name in ION_SITE_PARAMETERS)))  # fmt: skip
+    for k, ly in enumerate(layers, start=1):  # the ions must fit into their sites
+        for species in ("anion", "cation"):
+            N, N_max = ly.f(f"N_{species}"), params[f"N_max_{species}"][k - 1]
+            if not N_max > 0:
+                raise ValueError(f"layer {k}: N_max_{species} = {N_max} must be positive")
+            if N_max <= N and ly.f(f"mu_{species}") != 0:
+                raise ValueError(f"layer {k}: N_{species} = {N:g} must be below its sites, "
+                                 f"N_max_{species} = {N_max:g}")  # fmt: skip
     params.update(
         T=setup.f("T"), G_frac=setup.f("G_frac", 1.0),
         # 'sfb' (`Structure.sfb`) is computed in `device_arrays`; the value here is unused.
@@ -878,6 +905,8 @@ def device_arrays(structure: Structure, p: dict, xp=np) -> Device:
         anion_slots=ions["anion"][3], anion_totals=ions["anion"][4],
         cation_slots=ions["cation"][3], cation_totals=ions["cation"][4],
         mu_anion=p["mu_anion"][lid], mu_cation=p["mu_cation"][lid],
+        anion_max=p["N_max_anion"][lid] if st.ion_sites else None,
+        cation_max=p["N_max_cation"][lid] if st.ion_sites else None,
     )  # fmt: skip
 
 

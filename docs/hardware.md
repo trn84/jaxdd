@@ -138,7 +138,12 @@ background, logging to `benchmarks/apptainer.log`:
 ```bash
 git clone https://github.com/trn84/jaxdd.git ~/jaxdd && cd ~/jaxdd
 benchmarks/apptainer.sh                          # STEPS="breakdown bench" for a part
+STEPS=all benchmarks/apptainer.sh                # every step of a full measurement, ~40 min
 ```
+
+`STEPS=all` adds to the default steps the bounded ions on the hard workload (`steric`:
+`hard.py` with 1.21e28, 2e27 and 1e26 m⁻³ of sites against Boltzmann's, `STERIC_ARGS`) and the
+transients (`transient`: `transient_bench.py`, traps, mobile ions and the open circuit).
 
 `STEPS=sample` runs `validation/sample_measured.py` on the three measured samples instead
 (`SAMPLES`, `SAMPLE_ARGS`; hours, not in the default steps), each chain saved to

@@ -2,16 +2,22 @@
 (2025) at once, by gradients.
 
     .venv/bin/python validation/fit_measured.py [SAMPLE ...] [--start cold|paper]
-        [--device mirrored|anode] [--starts N]
+        [--device mirrored|anode] [--nk FILE] [--back FILE] [--starts N]
 
 SAMPLE is `01Cl`, `02Cl` or `06Cl` (all three by default; `validation/data/heester2025/`). The
 device (`--device mirrored`) is `tests/data/pin_iface_light`: the paper's stack (Table S2),
 mirrored to put the cathode left, with interface traps at both interfaces, and the sample's band
 gap; `--device anode` is the cell in its own orientation (`pin_anode_left_light`), lit through
-ITO and the HTL with the transfer-matrix profile, the perovskite's n,k data a stand-in. The
+ITO and the HTL with the transfer-matrix profile, the perovskite's n,k data SIMsalabim's
+`nk_peroTripleCat` (a stand-in) or those of `--nk FILE`. The paper's are Werner et al.'s (ACS
+Energy Lett. 3, 742 (2018)); of the four compositions their supporting information tabulates
+(Table S4) the one at the samples' band gap is CsBr10%-1:2 (1.65–1.68 eV). They may not be
+redistributed: copied from the table into a file of three columns (photon energy in eV, n, k),
+`--nk` reads them from wherever they are (`nk_table`: the first column in eV, nm or m, a header
+and commas allowed); `--back FILE` the back electrode's likewise (the paper's main text has Ag,
+its supporting information Al). The
 paper's model as far as it is stated; what it does not state is assumed: the generation (uniform
-or the stand-in's, its scale fitted; the paper's is transfer-matrix optics with its own n,k data),
-the interface traps donors at 4.7 eV
+or computed, its scale fitted), the interface traps donors at 4.7 eV
 with capture coefficients of 2e-14 m³/s (SIMsalabim's defaults), the transport layers' outer bands
 (HTL `E_c` 2.5 eV, ETL `E_v` 6.2 eV). No series resistance, as in the paper. The intensities are
 the measured short-circuit currents' ratios to the 1-sun curve's (0.126 where the files say 0.10,
@@ -28,6 +34,7 @@ paper's fit, which of them end at a bound, and the singular values of the Jacobi
 """
 
 import argparse
+import dataclasses
 import time
 from pathlib import Path
 
@@ -45,8 +52,8 @@ ROOT = Path(__file__).resolve().parents[1]
 DATA = ROOT / "validation" / "data" / "heester2025"
 #: The device: "mirrored", `tests/data/pin_iface_light` (the cathode left, a uniform generation),
 #: or "anode", `pin_anode_left_light` (the cell in its own orientation, lit through ITO and the
-#: HTL, the transfer-matrix profile with a stand-in perovskite's n,k data); and its layers' indices
-#: (ETL, absorber, HTL).
+#: HTL, the transfer-matrix profile, the perovskite's n,k data a stand-in unless `--nk` names
+#: others); and its layers' indices (ETL, absorber, HTL).
 DEVICES = {
     "mirrored": (ROOT / "tests" / "data" / "pin_iface_light", (0, 1, 2)),
     "anode": (ROOT / "tests" / "data" / "pin_anode_left_light", (2, 1, 0)),
@@ -77,10 +84,42 @@ FREE = [
 ]  # fmt: skip
 
 
-def problem(sample: str, device: str = "mirrored") -> dict:
+#: h·c in eV·m, a photon energy to its wavelength.
+HC_eV_m = 1.239841984e-6
+
+
+def nk_table(path: str | Path) -> str:
+    """The n,k data of `path` as SIMsalabim reads them (`lambda n k`, the wavelength in m): three
+    columns separated by blanks, tabs or commas, lines that are not three numbers skipped (a
+    header); the first column in m, in nm where it exceeds 1e-3, a photon energy in eV where it
+    stays below 10 (Werner et al.'s tables)."""
+    rows = []
+    for line in Path(path).read_text().splitlines():
+        cells = line.replace(",", " ").replace(";", " ").split()
+        try:
+            row = [float(c) for c in cells[:3]]
+        except ValueError:
+            continue
+        if len(row) == 3:
+            rows.append(row)
+    data = np.array(rows)
+    if data.ndim != 2 or len(data) < 2:
+        raise ValueError(f"{path}: no table of wavelength, n, k")
+    if data[:, 0].max() < 10:
+        data[:, 0] = HC_eV_m / data[:, 0]
+    elif data[:, 0].max() > 1e-3:
+        data[:, 0] *= 1e-9
+    data = data[np.argsort(data[:, 0])]
+    return "lambda n k\n" + "".join(f"{w:.6e} {n:.6g} {k:.6g}\n" for w, n, k in data)
+
+
+def problem(sample: str, device: str = "mirrored", nk: str | None = None,
+            back: str | None = None) -> dict:  # fmt: skip
     """The sample's curves and the model in the fitted coordinates `theta` (`FREE`'s order, a
     logarithm where `FREE` says so): `residuals(theta)` for one point, `residuals_many(thetas)`
-    for many at once (every point's five intensities in one batch), `unpack`, the bounds."""
+    for many at once (every point's five intensities in one batch), `unpack`, the bounds. `nk`, a
+    file of the absorber's n,k data in place of the device's (`nk_table`), `back` of the back
+    electrode's."""
     curves = [np.loadtxt(DATA / f"{sample}_{f}_fwd_JV.dat", skiprows=1) for f in FILES]
     V = jnp.asarray(curves[0][:, 0])
     J_data = np.stack([c[:, 1] for c in curves])
@@ -88,7 +127,17 @@ def problem(sample: str, device: str = "mirrored") -> dict:
     suns, scale = jsc / jsc[0], jsc[0]
     path, (ETL, ABSORBER, HTL) = DEVICES[device]
     # SIMsalabim's grid, on which the fits and posteriors of docs/validation.md were made.
-    structure, base = device_parameters(read_setup(path / "simulation_setup.txt"), grid="simss")
+    setup = read_setup(path / "simulation_setup.txt")
+    files = {}
+    if nk is not None:
+        files[setup.layers[ABSORBER].raw["nkLayer"]] = nk_table(nk)
+    if back is not None:
+        files[setup.raw["nkBE"]] = nk_table(back)
+    if files:
+        if setup.raw.get("genProfile", "").strip() != "calc":
+            raise SystemExit(f"--nk, --back: the {device} device's generation is not computed")
+        setup = dataclasses.replace(setup, files=files)
+    structure, base = device_parameters(setup, grid="simss")
     base = {k: jnp.asarray(v) for k, v in base.items()}
     base["E_v"] = base["E_v"].at[ABSORBER].set(base["E_c"][ABSORBER] + GAP_eV[sample])
     if structure.gen_mode == "file":  # the mirrored device's profile was made for 187 A/m²
@@ -145,8 +194,9 @@ def problem(sample: str, device: str = "mirrored") -> dict:
                 residuals=residuals, residuals_many=residuals_many)  # fmt: skip
 
 
-def fit(sample: str, start: str = "cold", device: str = "mirrored") -> dict:
-    pr = problem(sample, device)
+def fit(sample: str, start: str = "cold", device: str = "mirrored", nk: str | None = None,
+        back: str | None = None) -> dict:  # fmt: skip
+    pr = problem(sample, device, nk, back)
     residuals, unpack, lo, hi = pr["residuals"], pr["unpack"], pr["lo"], pr["hi"]
     jacobian = jax.jit(jax.jacfwd(residuals))
     theta0 = paper_start(sample, lo, hi) if start == "paper" else 0.5 * (lo + hi)
@@ -167,7 +217,22 @@ def fit(sample: str, start: str = "cold", device: str = "mirrored") -> dict:
     t2 = time.perf_counter()
     return dict(sample=sample, start=start, out=out, suns=pr["suns"], scale=pr["scale"],
                 theta0=theta0, fitted={k: float(x) for k, x in unpack(out.x).items()},
-                device=device, seconds=(t1 - t0, t2 - t1), calls=dict(calls))  # fmt: skip
+                device=_label(device, nk, back), seconds=(t1 - t0, t2 - t1),
+                calls=dict(calls))  # fmt: skip
+
+
+def multistart_path(sample: str, device: str = "mirrored", nk: str | None = None,
+                    back: str | None = None) -> Path:  # fmt: skip
+    """Where `fit_many` keeps the ends: `multistart_SAMPLE.npz` for the mirrored device, the
+    device and the n,k files' names appended otherwise."""
+    tags = [] if device == "mirrored" else [device]
+    tags += [Path(f).stem for f in (nk, back) if f is not None]
+    return ROOT / "benchmarks" / "samples" / ("_".join([f"multistart_{sample}", *tags]) + ".npz")
+
+
+def _label(device: str, nk: str | None, back: str | None = None) -> str:
+    files = [Path(f).name for f in (nk, back) if f is not None]
+    return ", ".join([device, *files])
 
 
 def paper_start(sample: str, lo, hi) -> np.ndarray:
@@ -179,11 +244,12 @@ def paper_start(sample: str, lo, hi) -> np.ndarray:
 LSQ = dict(method="trf", x_scale="jac", xtol=1e-10, ftol=1e-12, gtol=1e-12, max_nfev=400)
 
 
-def fit_many(sample: str, starts: int, device: str = "mirrored", seed: int = 0) -> dict:
+def fit_many(sample: str, starts: int, device: str = "mirrored", seed: int = 0,
+             nk: str | None = None, back: str | None = None) -> dict:  # fmt: skip
     """The sample from `starts` starts at once (module docstring)."""
     from scipy.stats import qmc
 
-    pr = problem(sample, device)
+    pr = problem(sample, device, nk, back)
     lo, hi = pr["lo"], pr["hi"]
     # A power of two keeps the sequence balanced; the first `starts − 2` are used.
     n = 2 ** int(np.ceil(np.log2(max(starts - 2, 1))))
@@ -198,7 +264,7 @@ def fit_many(sample: str, starts: int, device: str = "mirrored", seed: int = 0) 
                   f"{time.perf_counter() - t0:.0f} s", flush=True)  # fmt: skip
 
     res = least_squares_many(pr["residuals_many"], theta0, lo, hi, progress=progress, **LSQ)
-    out = ROOT / "benchmarks" / "samples" / f"multistart_{sample}.npz"
+    out = multistart_path(sample, device, nk, back)
     out.parent.mkdir(parents=True, exist_ok=True)
     np.savez(
         out,
@@ -210,8 +276,11 @@ def fit_many(sample: str, starts: int, device: str = "mirrored", seed: int = 0) 
         names=[n for n, *_ in FREE],
         log=[lg for _, lg, *_ in FREE],
         device=device,
+        nk="" if nk is None else str(Path(nk).resolve()),
+        back="" if back is None else str(Path(back).resolve()),
     )
-    return dict(sample=sample, device=device, res=res, pr=pr, theta0=theta0, out=out)
+    return dict(sample=sample, device=_label(device, nk, back), res=res, pr=pr, theta0=theta0,
+                out=out)  # fmt: skip
 
 
 def report_many(r: dict) -> None:
@@ -271,13 +340,15 @@ def main() -> None:
     args.add_argument("samples", nargs="*", default=list(GAP_eV))
     args.add_argument("--start", choices=("cold", "paper"), default="cold")
     args.add_argument("--device", choices=tuple(DEVICES), default="mirrored")
+    args.add_argument("--nk", default=None, help="the absorber's n,k data (with --device anode)")
+    args.add_argument("--back", default=None, help="the back electrode's n,k data (likewise)")
     args.add_argument("--starts", type=int, default=0, help="N starts at once (0: one, --start)")
     a = args.parse_args()
     for sample in a.samples:
         if a.starts:
-            report_many(fit_many(sample, a.starts, a.device))
+            report_many(fit_many(sample, a.starts, a.device, nk=a.nk, back=a.back))
         else:
-            report(fit(sample, a.start, a.device))
+            report(fit(sample, a.start, a.device, a.nk, a.back))
 
 
 if __name__ == "__main__":

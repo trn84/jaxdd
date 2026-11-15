@@ -17,6 +17,13 @@ the API, and says so here.
   83 521; where a feature moves across the axes with the voltage it saves no more than that
   ([docs/validation.md](docs/validation.md#a-table-with-refined-axes),
   [docs/tutorial.md](docs/tutorial.md#a-table-over-parameters)).
+- **Ions bounded by their sites** (jaxdd's, off by default). A layer's `N_max_anion` and
+  `N_max_cation` (m⁻³) bound each mobile ion species by its density of lattice sites, the
+  occupancy of a site in place of Boltzmann's unbounded density (Bikerman's modified
+  Poisson–Boltzmann), in the free steady state and so in the frozen profile; differentiable in
+  them. Without them the curves are Boltzmann's to the bit. Transients with bounded mobile ions
+  are refused ([docs/model.md](docs/model.md#ions-bounded-by-their-sites-jaxdds-off-by-default),
+  [docs/differences.md](docs/differences.md) §14).
 
 ### Changed
 

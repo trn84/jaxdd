@@ -97,8 +97,9 @@ ms with `currDiffInt = 1`. ZimT 5.36.
 to 1 ms after (120 steps, logarithmic); `Voc` 1.0283 V, 1.0368 V at the pulse's end.
 `zimt_rseries_sweep_light/`: `resist_light` (`R_series = 2e-4`, `R_shunt = 0.3` Ω m²) through the
 sweep of `zimt_sweep_light`. ZimT 5.36 at `tolPois = tolDens = tolVint = 1e-12`,
-`failureMode = 0`; references for Stage C's open circuit and series resistance (PLAN.md 4.1),
-not used by a test yet.
+`failureMode = 0`.
+`thin_l1_voc_light/`: `thin_l1_light` from SimSS 5.36 at `tolPois = tolDens = 1e-12` on 0.1 mV
+steps from 1.0280 to 1.0285 V, around its `Voc`: the reference for the open circuit at `t = 0`.
 
 `held_thin_light/`: `steady_1e17_thin_light` with 8e22 anions per m³ instead of 1e23 (a net
 charge of 2e22 m⁻³) held from the start (`fixIons = 1`, `preCond = 0`): run by SimSS 5.36 with

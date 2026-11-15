@@ -426,12 +426,10 @@ def test_transients_of_electrons_and_holes_reproduce_zimt(case: str) -> None:
     of time, and a sweep to 1.2 V and back in 2 × 100 ns whose displacement current is half
     the scale, in the integral and the differential form, with finite surface recombination."""
     from jaxdd.batch import prepare
-    from jaxdd.transient import solve_transient, transient_problems
+    from jaxdd.transient import solve_transient
 
     setup, tvg, ref = _zimt_case(case)
-    dev = build_device(setup)
-    assert transient_problems(dev, tvg) == []
-    r = solve_transient(prepare([dev]), tvg, bernoulli_name="simss")
+    r = solve_transient(prepare([build_device(setup)]), tvg, bernoulli_name="simss")
     assert r.converged.all()
     assert np.max(np.abs(r.J_ext[0] - ref["Jext"])) < 1e-9 * np.max(np.abs(ref["Jext"]))
 
@@ -498,17 +496,69 @@ def test_transients_in_a_batch_reproduce_zimt() -> None:
         assert np.max(np.abs(r.J_ext[k] - ref["Jext"])) < 1e-9 * np.max(np.abs(ref["Jext"]))
 
 
-def test_transients_refuse_what_they_lack() -> None:
-    """The open circuit and series resistance: refused by name (Stage C's next steps)."""
-    from jaxdd.transient import transient_problems
+def test_photovoltage_at_open_circuit_reproduces_zimt() -> None:
+    """The open circuit (`Vext = oc`), the internal voltage an unknown of each step's Newton
+    solve: ZimT 5.36's photovoltage through a light pulse of 1 µs and 1 ms after, 151 steps,
+    to 1e-10 V (ZimT's Brent to 1e-12 V); the current stays 0 to 1e-10 of the photocurrent."""
+    from jaxdd.batch import prepare
+    from jaxdd.transient import solve_transient
 
-    lacking = [("resist_light", "R_series")]
-    for case, what in lacking:
-        dev = build_device(read_setup(DATA / case / "simulation_setup.txt"))
-        assert any(what in p for p in transient_problems(dev)), case
-    setup, tvg, _ = _zimt_case("zimt_photo_light")
-    oc = dataclasses.replace(tvg, oc=np.ones_like(tvg.oc))
-    assert any("open circuit" in p for p in transient_problems(build_device(setup), oc))
+    setup, tvg, ref = _zimt_case("zimt_tpv_light")
+    r = solve_transient(prepare([build_device(setup)]), tvg, bernoulli_name="simss")
+    assert r.converged.all()
+    assert np.max(np.abs(r.V_int[0] - ref["Vint"])) < 1e-10
+    assert np.array_equal(r.V_ext, r.V_int)  # no series resistance
+    assert np.max(np.abs(r.J_ext)) < 1e-10 * np.max(ref["JphotoL2"])
+
+
+def test_open_circuit_in_the_steady_state_is_simss_voc() -> None:
+    """`oc` at `t = 0`: SimSS 5.36's `Voc` (its curve at 0.1 mV steps around it, a cubic
+    through them) to 1e-10 V."""
+    from jaxdd.batch import prepare
+    from jaxdd.transient import solve_transient
+
+    setup, tvg, _ = _zimt_case("zimt_tpv_light")
+    first = dataclasses.replace(tvg, **{k: getattr(tvg, k)[:1] for k in
+                                        ("t", "Vext", "oc", "G_frac", "track", "dti")})  # fmt: skip
+    r = solve_transient(prepare([build_device(setup)]), first, bernoulli_name="simss")
+    jv = np.genfromtxt(DATA / "thin_l1_voc_light" / "JV.dat", names=True)
+    roots = np.roots(np.polyfit(jv["Vext"] - jv["Vext"].mean(), jv["Jext"], 3))
+    roots = roots[np.abs(roots.imag) == 0].real + jv["Vext"].mean()
+    voc = roots[(roots > jv["Vext"].min()) & (roots < jv["Vext"].max())]
+    assert r.converged.all() and voc.size == 1
+    assert abs(r.V_int[0, 0] - voc[0]) < 1e-10
+
+
+def test_series_resistance_in_time_reproduces_zimt() -> None:
+    """`R_series` with a shunt in time, `Vint` the unknown whose `Vint + Jext·R_series` is the
+    given `Vext`: ZimT 5.36's `Jext` through the sweep to 1.2 V and back in 2 × 100 ns to 1e-9
+    of its scale, `Vint` to 1e-9 V (`Vint` differs from `Vext` by up to 0.65 V)."""
+    from jaxdd.batch import prepare
+    from jaxdd.transient import solve_transient
+
+    setup, tvg, ref = _zimt_case("zimt_rseries_sweep_light")
+    r = solve_transient(prepare([build_device(setup)]), tvg, bernoulli_name="simss")
+    assert r.converged.all()
+    assert np.max(np.abs(r.J_ext[0] - ref["Jext"])) < 1e-9 * np.max(np.abs(ref["Jext"]))
+    assert np.max(np.abs(r.V_int[0] - ref["Vint"])) < 1e-9
+    assert np.max(np.abs(r.V_ext[0] - tvg.Vext)) < 1e-9
+
+
+def test_series_resistance_beside_given_voltages_and_ions_in_a_batch() -> None:
+    """The internal voltage an unknown of every device where one device needs it: the series
+    resistance beside a device with the voltage given (its row `Vint = Vext`) and one with
+    mobile ions (5×5 blocks with the voltage's border), each as it is alone."""
+    from jaxdd.batch import prepare
+    from jaxdd.transient import solve_transient
+
+    cases = [_zimt_case(c) for c in ("zimt_rseries_sweep_light", "zimt_photo_light",
+                                     "zimt_ions_fast_light")]  # fmt: skip
+    batch = prepare([build_device(setup) for setup, _, _ in cases])
+    r = solve_transient(batch, [tvg for _, tvg, _ in cases], bernoulli_name="simss")
+    assert r.converged.all()
+    for k, ((_, _, ref), tol) in enumerate(zip(cases, (1e-9, 1e-9, 1e-7), strict=True)):
+        assert np.max(np.abs(r.J_ext[k] - ref["Jext"])) < tol * np.max(np.abs(ref["Jext"]))
+    assert np.max(np.abs(r.V_int[1:] - np.stack([t.Vext for _, t, _ in cases[1:]]))) < 1e-12
 
 
 @pytest.mark.parametrize("case", ["frozen_1e17_x1_thin_light", "steady_1e17_thin_light"])

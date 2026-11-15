@@ -405,6 +405,46 @@ def _system(y, logs, bounds, s, ion, Vt, g_frac, B):
     return F, g, (A, Bb, C, U, W, D)
 
 
+def _vint_row(y, Vint, target, d, g_frac, B):
+    """The internal voltage's row, where it is an unknown (ZimT's `SimType` 2–4): with
+    `target = (oc, Vext)`, the external current `Jext = Jint + Vint/R_shunt` at the open circuit
+    (`oc` 1), over the device's current scale; else `Vext = Vint + Jext·R_series` (ZimT's
+    `Residual_Current_Voltage`), in V_T, which with `R_series = 0` is `Vint = Vext`."""
+    oc, Vext = target
+    J_ext = _current(d, _full(_bounds(d, Vint), y), g_frac, B) + d["G_shunt"] * Vint
+    return jnp.where(oc > 0, J_ext / d["J_scale"],
+                     (Vint + d["R_series"] * J_ext - Vext) / d["Vt"])  # fmt: skip
+
+
+def _residual_vint(y, logs, d, s, ion, target, g_frac, B):
+    """`_residual` with the internal voltage the last of `logs` and its row (`_vint_row`)."""
+    Vint = logs[-1]
+    F, g = _residual(y, logs[:-1], _bounds(d, Vint), s, ion, d["Vt"], g_frac, B)
+    return F, jnp.concatenate([g, _vint_row(y, Vint, target, dict(d, s=s), g_frac, B)[None]])
+
+
+def _system_vint(y, logs, d, s, ion, target, g_frac, B):
+    """`_system` with the internal voltage an unknown, the last of `logs`: its column (the rows'
+    and constraints' derivatives in it, through the contacts) and its row (`_vint_row`, dense
+    in the grid) one more border of the bordered system."""
+    Vint, Vt = logs[-1], d["Vt"]
+    F, g, (A, Bb, C, U, W, D) = _system(y, logs[:-1], _bounds(d, Vint), s, ion, Vt, g_frac, B)
+
+    def rows(V):
+        return _residual(y, logs[:-1], _bounds(d, V), s, ion, Vt, g_frac, B)
+
+    _, (dF, dg) = jax.jvp(rows, (Vint,), (jnp.ones_like(Vint),))
+    d_s = dict(d, s=s)
+    h, (h_y, h_V) = jax.value_and_grad(_vint_row, argnums=(0, 1))(y, Vint, target, d_s, g_frac, B)
+    K = D.shape[0]
+    D = jnp.concatenate([jnp.concatenate([D, dg[:, None]], 1),
+                         jnp.concatenate([jnp.zeros(K), h_V[None]])[None]])  # fmt: skip
+    return F, jnp.concatenate([g, h[None]]), (
+        A, Bb, C, jnp.concatenate([U, dF[..., None]], -1),
+        jnp.concatenate([W, h_y[..., None]], -1), D,
+    )  # fmt: skip
+
+
 def _bordered_solve(blocks, r, rg):
     """`[[T, U], [Wᵀ, D]]·(x, z) = (r, rg)` (`_system`'s blocks): the block sweep on 1 + K
     right-hand sides and a K×K Schur complement (Sherman–Morrison–Woodbury, docs/solver.md)."""
@@ -441,39 +481,41 @@ def _apply(blocks, x, z):
     return rows, jnp.einsum("irk,ir->k", W, x) + D @ z
 
 
-def _newton_solve(y, logs, d, s, ion, Vint, g_frac, B, tol, max_iter, strict=False):
+def _newton_solve(y, logs, d, s, ion, Vint, g_frac, B, tol, max_iter, strict=False, vint=False):
     """Newton at one voltage until converged (module docstring) or `max_iter`:
     `(y, logs, J, converged, iterations)`. Differentiable in everything but the start: the
-    derivatives are those of the converged solution (`_converged_jvp`), not of the iterations."""
+    derivatives are those of the converged solution (`_converged_jvp`), not of the iterations.
+    With `vint` the internal voltage is an unknown, the last of `logs` (its start), and `Vint`
+    the target `(oc, Vext)` of its row (`_vint_row`)."""
     guess = jax.lax.stop_gradient((y, logs))
-    return _converged(B, max_iter, strict, guess, (d, s, ion, Vint, g_frac), tol)
+    return _converged(B, max_iter, strict, vint, guess, (d, s, ion, Vint, g_frac), tol)
 
 
-@functools.partial(jax.custom_jvp, nondiff_argnums=(0, 1, 2))
-def _converged(B, max_iter, strict, guess, params, tol):
+@functools.partial(jax.custom_jvp, nondiff_argnums=(0, 1, 2, 3))
+def _converged(B, max_iter, strict, vint, guess, params, tol):
     """`_newton_solve` from `guess`, without derivatives of its own."""
     d, s, ion, Vint, g_frac = params
-    return _newton_loop(*guess, d, s, ion, Vint, g_frac, B, tol, max_iter, strict)
+    return _newton_loop(*guess, d, s, ion, Vint, g_frac, B, tol, max_iter, strict, vint)
 
 
 @_converged.defjvp
-def _converged_jvp(B, max_iter, strict, primals, tangents):
+def _converged_jvp(B, max_iter, strict, vint, primals, tangents):
     """Implicit differentiation (M7): at a root of `_residual`, `∂r/∂y·ẏ = −∂r/∂θ·θ̇`. One linear
     solve with Newton's own Jacobian, whatever the iterations were; its transpose, for reverse
     mode, the same sweep on the transposed blocks (`custom_linear_solve`). A voltage not
     converged (or not finite) gets zero derivatives, so that it cannot spoil a gradient summed
     over the curve."""
     guess, params, tol = primals
-    out = _converged(B, max_iter, strict, guess, params, tol)
+    out = _converged(B, max_iter, strict, vint, guess, params, tol)
     y, logs, _, done, it = out
     valid = done & jnp.all(jnp.isfinite(y)) & jnp.all(jnp.isfinite(logs))
-    y_dot, logs_dot, J_dot = _tangent(B, valid, y, logs, params, tangents[1])
+    y_dot, logs_dot, J_dot = _tangent(B, vint, valid, y, logs, params, tangents[1])
     zero = functools.partial(np.zeros, dtype=jax.dtypes.float0)
     return out, (y_dot, logs_dot, J_dot, zero(np.shape(done)), zero(np.shape(it)))
 
 
-@functools.partial(jax.checkpoint, static_argnums=(0,))
-def _tangent(B, valid, y, logs, params, params_dot):
+@functools.partial(jax.checkpoint, static_argnums=(0, 1))
+def _tangent(B, vint, valid, y, logs, params, params_dot):
     """The converged solution's and current's tangents. Under `jax.checkpoint`, so that reverse
     mode keeps the solution per voltage, not its Jacobian blocks and the residual's
     linearisation: these are computed again in the backward pass."""
@@ -482,11 +524,16 @@ def _tangent(B, valid, y, logs, params, params_dot):
 
     def residual(params):
         d, s, ion, Vint, g_frac = params
+        if vint:
+            return _residual_vint(y, logs, d, s, ion, Vint, g_frac, B)
         return _residual(y, logs, _bounds(d, Vint), s, ion, d["Vt"], g_frac, B)
 
     _, (r, rg) = jax.jvp(residual, (params,), (params_dot,))
     d, s, ion, Vint, g_frac = params
-    _, _, blocks = _system(y, logs, _bounds(d, Vint), s, ion, d["Vt"], g_frac, B)
+    if vint:
+        _, _, blocks = _system_vint(y, logs, d, s, ion, Vint, g_frac, B)
+    else:
+        _, _, blocks = _system(y, logs, _bounds(d, Vint), s, ion, d["Vt"], g_frac, B)
     # An invalid voltage: the identity, whose solve of a zero right-hand side is zero even
     # where its own blocks are not finite.
     eye = jnp.eye(y.shape[-1])
@@ -515,34 +562,49 @@ def _tangent(B, valid, y, logs, params, params_dot):
     y_dot = jnp.where(valid, y_dot, 0.0)
     logs_dot = jnp.where(valid, logs_dot, 0.0)
 
-    def current(y, params):
+    def current(y, logs, params):
         d, _, _, Vint, g_frac = params
-        bounds = _bounds(d, Vint)
+        bounds = _bounds(d, logs[-1] if vint else Vint)
         return _current(d, _full(bounds, y), g_frac, B)
 
-    _, J_dot = jax.jvp(current, (y, params), (y_dot, params_dot))
+    _, J_dot = jax.jvp(current, (y, logs, params), (y_dot, logs_dot, params_dot))
     return y_dot, logs_dot, jnp.where(valid, J_dot, 0.0)
 
 
-def _newton_loop(y, logs, d, s, ion, Vint, g_frac, B, tol, max_iter, strict):
-    """Newton's iterations of `_newton_solve`."""
-    bounds = _bounds(d, Vint)
+def _newton_loop(y, logs, d, s, ion, Vint, g_frac, B, tol, max_iter, strict, vint=False):
+    """Newton's iterations of `_newton_solve`. With `vint` the internal voltage the last of
+    `logs`, its step held to the potential's cap; the current's settling is then no stop (the
+    voltage's last digits are what the open circuit wants)."""
     Vt = d["Vt"]
+
+    def bounds_of(logs):
+        return _bounds(d, logs[-1] if vint else Vint)
 
     contacts = "ct" in s
 
     def held(branch):  # the stencils with each contact's branch held (`solver._contact_ends`)
         return dict(s, ct=dict(s["ct"], branch=branch)) if contacts else s
 
-    def full_of(y):
-        return _full(bounds, y)
+    def full_of(y, logs):
+        return _full(bounds_of(logs), y)
 
     def step(y, logs, branch):
-        F, g, blocks = _system(y, logs, bounds, held(branch), ion, Vt, g_frac, B)
+        if vint:
+            F, g, blocks = _system_vint(y, logs, d, held(branch), ion, Vint, g_frac, B)
+        else:
+            F, g, blocks = _system(y, logs, bounds_of(logs), held(branch), ion, Vt, g_frac, B)
         delta, d_logs = _bordered_solve(blocks, -F, -g)
         caps = _caps(Vt, y.shape[-1])
         stepv = jnp.clip(delta, -caps, caps)
-        d_logs = jnp.clip(d_logs, -ION_LOG_CAP, ION_LOG_CAP)
+        if vint:
+            d_logs = jnp.concatenate([
+                jnp.clip(d_logs[:-1], -ION_LOG_CAP, ION_LOG_CAP),
+                jnp.clip(d_logs[-1:], -STEP_CAPS[0] * Vt, STEP_CAPS[0] * Vt),
+            ])  # fmt: skip
+            log_size = jnp.maximum(jnp.max(jnp.abs(d_logs[:-1])), jnp.abs(d_logs[-1]) / Vt)
+        else:
+            d_logs = jnp.clip(d_logs, -ION_LOG_CAP, ION_LOG_CAP)
+            log_size = jnp.max(jnp.abs(d_logs))
         new = y + stepv
         dens = jnp.exp(new[:, 1:])
         weight = dens / (dens + s["n_floor"][:, None])
@@ -550,12 +612,12 @@ def _newton_loop(y, logs, d, s, ion, Vint, g_frac, B, tol, max_iter, strict):
             jnp.maximum(
                 jnp.max(jnp.abs(stepv[:, 0])) / Vt, jnp.max(jnp.abs(stepv[:, 1:]) * weight)
             ),
-            jnp.max(jnp.abs(d_logs)),
+            log_size,
         )
         return new, logs + d_logs, size
 
-    def current(y):
-        return _current(d, _full(bounds, y), g_frac, B)
+    def current(y, logs):
+        return _current(d, full_of(y, logs), g_frac, B)
 
     hist0 = jnp.full(STALL_STEPS + 1, jnp.inf)
     J0 = jnp.full(STALL_STEPS + 1, jnp.inf)
@@ -581,17 +643,19 @@ def _newton_loop(y, logs, d, s, ion, Vint, g_frac, B, tol, max_iter, strict):
         quadratic = (it > 1) & (size < QUADRATIC_TOL) & (size < QUADRATIC_RATIO * prev)
         if strict:  # only the step below `tol`, or the round-off floor
             return (size < tol) | stalled
+        if vint:
+            return (size < tol) | stalled | quadratic
         return (size < tol) | stalled | settled | quadratic
 
     def body(carry):
         y, logs, size_hist, J_hist, it, _, branch = carry
         y, logs, size = step(y, logs, branch)
         size_hist = jnp.roll(size_hist, -1).at[-1].set(size)
-        J_hist = jnp.roll(J_hist, -1).at[-1].set(current(y))
+        J_hist = jnp.roll(J_hist, -1).at[-1].set(current(y, logs))
         it = it + 1
         done = converged(size_hist, J_hist, it)
         if contacts:  # a branch that does not hold near the solution: changed, histories anew
-            now = _contact_branch(full_of(y), s, Vt, B)
+            now = _contact_branch(full_of(y, logs), s, Vt, B)
             flip = (done | (size < BRANCH_FLIP_SIZE)) & jnp.any(now != branch)
             branch = jnp.where(flip, now, branch)
             size_hist = jnp.where(flip, hist0, size_hist)
@@ -603,7 +667,7 @@ def _newton_loop(y, logs, d, s, ion, Vint, g_frac, B, tol, max_iter, strict):
         *_, it, done, _ = carry
         return (~done) & (it < max_iter)
 
-    branch0 = _contact_branch(full_of(y), s, Vt, B) if contacts else jnp.zeros(4)
+    branch0 = _contact_branch(full_of(y, logs), s, Vt, B) if contacts else jnp.zeros(4)
     y, logs, _, J_hist, it, done, _ = jax.lax.while_loop(
         cond, body, (y, logs, hist0, J0, 0, jnp.array(False), branch0)
     )

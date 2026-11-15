@@ -8,7 +8,7 @@ the handbook.
 
 The order (2026-11-15, an estimate at the pace so far):
 
-1. Stage C to its end (section 4.1, steps 1–4): about 3–4 days.
+1. Stage C to its end (section 4.1, steps 1–3): about 2–3 days.
 2. M4's first step, the graded mesh (2.1): 1–3 days, depending on whether it is enough.
 3. **Release 0.1.0**: the steady state (SimSS) and the transients (ZimT); a version, a
    changelog, the README's installation, a wheel, CI, a pass over the handbook and the API.
@@ -16,15 +16,14 @@ The order (2026-11-15, an estimate at the pace so far):
 4. M6 (2.2), and the fused kernel if Stage C's speed decides for it (2.3, about 1–2 weeks):
    0.2.
 
-In the background, when the desktop GPU is free: 0.2 Cl's second sampling run, which closes
-M7 (2.4). Not before the release: M8 (1.3), the measured cell's optics (2.4, waiting for n,k
+On the hub: 0.2 Cl's second sampling run, which closes M7 (2.4). Not before the release: M8 (1.3), the measured cell's optics (2.4, waiting for n,k
 data), the steric ions (3, waiting for a source of `N_max`).
 
 ### 1.1 Stage C: transients
 
-Begun: electrons, holes, traps and mobile ions in time with the voltage given reproduce ZimT
-5.36. The next steps (the open circuit and series resistance, output, gradients, speed) are in
-section 4.1.
+Begun: electrons, holes, traps and mobile ions in time, with the voltage given, at the open
+circuit and behind a series resistance, reproduce ZimT 5.36. The next steps (stopping and
+output, gradients, speed) are in section 4.1.
 
 ### 1.3 M8: the MI50 cards
 
@@ -162,7 +161,7 @@ separate arrays, would spare a third of the blocks' writes and reads.
 Order: Stage B in JAX (done); then the kernel for the physics that has settled. A first
 measurement before deciding: the Newton step of Stage A's physics without ions as one CUDA
 kernel on devices without ions, against the JAX step's time on the A100. The fused kernel is not
-needed for the steady state; it is decided with Stage C's speed (section 4.1, step 4).
+needed for the steady state; it is decided with Stage C's speed (section 4.1, step 3).
 
 ### 2.4 M7: what fits still need
 
@@ -175,9 +174,9 @@ that agree (`validation/sample_measured.py`, [docs/validation.md](docs/validatio
 
 - **A second run of 0.2 Cl's posterior.** 0.1 and 0.6 Cl are sampled around their best minimum
   by two runs that agree (docs/validation.md); 0.2 Cl, whose best minimum is the cold fit's,
-  by one only (A100, seed 0, `benchmarks/samples/chain_02Cl.npz`, not committed). Its second:
-  `validation/sample_measured.py 02Cl --walkers 64 --steps 3000 --seed 1` on the desktop GPU
-  (about 1.7 h), compared with the first as `benchmarks/samples/compare_seeds.py` compares
+  by one only (A100, seed 0, `benchmarks/samples/chain_02Cl.npz`, not committed). Its second,
+  on the A100 hub: `STEPS=sample SAMPLES=02Cl SAMPLE_ARGS="--walkers 128 --steps 3000 --seed 1"
+  benchmarks/apptainer.sh` (about 80 min; its chain back as `chain_02Cl_best_s1.npz`), compared with the first as `benchmarks/samples/compare_seeds.py` compares
   0.1 and 0.6 Cl's (it reads `chain_{SAMPLE}_best_s{0,1}.npz`: link or adapt), and the 0.2 Cl
   column and the runs' sentence in docs/validation.md from both. M7 is then done.
 - **The optics for the measured cell**: the measured fits assume a uniform generation. The cell
@@ -260,25 +259,20 @@ steady state at `t = 0` is today's solver.
 - **With mobile ions** the blocks grow to 5×5 `(V, ln n, ln p, ln a, ln c)`, identity rows
   where a species cannot be, and one slot per region (the rescaling). A batch takes 5×5 if
   any device needs it. The sweep (scan and Pallas kernel) takes blocks of either size.
-- **`Vint` as an unknown**: for `oc` and for `R_series` one more bordered row (`Jext = 0`, or
-  `Vint + Jext·R_series = Vext`), which is a dense row of the grid, as the ion constraints
-  are. Newton finds `Vint` with the rest, where ZimT runs whole solves for it.
 - **Gradients** by forward tangents step by step, each one by the implicit function at its
   step, as M7's fits take them; no reverse pass through time (it would hold every state).
 
 **Steps**, each validated against ZimT 5.36 at `tolPois = tolDens = 1e-12` (at 1e-9 ZimT moves
 by 1.7e-7 of the scale; `zimt` in the image `jaxdd/simss:5.36`, its input read by `read_tvg`).
-Electrons, holes, traps and mobile ions in time, with the voltage given, are done (`jaxdd.transient`,
+Electrons, holes, traps and mobile ions in time, with the voltage given, at the open circuit
+and with a series resistance (`Vint` an unknown of each step), are done (`jaxdd.transient`,
 docs/model.md "Transients"); next:
 
-1. **`oc` and `R_series`**: `Vint` as an unknown. Done when photovoltage after a light pulse
-   at open circuit and a sweep with series resistance match ZimT, and `oc` at `t = 0`
-   matches SimSS's `Voc`.
-2. **Stopping, failures, output**: `Track` and `failureMode` per device, the `tJFile` columns.
+1. **Stopping, failures, output**: `Track` and `failureMode` per device, the `tJFile` columns.
    Done when every input ZimT 5.36 takes runs on jaxdd or is refused by name.
-3. **Gradients through time**: tangents of a transient in its parameters. Done when they match
+2. **Gradients through time**: tangents of a transient in its parameters. Done when they match
    finite differences, and a fit of a transient recovers its parameters.
-4. **Speed**: a transient batch on the A100 (steps per second, Newton steps per time step, the
+3. **Speed**: a transient batch on the A100 (steps per second, Newton steps per time step, the
    5×5 step's cost against the 3×3 one). Done when its numbers are in the handbook; with them
    the fused kernel is decided (section 7).
 
@@ -371,5 +365,5 @@ microseconds per evaluation are needed.
 
 | Decision | When | With |
 |---|---|---|
-| The fused kernel as an optional mode (2.3) | after Stage C's step 4 (4.1) | the applications' needs (section 5) and a first measurement of a Stage A kernel |
+| The fused kernel as an optional mode (2.3) | after Stage C's step 3 (4.1) | the applications' needs (section 5) and a first measurement of a Stage A kernel |
 | The steric ion model and its `N_max` | when a source for `N_max` is found | its users: results with and without it differ at high ion density |

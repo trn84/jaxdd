@@ -377,9 +377,23 @@ its regions an ion's unknown is held. The ions' currents (each region by the int
 the densities' change as its integrand, or by its fluxes with `currDiffInt = 1`, the current
 across a layer interface the one before it) join the carriers' and the displacement current in
 the average. The 5×5 blocks are solved by the scan (the sweep kernels take 3×3; a batch takes
-5×5 where any device has mobile ions, the others' ion rows held). The open circuit and series
-resistance in time are the next steps of Stage C ([PLAN.md](../PLAN.md) §4.1), refused until
-then (`transient_problems`).
+5×5 where any device has mobile ions, the others' ion rows held).
+
+**The internal voltage.** ZimT's `Vext` is the external voltage; given, and without a series
+resistance, `Vint = Vext`. At the open circuit (`Vext = oc`, at `t = 0` too) `Vint` is the
+voltage at which `Jext = Jint + Vint/R_shunt` is 0, with a series resistance the one at which
+`Vint + Jext·R_series = Vext`. ZimT brackets it and runs Brent on whole solves to `tolVint`
+(`Residual_Current_Voltage`, `Find_Vint_Brent`). jaxdd makes it one more unknown of the step's
+Newton solve (`batch._system_vint`): its column, the rows' and the ion constraints' derivatives
+in it (through the contacts' potentials), and its row (`batch._vint_row`: `Jext` over the
+device's current scale, or the voltage balance in `V_T`), dense in the grid like the ions'
+constraints, one more border solved by the same Schur complement. Its step is held to the
+potential's cap (10 `V_T`), and the current's settling is no stop there, since the voltage's
+last digits are the result. Where one device of a batch needs it every device takes the row,
+the others' `Vint = Vext`. The first step at an open circuit starts from 0 V, as ZimT
+brackets from it (13 Newton steps to `Voc` for `thin_l1_light`), each step after it from the
+last voltage extrapolated as the state is; with a series resistance from `Vext` less the last
+current's drop. `solve_transient` returns `Vint` and `Vext = Vint + Jext·R_series` per step.
 
 ## Constants
 

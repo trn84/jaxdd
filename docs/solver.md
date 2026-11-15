@@ -266,6 +266,11 @@ the sweep kernel (13.2 against 11.9 ms; 1.29× through the scan), the kernel's c
 to 1.2e-12 (`validation/slots.py`, 2026-11-15). With one region per species the step is what it
 was before regions had slots of their own (20.5 ms at 16 384 devices, 2780 curves/s).
 
+In a transient at the open circuit or with a series resistance the internal voltage is one more
+border, K + 1 (`batch._system_vint`, [model.md](model.md) "Transients"): its column the rows'
+derivatives in `Vint` (one `jax.jvp`), its row the external current's or the voltage
+balance's derivatives in every unknown (one `jax.grad`).
+
 ### The block Thomas sweep
 
 `solver._block_thomas` solves `A[i]·x[i−1] + B[i]·x[i] + C[i]·x[i+1] = d[i]` by Gaussian

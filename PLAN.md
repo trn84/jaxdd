@@ -6,16 +6,19 @@ the handbook.
 
 ## 1 Open now
 
-0.1.0 is released (CHANGELOG.md). Next (2026-11-15, an estimate at the pace so far): M6 (2.2),
-and the fused kernel if it is decided for (2.3, section 7; about 1–2 weeks): 0.2.
+0.1.0 is released (CHANGELOG.md). The order now (2026-11-15, an estimate at the pace so far):
 
-Stage C (ZimT's transients), M4 (the graded grid) and M7 (fits and their posteriors) are done
-(docs/model.md, docs/validation.md). Open: the QFLS below Newton's floor (4.1); the light
-switched on and off with traps is 1.6e-3 of the scale off on the graded grid at 400 points,
-little better than SIMsalabim's 2.5e-3 where the steady state is ten times better (where the
-error sits: the first picoseconds, the generation profile on the grid?). Waiting: M8 (1.3), the
-measured cell's optics (2.4, waiting for n,k data), the steric ions (3, waiting for a source of
-`N_max`).
+1. **The light with traps in time on the graded grid.** Switched on and off it is 1.6e-3 of the
+   scale off at 400 points, little better than SIMsalabim's grid (2.5e-3), where the steady
+   state is ten times better on the graded grid. The graded grid is the default, so this is
+   what a user gets. First where the error sits: in time (the first picoseconds after a switch,
+   a step-size study against the grid study) or in space (the generation profile on the grid,
+   the traps' occupations near the interfaces).
+2. **The QFLS below Newton's floor** (4.1).
+3. M6 (2.2): 0.2.
+
+The fused kernel is decided against for now (2.3). Waiting: M8 (1.3), the measured cell's
+optics (2.4, waiting for n,k data), the steric ions (3, waiting for a source of `N_max`).
 
 ### 1.3 M8: the MI50 cards
 
@@ -66,59 +69,40 @@ solver makes this loop interactive.
 Either needs the solver callable from Python in a loop at low latency: a requirement on the API,
 not only on throughput.
 
-### 2.3 The fused kernel: an optional fast mode
+### 2.3 The fused kernel: decided against for now (2026-11-15)
 
-The whole Newton step, or the whole scan of a device, in one hand-written CUDA kernel called
-through the XLA FFI: one thread per device, the blocks assembled in registers where the sweep
-uses them instead of written to memory and read back. It is a mode beside the JAX solver, not a
-second solver: chosen like `JAXDD_SWEEP` today, with the JAX solver as reference and fallback.
+The idea: the whole Newton step in one hand-written CUDA kernel called through the XLA FFI, one
+thread per device, the blocks assembled in registers where the sweep uses them instead of
+written to memory and read back; a mode beside the JAX solver (as `JAXDD_SWEEP`), the JAX solver
+its reference and fallback, the gradients unchanged (implicit differentiation needs no adjoint
+of it). From the A100's bandwidth an estimated 10⁴–3·10⁴ curves/s, 4–10× today's 2800, and the
+lockstep per warp of 32 instead of per batch (on the 250 nm ion grid the batch pays 4.59 Newton
+steps per voltage where 2.76 are needed).
 
-What it would solve:
+Not built, because:
 
-- **Memory traffic**, today's limit (36 block entries per grid point written by the assembly and
-  read by the sweep): from the A100's bandwidth an estimated 10⁴–3·10⁴ curves/s, 4–10× the
-  2800 of today.
-- **The lockstep**, mostly: each thread iterates its device to convergence on its own, so a
-  device waits for the slowest of its warp (32), not of the batch. On the 250 nm ion grid the
-  batch pays 4.59 Newton steps per voltage where 2.76 are needed.
-- **Pallas's backends**: no dependence on Triton's future or Mosaic GPU's warpgroups, tiles of
-  any size.
-- **The AMD track**: CUDA C++ ports to HIP (hipify) nearly as it is.
+- **No planned use needs it.** Of section 5's applications only drift-diffusion inside a larger
+  simulation would, and none is planned.
+- **The transients with ions were its strongest case and are no longer one.** With the 5×5
+  sweep kernel a Newton step with ions is 2.3× a 3×3 one (it was 4.5×), close to the ratio of
+  their blocks' entries (25/9): 185 transients/s with ions on the A100. What is left is the
+  memory traffic every workload shares.
+- **Its cost.** The solver's core written twice (800–1200 lines of CUDA, the Jacobian by hand
+  where JAX takes it by autodiff), compiled wheels per CUDA (and ROCm) version where 0.1.0 is
+  one pure-Python wheel, and little gain on consumer cards, whose FP64 rate becomes the limit.
 
-What is written once: reading the input, building devices and grids, `prepare`, the scan's
-order and its two passes, batching and flags, the gradients (M7), the CPU path, validation and
-the handbook. What is written twice: the solver's core (`solver.py`'s residual rows, ion
-constraint, Newton step with its damping, sweep and current, some 300–400 lines of JAX), in CUDA
-with the Jacobian by hand where JAX takes it by autodiff; roughly 800–1200 lines.
+Reopened when an application needs 10⁴ curves/s or more, or transients inside another
+simulation; then first measured, as planned before: the Newton step of Stage A's physics
+without ions as one kernel against the JAX step on the A100. Cheaper steps come before it, each
+measured on the A100:
 
-How the doubled part stays small:
-
-1. **The kernel covers a fixed subset of the physics** (Stage A first). A device that needs
-   more goes to the JAX solver automatically, as `check_supported` refuses what jaxdd lacks.
-   New physics (Stage B) is written in JAX only, and enters the kernel when it has settled and
-   is worth it, or never.
-2. **JAX is the reference**: a test solves every test device both ways and asks for the same
-   curves, flags and Newton steps to round-off (as the sweep kernel's test does today).
-3. **The hand-written Jacobian is tested against `jax.jacfwd`** of the JAX residual, as the
-   assembly by intervals is tested against the one by rows.
-
-What it costs: the hand-written Jacobian; compiled wheels per CUDA (and ROCm) version, where
-jaxdd is pure Python today; and little gain on consumer cards, whose FP64 rate (1/64 on the
-RTX 4070 Ti SUPER) becomes the limit once memory traffic is gone. On the A100, H100 and MI50
-FP64 is fast.
-
-A smaller step on the way, with the same decision: the assembly is the largest part of the
-Newton step (9.1 of 20 ms at 16 384 devices on the A100). Each interval's fluxes and each
-transcendental are computed once already; what is left is memory traffic: the blocks have 36
-entries per grid point of which 24 are structurally non-zero (`A` and `C` 5 of 9 each, the
-right-hand sides 5 of 9), and the sweep kernel reads all 36. A kernel that takes the 24, as
-separate arrays, would spare a third of the blocks' writes and reads.
-
-Order: Stage B in JAX (done); then the kernel for the physics that has settled. A first
-measurement before deciding: the Newton step of Stage A's physics without ions as one CUDA
-kernel on devices without ions, against the JAX step's time on the A100. The fused kernel is not
-needed for the steady state; Stage C's speed, now measured (docs/hardware.md "Transients"),
-decides it (section 7).
+1. **The blocks' structural zeros.** 24 of their 36 entries per grid point are non-zero (`A`
+   and `C` 5 of 9 each, the right-hand sides 5 of 9); a sweep kernel that reads the 24, as
+   separate arrays, spares a third of the blocks' writes and reads. The assembly is 9.1 of the
+   20 ms of a Newton step at 16 384 devices.
+2. **The assembly inside the Pallas sweep kernel** (untried): the blocks never in memory, the
+   residual still the JAX one traced into the kernel (its derivatives by `jax.jvp`, if Pallas
+   lowers them), no compiled wheels.
 
 ### 2.4 What fits still need
 
@@ -242,15 +226,13 @@ microseconds per evaluation are needed.
 
 | Risk | Effect | Mitigation |
 |---|---|---|
-| The slowest lane | one stubborn device sets a batch's pace | two passes; difficulty-sorted batches; the fused kernel (2.3) |
+| The slowest lane | one stubborn device sets a batch's pace | two passes; difficulty-sorted batches; a fused kernel, should it be reopened (2.3) |
 | Convergence on new physics (Stage B, steric ions) | the hard devices fail first | each module validated on exactly those devices; flag, never guess |
 | ROCm on gfx906 | the MI50 may never run it | not on the critical path; three ways in (1.3), the last independent of XLA's ROCm support |
 | Scope creep towards a full SIMsalabim | months | every addition its own decision, module by module, each released when validated |
-| The fused kernel and the JAX solver drift apart | two answers to one device | the kernel a fixed subset with fallback to JAX; both compared on every test device (2.3) |
 
 ## 7 Decisions ahead
 
 | Decision | When | With |
 |---|---|---|
-| The fused kernel as an optional mode (2.3) | now: with the 5×5 sweep kernel a Newton step with ions is 2.3× a 3×3 one (was 4.5×), the lockstep 40 % more with ions, 185 transients/s with ions on the A100 (docs/hardware.md "Transients") | the applications' needs (section 5) and a first measurement of a Stage A kernel |
 | The steric ion model and its `N_max` | when a source for `N_max` is found | its users: results with and without it differ at high ion density |

@@ -27,6 +27,7 @@ from jaxdd.optics import optical_data
 from jaxdd.simss_input import Layer, Setup, ion_region_problems, ion_regions
 
 __all__ = [
+    "GRIDS",
     "GRID_SPLITS",
     "LANGEVIN_MOBILITIES",
     "SURFACE_MODELS",
@@ -125,6 +126,68 @@ def _layout(thicknesses: Sequence[str | float], NP: int, grad: float, split: str
         if k == n_layers - 1:
             ifinish = NP + 1
         raw[istart : ifinish + 1] = _sub_grid(ifinish - istart, grad)
+        norm[k] = raw[istart : ifinish + 1].sum()
+        lid[istart : ifinish + 1] = k
+        istart = ifinish + 1
+    i1[-1] = NP + 1
+    return i0, i1, lid, raw, norm
+
+
+#: The grids `build_device` takes (`grid`): SIMsalabim's `Make_Grid`, or one graded
+#: geometrically towards every layer's ends (`_graded_layout`, PLAN.md §2.1).
+GRIDS = ("simss", "graded")
+#: The graded grid's points per e-fold of the distance to a layer's end, and the distance at
+#: which the grading starts (m): `V_T/E` at the fields of ions accumulated at an interface
+#: (1e9 V/m) is 3e-11 m, where the densities change by e at every step.
+GRADED_POINTS_PER_EFOLD = 6.0
+GRADED_SMALLEST = 3e-12
+
+
+def _graded_layout(thicknesses: Sequence[str | float], NP: int,
+                   beta: float = GRADED_POINTS_PER_EFOLD, d0: float = GRADED_SMALLEST):  # fmt: skip
+    """`_layout` for a grid graded geometrically towards the ends of every layer: the points'
+    density `1/H + β/(d + d0)` from each end (`d` the distance to it, `H` the total thickness
+    over `NP`), so that each layer has its uniform share and about `β` points per e-fold of the
+    distance to each of its ends, from `d0` on, whatever its thickness. A layer's points beyond
+    its first are its share of the density's integral, `L/H + 2β·ln(1 + L/d0)` (at least
+    `MIN_GRID_POINTS_PER_LAYER`, where SIMsalabim gives a thin layer that and no more at any
+    `NP`); within it the points equidistribute the integral."""
+    L = np.array([float(x) for x in thicknesses])
+    H = L.sum() / NP
+    n_layers = len(L)
+
+    def integral(x, Lk):  # the density's integral from the layer's start
+        ends = np.log1p(x / d0) + np.log1p(Lk / d0) - np.log1p((Lk - x) / d0)
+        return x / H + beta * ends
+
+    weight = np.array([integral(Lk, Lk) for Lk in L])
+    # Each layer holds its count and one point more; the last ends at the grid's last point.
+    shares = (NP + 2 - n_layers) * weight / weight.sum()
+    counts = np.maximum(MIN_GRID_POINTS_PER_LAYER, np.floor(shares).astype(int))
+    excess = int(counts.sum()) + n_layers - (NP + 2)  # where the minimum raised a layer
+    if excess > 0:
+        counts[np.argmax(counts)] -= excess
+    raw = np.zeros(NP + 2)
+    norm = np.zeros(n_layers)
+    lid = np.zeros(NP + 2, dtype=int)
+    i0, i1 = [], []
+    istart = 0
+    for k in range(n_layers):
+        ifinish = istart + counts[k]
+        i0.append(istart)
+        i1.append(ifinish)
+        if k == n_layers - 1:
+            ifinish = NP + 1
+        m = ifinish - istart + 1  # the spacings this layer holds (`_sub_grid`'s)
+        target = np.arange(m + 1) * weight[k] / m
+        lo, hi = np.zeros(m + 1), np.full(m + 1, L[k])
+        for _ in range(100):  # bisection: the integral increases
+            mid = 0.5 * (lo + hi)
+            below = integral(mid, L[k]) < target
+            lo, hi = np.where(below, mid, lo), np.where(below, hi, mid)
+        u = 0.5 * (lo + hi)
+        u[0], u[-1] = 0.0, L[k]
+        raw[istart : ifinish + 1] = np.diff(u)
         norm[k] = raw[istart : ifinish + 1].sum()
         lid[istart : ifinish + 1] = k
         istart = ifinish + 1
@@ -404,6 +467,7 @@ def device_parameters(
     surface: str = "extraction",
     langevin: str = "layer",
     braun: str = "exact",
+    grid: str = "simss",
 ) -> tuple[Structure, dict]:
     """A SIMsalabim input (Stage A, `check_supported` first) as its `Structure` and its
     parameters: a dict of `LAYER_PARAMETERS`, each an array over the layers, and `T`, `W_L`,
@@ -428,7 +492,12 @@ def device_parameters(
     if setup.i("leftElec") not in (-1, 1):
         raise ValueError("leftElec must be -1 (the left electrode the cathode) or 1 (the anode)")
     NP, grad = setup.i("NP"), setup.f("grad")
-    i0, i1, lid, raw, norm = _layout([ly.raw["L"] for ly in layers], NP, grad, grid_split)
+    if grid not in GRIDS:
+        raise ValueError(f"grid {grid!r}: one of {GRIDS}")
+    if grid == "graded":
+        i0, i1, lid, raw, norm = _graded_layout([ly.raw["L"] for ly in layers], NP)
+    else:
+        i0, i1, lid, raw, norm = _layout([ly.raw["L"] for ly in layers], NP, grad, grid_split)
 
     def flags(test):
         return np.array([bool(test(ly)) for ly in layers])
@@ -812,11 +881,13 @@ def device_arrays(structure: Structure, p: dict, xp=np) -> Device:
 
 
 def build_device(setup: Setup, grid_split: str = "exact", surface: str = "extraction",
-                 langevin: str = "layer", braun: str = "exact") -> Device:  # fmt: skip
+                 langevin: str = "layer", braun: str = "exact",
+                 grid: str = "simss") -> Device:  # fmt: skip
     """The device of a SIMsalabim input (Stage A, `check_supported` first), in NumPy. `grid_split`
     "simss" shares the grid points among the layers as SimSS's 10-byte reals do
     (`layer_points`; docs/differences.md §5), for a comparison point by point; `surface` how
     finite surface recombination at the contacts acts (`SURFACE_MODELS`); `langevin` which
     mobilities the Langevin rate takes (`LANGEVIN_MOBILITIES`); `braun` how Braun's dissociation
-    probability is integrated (`BRAUN_RULES`)."""
-    return device_arrays(*device_parameters(setup, grid_split, surface, langevin, braun))
+    probability is integrated (`BRAUN_RULES`); `grid` SIMsalabim's grid or one graded
+    geometrically towards every layer's ends (`GRIDS`, `_graded_layout`)."""
+    return device_arrays(*device_parameters(setup, grid_split, surface, langevin, braun, grid))

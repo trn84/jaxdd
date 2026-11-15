@@ -71,6 +71,80 @@ def test_grid_split_on_a_whole_share(stack: tuple[str, ...], simss: int, exact: 
         assert i1[-1] == 401 and np.all(np.diff(lid) >= 0)
 
 
+def test_the_graded_grid_gives_every_layer_its_ends() -> None:
+    """`grid="graded"` (`device._graded_layout`): `NP + 2` points, increasing, the layers in order
+    and each spanning its thickness; spacings growing from the smallest at each layer's end
+    towards its middle; a 1 nm layer beside 500 nm and 30 nm about the same points at 400 as at
+    1600 (its ends' e-folds), where SIMsalabim's grid gives it 5 at any `NP`."""
+    from jaxdd.device import GRADED_SMALLEST, _graded_layout, _spacing
+
+    stack = ["1e-09", "5e-07", "3e-08"]
+    L = np.array([float(x) for x in stack])
+    for NP in (400, 1600):
+        i0, i1, lid, raw, norm = _graded_layout(stack, NP)
+        x, h = _spacing(L, L.sum(), i0, lid, raw, norm)
+        assert len(x) == NP + 2 and np.all(np.diff(x) > 0)
+        assert i0[0] == 0 and i1[-1] == NP + 1
+        assert all(b + 1 == a for a, b in zip(i0[1:], i1[:-1], strict=True))
+        for k in range(3):  # each layer's points span it (its first to the next layer's first)
+            end = x[i0[k + 1]] if k < 2 else L.sum()
+            assert abs((end - x[i0[k]]) - L[k]) < 1e-3 * L[k] + 2 * h[i1[k]] * L.sum()
+        absorber = raw[i0[1] : i1[1] + 1]
+        assert absorber[1] < absorber[len(absorber) // 2] / 100  # graded towards its ends
+        assert raw[i0[1]] < 10 * GRADED_SMALLEST
+    simss = make_grid(stack, 1600, 4.0)
+    assert simss[3][0] - simss[2][0] == 5  # SIMsalabim's thin layer: 5 points beyond its first
+    assert i1[0] - i0[0] > 30  # the graded one's at 1600
+
+
+def test_the_graded_grid_converges_where_simss_does_not() -> None:
+    """A hard device with a 1 nm ETL (`validation/hard.py`, the one SIMsalabim's grid is worst
+    on): η on the graded grid at 400 points within 1e-3 of the graded grid at 1600, where
+    SIMsalabim's grid at 1600 is not (its 1 nm layer keeps 5 points)."""
+    sys.path.insert(0, str(Path(__file__).parents[1] / "validation"))
+    from hard import V, hard_setups
+
+    from jaxdd.batch import prepare, solve_batch
+
+    s = hard_setups(91)[90]
+    light, dark = (Setup(raw=dict(s.raw, G_frac=g), layers=s.layers, directory=s.directory)
+                   for g in ("1", "0"))  # fmt: skip
+
+    def solve(NP, grid):  # J_dark − J_light, and the generation current on that grid
+        setups = [Setup(raw=dict(x.raw, NP=str(NP)), layers=x.layers, directory=x.directory)
+                  for x in (light, dark)]  # fmt: skip
+        batch = prepare([build_device(x, grid=grid) for x in setups])
+        J, ok, _ = solve_batch(batch, V)
+        assert np.asarray(ok).all()
+        J = np.asarray(J)
+        return (J[1] - J[0])[V <= 1.0 + 1e-9], float(batch["J_scale"][0])
+
+    ref, scale = solve(1600, "graded")  # η over the reference's generation current, as grid.py
+    assert np.max(np.abs(solve(400, "graded")[0] - ref)) < 1e-3 * scale
+    assert np.max(np.abs(solve(1600, "simss")[0] - ref)) > 2e-3 * scale
+
+
+def test_the_graded_grid_is_differentiable() -> None:
+    """The graded grid's points are the input's structure, its spacing scaled by the thicknesses
+    as SIMsalabim's is: `device_parameters(grid="graded")` builds `batch.device_tree` in JAX, the
+    same device as `build_device`, and its derivative in a thickness is finite."""
+    from jaxdd.batch import device_tree
+    from jaxdd.device import device_parameters
+
+    setup = read_setup(DATA / "thin_l1_light" / "simulation_setup.txt")
+    structure, p = device_parameters(setup, grid="graded")
+    tree = device_tree(structure, {k: jnp.asarray(v) for k, v in p.items()})
+    dev = build_device(setup, grid="graded")
+    assert np.allclose(np.asarray(tree["x"]), dev.x, rtol=1e-12, atol=0)
+
+    def last(Lk):
+        q = {k: jnp.asarray(v) for k, v in p.items()}
+        q["L"] = q["L"].at[1].set(Lk)
+        return device_tree(structure, q)["x"][-1]
+
+    assert np.isfinite(float(jax.grad(last)(jnp.asarray(p["L"][1]))))
+
+
 def test_grid_split_first_layer_on_a_whole_share() -> None:
     """SimSS gave the 100 nm layer of 100/500/200 nm 49 points beyond its first, not 50."""
     assert make_grid(("1e-07", "5e-07", "2e-07"), 400, 4.0, "simss")[3][0] == 49

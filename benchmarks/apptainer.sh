@@ -35,10 +35,11 @@
 #   gpus       validation/bench.py on one GPU (CUDA_VISIBLE_DEVICES=0) and on all the job's GPUs,
 #              the batch split across them (solve_batch's devices): 16384 per GPU, and 16384 in
 #              all; not in the default steps (a host with several GPUs)
-#   grid       validation/grid.py ${GRID_ARGS:-4096 4096}: M4's baseline, the hard devices in the
-#              light and the dark on SIMsalabim's grid at 200 to 3200 points (about 15 min on one
-#              A100); saved per grid size and resumed (validation/grid_<N>.npz); not in the
-#              default steps. GRID_ARGS="4096 4096 1600,3200" for some sizes only
+#   grid       validation/grid.py ${GRID_ARGS:-4096 4096}: M4, the hard devices in the
+#              light and the dark on SIMsalabim's grid and the graded one at 200 to 3200 points
+#              (about 15 min per grid on one A100), against the graded one at 3200; saved per
+#              grid and size and resumed (validation/grid_<N>.npz); not in the default steps.
+#              GRID_ARGS="4096 4096 1600,3200 graded" for some sizes or one grid only
 #   run        benchmarks/run.py: GPU at batch 4096 and 16384, jaxdd on this job's CPU cores;
 #              writes benchmarks/results/<label>.json for benchmarks/plot.py
 #   chunk      validation/chunk.py on the batch file CHUNK (a real workload built elsewhere and

@@ -8,7 +8,7 @@ the handbook.
 
 The order (2026-11-15, an estimate at the pace so far):
 
-1. M4's first step, the graded mesh (2.1): 1–3 days, depending on whether it is enough.
+1. M4's graded mesh (2.1): its A100 run on 4096 hard devices, then M4 is done.
 2. **Release 0.1.0**: the steady state (SimSS) and the transients (ZimT); a version, a
    changelog, the README's installation, a wheel, CI, a pass over the handbook and the API.
    About a day.
@@ -69,23 +69,14 @@ the node **positions** may differ per device. Three steps, cheapest first:
    points, each device in the smallest bucket that meets its error estimate. Only if 1 and 2
    are not enough.
 
-The study: `J(V)` and `η` at 200, 400, 800, 1600 points, uniform against graded against
-r-adaptive, on the hardest devices known (`L_diff/d` 0.1–0.2, ions at 1e18 cm⁻³, thick undoped
-layers). Its baseline, SIMsalabim's own grid at 200 to 3200 points on `hard.py`'s
-devices against the criteria, is `validation/grid.py` (`STEPS=grid benchmarks/apptainer.sh`),
-run on one A100 (2026-11-15; a first run on two hung both GPUs at 1600 points, in the second
-pass's scatter across the GPUs, since removed: 800 and 1600 points then ran on two). Against 3200 points, of 4096 hard devices in the light and the dark:
-
-| `NP` | meet both criteria | η: median, 99 %, max | `J_SC`: median, 99 % |
-|---|---|---|---|
-| 200 | 5.5 % | 3.8e-3, 4.0e-2, 0.16 | 3.3e-3, 2.3e-2 |
-| 400 | 32.4 % | 1.3e-3, 1.4e-2, 5.0e-2 | 1.2e-3, 9.4e-3 |
-| 800 | 77.8 % | 4.7e-4, 5.7e-3, 1.7e-2 | 4.4e-4, 3.8e-3 |
-| 1600 | 95.3 % | 1.4e-4, 2.0e-3, 5.6e-3 | 1.3e-4, 1.3e-3 |
-
-So SIMsalabim's grid at its default 400 points misses η's 1e-3 on two thirds of these devices,
-by up to 5e-2; the error falls by about 3 per doubling. Step 1 (the graded mesh) is the next
-thing to try against these numbers.
+Step 1 is done on a sample: the graded grid (`build_device(grid="graded")`, geometric towards
+every layer's ends rather than by the Debye length, which was tried first and failed) meets
+both criteria at 400 points on 99.8 % of 512 hard devices against a converged reference, where
+SIMsalabim's grid meets them on 25 % (docs/validation.md "The grid on hard devices", docs/model.md).
+To close M4: the same on the A100 with 4096 devices
+(`STEPS=grid GRID_ARGS="4096 4096 200,300,400,800,1600,3200 simss,graded"`, the simss sizes from
+the earlier run), then steps 2 and 3 are not needed; and whether the graded grid becomes the
+default where no SimSS comparison is wanted (tables, fits), a decision for the release.
 
 ### 2.2 M6: fewer devices instead of faster ones
 

@@ -20,6 +20,19 @@ The points per layer are fixed by the thicknesses of the input; within them the 
 smooth in the thicknesses, so a device built in JAX (`batch.device_tree`) is differentiable in
 them ([solver.md](solver.md#derivatives)).
 
+**The graded grid** (`build_device(setup, grid="graded")`, M4). SIMsalabim's grid gives a layer
+whose share is below five points those five at any `NP`, and its spacing at a layer's end
+follows `grad`, not the device: on devices with a 1 nm transport layer, ions accumulated at the
+interfaces or thin doped layers it converges slowly or not at all (docs/validation.md). The
+graded grid places the points by the density `1/H + β/(d + d₀)` in every layer (`d` the distance
+to its nearer end, `H` the total thickness over `NP`): its uniform share and about `β = 6` points
+per e-fold of the distance to each end, from `d₀ = 3 pm` (`V_T/E` at the fields of accumulated
+ions) on. Each layer gets its share of the density's integral, `L/H + 2β·ln(1 + L/d₀)`, so a
+1 nm layer has its ends resolved as a 500 nm one has; within it the points equidistribute the
+integral. The equalisation at the interfaces and the scaling by the thicknesses are SIMsalabim's,
+so it is differentiable in the thicknesses as that one is. SIMsalabim's grid stays the default:
+it is SimSS's, against which jaxdd is validated point by point.
+
 A layer's share of the points, `FLOOR((NP − n_thin·5)·L/(Ltot − L_thin))`, is taken in exact
 arithmetic from the input's decimal values (`device.layer_points`). Where it is a whole number,
 SimSS's own rounding can give one point less; `build_device(setup, grid_split="simss")`

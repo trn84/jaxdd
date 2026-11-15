@@ -93,12 +93,33 @@ so that the solver is never the larger error in what is computed from it.
   and gold, and on a 20/500/10 nm stack between glass, 150 nm ITO and silver, the profile on the
   grid is SimSS's within 4e-12 and the curves within 2e-7 and 6e-7 of SimSS's scale; a uniform
   profile (`genProfile = none`) within 2.4e-6.
-- **The grid on hard devices** (2026-11-15, `validation/grid.py` on an A100): `hard.py`'s 4096
-  devices (frozen ions up to 4e18 cm⁻³, absorbers of 250–1000 nm, transport layers of 1–300 nm),
-  each in the light and the dark, on SIMsalabim's grid against 3200 points: at the default 400
-  points 32 % meet both criteria (η within 1e-3 up to 1.0 V, `J_SC` within 0.1 %), η off by
-  1.3e-3 in the median and up to 5e-2; at 800 points 78 %, at 1600 95 %. On such devices the
-  grid, not the solver, is the larger error (PLAN.md §2.1, M4).
+- **The grid on hard devices** (2026-11-15, `validation/grid.py`): `hard.py`'s devices (frozen
+  ions up to 4e18 cm⁻³, absorbers of 250–1000 nm, transport layers of 1–300 nm), each in the
+  light and the dark, against the criteria (η within 1e-3 up to 1.0 V, `J_SC` within 0.1 %).
+  On SIMsalabim's grid against its own 3200 points (4096 devices, an A100): at the default 400
+  points 32 % meet both, η off by 1.3e-3 in the median and up to 5e-2; at 800 78 %, at 1600
+  95 %. That reference is not converged: SIMsalabim's grid keeps a layer whose share is below
+  five points at five at any `NP`, and its 3200 points are up to 6.8e-3 in η off the converged
+  curves on the devices with a 1 nm transport layer. On the graded grid (`grid="graded"`, docs/model.md)
+  every size converges to the same curves (SIMsalabim's grid with `grad = 8` at 3200 points to
+  1e-5 in the median; the graded grid with other parameters to 4e-4 at most), by about 4 per
+  doubling. Against the graded grid at 3200 points (512 devices, the RTX 4070 Ti SUPER):
+
+  | `NP` | graded: meet both | η: median, 99 %, max | `J_SC`: median, max | SIMsalabim's: meet both |
+  |---|---|---|---|---|
+  | 200 | 89.6 % | 3.2e-4, 2.2e-3, 3.7e-3 | 2.2e-4, 5.9e-3 | 3.1 % |
+  | 300 | 98.2 % | 1.1e-4, 8.9e-4, 1.6e-3 | 6.4e-5, 3.2e-3 | |
+  | 400 | 99.8 % | 5.4e-5, 4.9e-4, 9.5e-4 | 2.4e-5, 2.1e-3 | 24.8 % |
+  | 800 | 100 % | 1.2e-5, 2.4e-4, 5.4e-4 | 6.2e-6, 8.2e-4 | 71.5 % |
+  | 1600 | 100 % | 1.1e-5, 2.0e-4, 4.3e-4 | 9.0e-6, 3.2e-4 | 87.9 % |
+
+  Below about 4e-4 the differences are the reference's own (two converged grids at 3200 points
+  differ by that). The one device at 400 points that misses is 30/1000/300 nm with a diffusion
+  length far below the absorber and accumulated ions, its `J_SC` off by 2.1e-3. Its parameters
+  are a choice on these devices (β 2–16 and `d₀` 0.3 pm–0.1 nm tried: 93–99.8 % at 400 points;
+  the first attempt, boundary layers a few Debye lengths of the doping and ions wide, met them on
+  22 % at most): the hard devices' worst errors were at interfaces with accumulated ions, whose
+  fields make the densities change on picometres.
 - **Mobile ions in time** (2026-11-15, Stage C): sweeps to a voltage and back under light with
   free ions, against ZimT 5.36 at tolerances of 1e-9: ions in the absorber of
   `steady_1e17_thin_light` over 2 × 5 s to 1.2 V (`tests/data/zimt_ions_slow_light`) and over

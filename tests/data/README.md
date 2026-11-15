@@ -92,6 +92,14 @@ back in 2 × 50 ms (`failureMode = 0`). `zimt_region_slow_light/`, `zimt_region_
 `region_etl_light` (ions in a region of two layers) to 0.9 V and back in 2 × 5 s, and in 2 × 50
 ms with `currDiffInt = 1`. ZimT 5.36.
 
+`zimt_tpv_light/`: `thin_l1_light` (with its traps) at the open circuit (`Vext = oc`): steady at
+`t = 0`, then the light at 1.2 suns from 1 ns to 1 µs (30 steps, logarithmic), then back at 1 sun
+to 1 ms after (120 steps, logarithmic); `Voc` 1.0283 V, 1.0368 V at the pulse's end.
+`zimt_rseries_sweep_light/`: `resist_light` (`R_series = 2e-4`, `R_shunt = 0.3` Ω m²) through the
+sweep of `zimt_sweep_light`. ZimT 5.36 at `tolPois = tolDens = tolVint = 1e-12`,
+`failureMode = 0`; references for Stage C's open circuit and series resistance (PLAN.md 4.1),
+not used by a test yet.
+
 `held_thin_light/`: `steady_1e17_thin_light` with 8e22 anions per m³ instead of 1e23 (a net
 charge of 2e22 m⁻³) held from the start (`fixIons = 1`, `preCond = 0`): run by SimSS 5.36 with
 [`simss/fixed_ions.patch`](../../simss/fixed_ions.patch) at `tolPois = tolDens = 1e-9`.

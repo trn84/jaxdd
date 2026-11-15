@@ -211,66 +211,74 @@ so that the solver is never the larger error in what is computed from it.
   another part of the box: 0.701 % against 0.773 % (4 starts; the absorber's electron mobility
   2e-5 against 1e-3 m²/Vs, the ions 1e22 against 1e21 m⁻³) and 1.93 % against 2.69 % and 2.42 %
   (2 starts; the cations at their bound of 1e23 m⁻³, the holes' mobility at 1e-6). With the
-  sampler's σ the lower minima are e⁵⁹ and e¹⁵⁸ more likely: the posteriors below hold, for
-  those two samples, the cold fit's minimum only. 64 starts for 0.6 Cl (24 min, 1.6× the time
-  of 16 per evaluation for 4× the starts) find the same best, from 8 starts.
+  sampler's σ the lower minima are e⁵⁹ and e¹⁵⁸ more likely, and the posteriors below are
+  sampled around them. 64 starts for 0.6 Cl (24 min, 1.6× the time of 16 per evaluation for 4×
+  the starts) find the same best, from 8 starts.
 
 - **The fit's uncertainty, by sampling** (`validation/sample_measured.py`, 2026-11-14): a posterior
   of the same fourteen parameters, by an ensemble sampler whose walkers' five intensities are
-  solved as one batch (differential evolution, the walkers started around the least-squares fit
-  from the cold start, for 0.1 and 0.6 Cl not the best minimum: above;
-  the prior uniform in the fitted coordinates within the bounds, the likelihood Gaussian with σ the
-  fit's rms misfit). All three samples, 128 walkers and 3000 steps each, the first 1000
-  discarded: 4.2 h on an A100-SXM4-40GB (0.75–0.96 s per batch of 64 × 5 curves). Acceptance
-  0.05–0.07, autocorrelation times 103–246 steps, so the 2000 steps kept hold 8–10 of the longest
-  and 1000–1300 independent samples: quantiles to a few percent, the tails rougher. A second,
-  independent run of each sample on the RTX 4070 Ti SUPER (64 walkers, another seed; 1.5–1.9 h
-  each, 0.89–1.12 s per batch of 32 × 5) gives the same posteriors: for 0.1 and 0.6 Cl every
-  median within 0.13 half-widths of the A100's and every half-width within 8 % (25 % for the
-  HTL's mobility in 0.6 Cl, held by its bound in a quarter of the samples), from 520 and 680
-  independent samples: each posterior from two runs that agree, with 1500 independent samples or
-  more between them. Median and 16–84 % half-width:
+  solved as one batch (differential evolution, the walkers started around each sample's best
+  minimum: for 0.2 Cl the cold start's, for 0.1 and 0.6 Cl the best of 16 starts, above,
+  `--from-multistart`; the prior uniform in the fitted coordinates within the bounds, the
+  likelihood Gaussian with σ the fit's rms misfit). 0.2 Cl: 128 walkers and 3000 steps, the first
+  1000 discarded, 77 min on an A100-SXM4-40GB (0.77 s per batch of 64 × 5 curves), acceptance
+  0.05, autocorrelation times 127–191 steps, about 1340 independent samples; one run so far.
+  0.1 and 0.6 Cl: two independent runs each (seeds 0 and 1) on the RTX 4070 Ti SUPER, 64 walkers
+  and 3000 steps, the first 1000 discarded (1.7–1.9 h each, 0.99–1.13 s per batch of 32 × 5),
+  acceptance 0.05–0.07, autocorrelation times 115–189 steps, so the 2000 steps kept hold about 11
+  of the longest and 680–750 independent samples per run: quantiles to a few percent, the tails
+  rougher. The two runs give the same posteriors: every median within 0.11 half-widths of the
+  other run's, every half-width within 17 % (the largest ratios 0.1 Cl's ETL mobility and 0.6
+  Cl's hole mobility, both at their bounds, and 0.6 Cl's electron mobility), with 1382 and 1507
+  independent samples between them. Median and 16–84 % half-width, both runs together:
 
   | | 0.1 Cl | 0.2 Cl | 0.6 Cl | bounds |
   |---|---|---|---|---|
-  | `mu_n` (m²/Vs) | 9.7e-4 ×1.04 ↑ | 1.03e-4 ×1.09 | 9.9e-4 ×1.01 ↑ | 1e-3 above |
-  | `mu_p` | 1.04e-4 ×1.09 | 9.3e-4 ×1.07 ↑ | 4.4e-4 ×1.02 | 1e-3 above |
-  | `N_t` (m⁻³) | 3.1e19 ×2.5 | 5.6e19 ×2.6 | 3.1e19 ×2.5 | |
-  | `Nti_htl` (m⁻²) | 2.4e11 ×2.0 | 1.0e11 ×1.02 ↓ | 2.4e13 ×1.07 | 1e11 below |
-  | `Nti_etl` | 7.7e13 ×1.10 | 1.08e14 ×1.02 | 9.9e14 ×1.01 ↑ | 1e15 above |
-  | `k_direct` (m³/s) | 2.5e-17 ×10 | 5.4e-18 ×3.7 | 2.9e-17 ×10 | 1e-18 – 1e-15 |
-  | `R_shunt` (Ω m²) | ≳ 15 | 1.42 ×1.22 | ≳ 15 | up to 1e3 |
-  | `mu_htl` | 1.0e-6 ×5.7 | 1.6e-7 ×12 | 1.5e-8 ×2.0 (↓ 23 %) | 1e-8 below |
-  | `mu_etl` | 1.01e-8 ×1.02 ↓ | 6.4e-6 ×1.06 | 2.9e-6 ×2.0 | 1e-8 below |
-  | `Ev_htl` (eV) | 5.599 ±0.001 ↑ | 5.417 ±0.007 | 5.401 ±0.001 ↓ | 5.4 – 5.6 |
-  | `Ec_etl` (eV) | 4.071 ±0.003 | 3.900 ±0.000 ↓ | 4.139 ±0.003 | 3.9 – 4.3 |
-  | `N_cation` (m⁻³) | 1.11e21 ×1.06 | 1.02e20 ×1.02 ↓ | 4.35e21 ×1.04 | 1e20 below |
-  | `N_anion` | 5.9e20 ×1.18 | 1.53e21 ×1.19 | 1.22e22 ×1.01 | |
-  | generation scale | 0.998 | 1.000 | 1.02 | |
+  | `mu_n` (m²/Vs) | 2.06e-5 ×1.06 | 1.03e-4 ×1.09 | 6.0e-6 ×1.07 | 1e-6 – 1e-3 |
+  | `mu_p` | 9.1e-4 ×1.12 (↑ 63 %) | 9.3e-4 ×1.07 ↑ | 1.02e-6 ×1.02 ↓ | 1e-6 – 1e-3 |
+  | `N_t` (m⁻³) | 2.8e19 ×2.4 | 5.6e19 ×2.6 | 1.15e19 ×1.16 (↓ 62 %) | 1e19 – 1e23 |
+  | `Nti_htl` (m⁻²) | 5.5e12 ×1.14 | 1.0e11 ×1.02 ↓ | 1.06e14 ×1.07 | 1e11 – 1e15 |
+  | `Nti_etl` | 1.8e11 ×1.7 | 1.08e14 ×1.02 | 1.04e11 ×1.05 ↓ | 1e11 – 1e15 |
+  | `k_direct` (m³/s) | 1.9e-16 ×11 | 5.4e-18 ×3.7 | 1.49e-17 ×1.14 | 1e-18 – 1e-15 |
+  | `R_shunt` (Ω m²) | ≳ 15 | 1.42 ×1.22 | 0.43 ×1.4 | 1e-2 – 1e3 |
+  | `mu_htl` | 6.8e-8 ×11 | 1.6e-7 ×12 | 6.8e-6 ×1.43 (↑ 21 %) | 1e-8 – 1e-5 |
+  | `mu_etl` | 1.04e-8 ×1.05 ↓ | 6.4e-6 ×1.06 | 1.21e-7 ×1.25 | 1e-8 – 1e-5 |
+  | `Ev_htl` (eV) | 5.405 ±0.005 (↓ 40 %) | 5.417 ±0.007 | 5.442 ±0.004 | 5.4 – 5.6 |
+  | `Ec_etl` (eV) | 4.063 ±0.003 | 3.900 ±0.000 ↓ | 4.015 ±0.005 | 3.9 – 4.3 |
+  | `N_cation` (m⁻³) | 1.14e22 ×1.05 | 1.02e20 ×1.02 ↓ | 9.9e22 ×1.01 ↑ | 1e20 – 1e23 |
+  | `N_anion` | 7.6e21 ×1.05 | 1.53e21 ×1.19 | 8.2e22 ×1.01 | 1e20 – 1e23 |
+  | generation scale | 0.998 | 1.000 | 1.06 | 0.7 – 1.3 |
 
   ↑ and ↓: at least 79 % of the samples within 2 % of the box's width from the upper or lower
-  bound. Three or four of the fourteen parameters are held by a bound in every sample, and
-  not the same ones: the electron and the hole mobility take turns at the upper bound, the
-  HTL's band edge sits at the upper bound in one sample and at the lower in another. There the
-  posterior is the prior's statement, not the data's; those parameters want the bounds widened or
-  the model changed, not an error bar. `k_direct` is settled only in the 0.2 Cl sample (below
-  2.4e-17); in the other two its 16–84 % range covers two of the box's three decades. The shunt
-  is measured only in the 0.2 Cl sample; in the other two the curves say it is above about
-  15 Ω m², and the posterior above that is the prior's, log-uniform up to the bound. `N_t` is
-  settled to a factor of 2.5 in all three, at 3–6e19 m⁻³.
+  bound; in brackets the share where it is 20–79 %. One to four of the fourteen parameters are
+  held by a bound in each sample, and not the same ones: the hole mobility leans on the upper
+  bound in 0.1 and 0.2 Cl and sits at the lower in 0.6 Cl, the cation density at the lower bound in
+  0.2 Cl and at the upper in 0.6 Cl, the interface traps at the lower bound on the HTL's side in
+  one sample and on the ETL's in another. There the posterior is the prior's statement, not the
+  data's; those parameters want the bounds widened or the model changed, not an error bar.
+  `k_direct` is settled in 0.2 and 0.6 Cl (below 2.4e-17, and 1.5e-17 within 14 %); in 0.1 Cl its
+  16–84 % range covers two of the box's three decades, as the HTL's mobility does. The shunt is
+  measured in 0.2 and 0.6 Cl; in 0.1 Cl the curves say it is above about 15 Ω m², and the
+  posterior above that is the prior's, log-uniform up to the bound. `N_t` is settled to a factor
+  of 2.4–2.6 in 0.1 and 0.2 Cl, at 3–6e19 m⁻³; in 0.6 Cl it leans on the lower bound.
 
-  The linearised `σ²(JᵀJ)⁻¹` at the fit is nowhere narrower than the posterior and is wider by
-  up to seven decades (0.1 Cl's `mu_n`, whose fit sits at its bound), or unbounded (`k_direct`
-  in all three; `N_t` and the shunt in 0.1 and 0.6 Cl; in 0.1 Cl also the HTL's mobility and
-  interface traps): away from the fit the misfit grows
-  faster than its curvature there says, and the bounds cut the rest. The remaining spread lies
-  along a few strongly correlated directions, different in each sample: 0.1 Cl the ETL's band
-  edge against its interface traps (−0.96); 0.2 Cl the HTL's band edge against the anion density
-  (−0.95) and the hole mobility (−0.93); 0.6 Cl the cation density against the ETL's band edge
-  (+0.96). The posteriors are narrow, but the parameters differ between the samples in ways
-  that are not a trend in the chlorine content (the mobilities swapping, the cation density at
-  1e20, 1e21, 4e21), so what they measure is the fit under these assumptions as much as the
-  cells. With σ the rms misfit the widths are a lower bound: the misfit is systematic and smooth
+  The linearised `σ²(JᵀJ)⁻¹` at the best minimum is nowhere narrower than the posterior. In 0.6
+  Cl it is of the posterior's order for all but one (multiplicative half-widths ×1.04–×3.3
+  against ×1.01–×1.25, ±0.024 eV against ±0.005 in the band edges), and wider by four decades
+  for the HTL's mobility, whose fit sits at its bound. In 0.1 Cl it is wider by up to seventeen
+  decades (the hole mobility, `k_direct`, the HTL's mobility, the fit of each at its bound) or
+  unbounded (`N_t`, the ETL's interface traps); in 0.2 Cl wider by four decades for the HTL's
+  mobility and unbounded for `k_direct`. Away from the fit the
+  misfit grows faster than its curvature there says, and the bounds cut the rest. The
+  remaining spread lies along a few strongly correlated directions: in 0.1 Cl the HTL's band
+  edge against its interface traps (+0.99) and the two ion densities (+0.89), both against the
+  ETL's mobility (−0.81, −0.72); in 0.2 Cl the HTL's band edge against the anion density (−0.95)
+  and the hole mobility (−0.93); in 0.6 Cl the two ion densities (+0.95), the HTL's band edge
+  against its interface traps (+0.94), the ETL's band edge against its mobility (−0.93). The
+  posteriors are narrow, but the parameters differ between the samples in ways that are not a
+  trend in the chlorine content (the hole mobility from one bound to the other, the cation
+  density at 1e22, 1e20 and 1e23 m⁻³, the shunt from 0.4 to above 15 Ω m²), so what they
+  measure is the fit under these assumptions as much as the cells. With σ the rms misfit the widths are a lower bound: the misfit is systematic and smooth
   in the voltage, not independent noise, and where the posterior is close to Gaussian its widths
   scale with σ (`--sigma`).
 

@@ -6,6 +6,20 @@ the handbook.
 
 ## 1 Open now
 
+The order (2026-11-15, an estimate at the pace so far):
+
+1. Stage C to its end (section 4.1, steps 1–4): about 3–4 days.
+2. M4's first step, the graded mesh (2.1): 1–3 days, depending on whether it is enough.
+3. **Release 0.1.0**: the steady state (SimSS) and the transients (ZimT); a version, a
+   changelog, the README's installation, a wheel, CI, a pass over the handbook and the API.
+   About a day.
+4. M6 (2.2), and the fused kernel if Stage C's speed decides for it (2.3, about 1–2 weeks):
+   0.2.
+
+In the background, when the desktop GPU is free: 0.2 Cl's second sampling run, which closes
+M7 (2.4). Not before the release: M8 (1.3), the measured cell's optics (2.4, waiting for n,k
+data), the steric ions (3, waiting for a source of `N_max`).
+
 ### 1.1 Stage C: transients
 
 Begun: electrons, holes, traps and mobile ions in time with the voltage given reproduce ZimT
@@ -40,7 +54,7 @@ about two A100s).
 |---|---|---|
 | **M4** | The grid in space (2.1) | 400 points or fewer meet the validation criteria on the hardest devices, or bucketing by grid size is justified |
 | **M6** | Adaptive parameter axes (2.2) | the refined axes meet a table's interpolation tolerance with fewer devices than hand-made ones |
-| **M7** | What fits still need (2.4): the posteriors of 0.1 and 0.6 Cl around their best minimum; the curves are differentiable in the input's parameters, measured curves are fitted from many starts at once (`validation/fit_measured.py --starts N`, `jaxdd.fit`), and the posteriors sampled by two independent runs that agree (`validation/sample_measured.py`), for 0.1 and 0.6 Cl around the cold fit's minimum | every measured sample's posterior around the best of many starts, from two independent runs that agree with 1000 independent samples or more between them |
+| **M7** | What fits still need (2.4): a second sampling run of 0.2 Cl; the curves are differentiable in the input's parameters, measured curves are fitted from many starts at once (`validation/fit_measured.py --starts N`, `jaxdd.fit`), and the posteriors of 0.1 and 0.6 Cl sampled around their best minimum by two independent runs that agree (`validation/sample_measured.py`) | every measured sample's posterior around the best of many starts, from two independent runs that agree with 1000 independent samples or more between them |
 
 Gradients are taken by implicit differentiation of the converged solution: the backward pass
 needs only the solution and the JAX residual, never the iterations that found it, so any forward
@@ -156,40 +170,16 @@ The curves are differentiable in the input's own parameters; a fit recovers a Si
 parameters (`validation/fit.py`) and fits the measured curves of Heester et al. (2025), five
 intensities at once, to 0.55–2.7 % of the short-circuit current in minutes
 (`validation/fit_measured.py`), from 16 starts at once in 10.5 min (`--starts`, `jaxdd.fit`),
-and samples the posteriors, each by two independent runs that agree
-(`validation/sample_measured.py`, [docs/validation.md](docs/validation.md)). Left:
+and samples the posteriors around the best minimum, for 0.1 and 0.6 Cl by two independent runs
+that agree (`validation/sample_measured.py`, [docs/validation.md](docs/validation.md)). Left:
 
-- **The posteriors of 0.1 and 0.6 Cl around their best minimum.** From 16 starts, both have a
-  minimum below the cold fit's, elsewhere in the box (rms 0.70 against 0.77 %, 1.93 against
-  2.69 %), e⁵⁹ and e¹⁵⁸ more likely with the sampler's σ; their posteriors so far are the cold
-  fit's minimum. 64 starts for 0.6 Cl find the same best (8 starts, 24 min). The ends of every
-  start are in `benchmarks/samples/multistart_{01Cl,06Cl}.npz` (not committed).
-
-  **Hand-over (2026-11-14, 19:27):** running on the desktop GPU, in the background, four
-  sampling runs one after the other, each `sample_measured.py SAMPLE --from-multistart
-  --walkers 64 --steps 3000 --seed {0,1}`: 0.1 Cl seed 0, seed 1, then 0.6 Cl seed 0, seed 1;
-  about 1.85 h each (2.2 s per step), done around 02:50. The first attempt (17:47) was killed
-  at step 300 with the ssh session it ran in; this one runs in its own session (`setsid nohup
-  benchmarks/samples/run_best.sh`, not committed), so check it with `pgrep -f run_best.sh`.
-  Log `benchmarks/samples/best.log` (a failed run is a line `!! SAMPLE seed N failed`, the end
-  a line `== … all done`), chains `benchmarks/samples/chain_{01Cl,06Cl}_best_s{0,1}.npz`.
-  It restarted well: σ 7.01e-3 (the best minimum's rms), acceptance 0.08, step for step the
-  first attempt's. Do not start a second GPU process beside it. When done:
-  1. Per sample, compare the two seeds as the earlier second runs were (chain coordinates, the
-     first 1000 steps discarded): each median's shift over the 16–84 % half-width (they agreed
-     within 0.13), the half-widths' ratio, the independent samples of both together (≥ 1000).
-     `.venv/bin/python -I benchmarks/samples/compare_seeds.py . 01Cl 06Cl` (numpy only) prints
-     all of it, plus the table's entries over both seeds. On the earlier pair (A100 and
-     desktop) it reproduces validation.md's shifts (0.12, 0.13) and independent samples (1561,
-     1954), but its half-width ratios (larger over smaller) are 1.33 for 0.6 Cl's `mu_htl` (the
-     doc's 25 %) and 1.13 for its `Ev_htl` (also at its bound): not "within 8 %", which came
-     from the log's rounded ±0.001. Word that sentence from the chains when rewriting it.
-  2. In docs/validation.md, replace the 0.1 and 0.6 Cl columns of the posterior table with the
-     new posteriors (median and half-width, which parameters sit at a bound, the strongest
-     correlations, from the log's summaries), and drop the remarks that they hold the cold
-     fit's minimum only (the many-starts bullet and the sampling bullet).
-  3. M7 is then done: remove this item and M7's row's first clause; commit, push to both
-     remotes (`origin`, `forgejo`).
+- **A second run of 0.2 Cl's posterior.** 0.1 and 0.6 Cl are sampled around their best minimum
+  by two runs that agree (docs/validation.md); 0.2 Cl, whose best minimum is the cold fit's,
+  by one only (A100, seed 0, `benchmarks/samples/chain_02Cl.npz`, not committed). Its second:
+  `validation/sample_measured.py 02Cl --walkers 64 --steps 3000 --seed 1` on the desktop GPU
+  (about 1.7 h), compared with the first as `benchmarks/samples/compare_seeds.py` compares
+  0.1 and 0.6 Cl's (it reads `chain_{SAMPLE}_best_s{0,1}.npz`: link or adapt), and the 0.2 Cl
+  column and the runs' sentence in docs/validation.md from both. M7 is then done.
 - **The optics for the measured cell**: the measured fits assume a uniform generation. The cell
   in its own orientation with the transfer-matrix profile is `tests/data/pin_anode_left_light`,
   but the paper's perovskite n,k data (Werner et al., ACS Energy Lett. 3, 742 (2018)) are not

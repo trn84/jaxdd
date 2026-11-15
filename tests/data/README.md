@@ -85,6 +85,13 @@ steps of `zimt_photo_light` for `thin_l1_light` with its traps, `bulk_acceptor_l
 `trapfiles_light`; `zimt_iface_sweep_light/`: the sweep of `zimt_sweep_light` for
 `iface_charged_light`. ZimT 5.36 at `tolPois = tolDens = 1e-12`.
 
+`zimt_ions_slow_light/`: `steady_1e17_thin_light` as a ZimT 5.36 input (as `zimt_steady_light`, at
+`tolPois = tolDens = 1e-9`, `failureMode = 1`, which it did not need), under light from 0 to 1.2
+V in 5 s and back in 5 s, 120 steps each way. `zimt_ions_fast_light/`: the same to 0.9 V and
+back in 2 × 50 ms (`failureMode = 0`). `zimt_region_slow_light/`, `zimt_region_diff_light/`:
+`region_etl_light` (ions in a region of two layers) to 0.9 V and back in 2 × 5 s, and in 2 × 50
+ms with `currDiffInt = 1`. ZimT 5.36.
+
 `held_thin_light/`: `steady_1e17_thin_light` with 8e22 anions per m³ instead of 1e23 (a net
 charge of 2e22 m⁻³) held from the start (`fixIons = 1`, `preCond = 0`): run by SimSS 5.36 with
 [`simss/fixed_ions.patch`](../../simss/fixed_ions.patch) at `tolPois = tolDens = 1e-9`.

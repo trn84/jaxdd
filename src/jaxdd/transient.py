@@ -25,7 +25,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from jaxdd.batch import _bounds, _initial, _newton_solve, _poisson_solve, _quiet
+from jaxdd.batch import _bounds, _caps, _full, _initial, _newton_solve, _poisson_solve, _quiet
 from jaxdd.device import Device
 from jaxdd.simss_input import TVG
 from jaxdd.solver import (
@@ -33,10 +33,12 @@ from jaxdd.solver import (
     ION_LOG_CAP,
     _bulk_occupation,
     _interface_occupation,
+    _ion_full,
     _ion_logs,
+    _ion_membership,
+    _point_logs,
     _time_terms,
     _with_contacts,
-    step_caps,
 )
 
 __all__ = ["TransientResult", "solve_transient", "transient_problems"]
@@ -54,11 +56,9 @@ class TransientResult:
 
 
 def transient_problems(dev: Device, tvg: TVG | None = None) -> list[str]:
-    """What `solve_transient` does not take yet, by name: mobile ions, the open circuit and
-    series resistance (Stage C's next steps)."""
+    """What `solve_transient` does not take yet, by name: the open circuit and series resistance
+    (Stage C's next steps)."""
     problems = []
-    if np.any(dev.anion_mask) or np.any(dev.cation_mask):
-        problems.append("mobile ions")
     if dev.R_series > 0:
         problems.append("R_series > 0")
     if tvg is not None and np.any(tvg.oc):
@@ -66,9 +66,11 @@ def transient_problems(dev: Device, tvg: TVG | None = None) -> list[str]:
     return problems
 
 
-def _solve_one(d, dti, V, G_frac, B, tol, max_iter):
+def _solve_one(d, dti, V, G_frac, B, tol, max_iter, ions):
     """One device through its steps: the start as SIMsalabim's (`Init_Pot_Dens_Ions_Traps`,
-    Poisson at the first voltage), then each step by Newton from the one before."""
+    Poisson at the first voltage), then each step by Newton from the one before. With `ions` the
+    mobile ions are unknowns of their own (`V, ln n, ln p, ln a, ln c` per point,
+    `solver._assemble_ions`), from the steady state's Boltzmann profiles."""
     s, ion = d["s"], d["ion"]
     d0, s0, ion0 = jax.lax.stop_gradient((d, s, ion))
     y = _poisson_solve(_initial(d0, V[0])[1:-1], d0, s0, ion0, V[0], max_iter)
@@ -84,12 +86,19 @@ def _solve_one(d, dti, V, G_frac, B, tol, max_iter):
     y_s, logs_s, _, ok_s, _ = _newton_solve(y, logs, d0, s0, ion0, V[0], G_frac[0], B, tol,
                                             max_iter)  # fmt: skip
     y, logs = jnp.where(ok_s, y_s, y), jnp.where(ok_s, logs_s, logs)
-    caps = step_caps(d["Vt"])
+    Vt = d["Vt"]
+    if ions:  # the ions' densities as unknowns: their steady profiles, 0 outside their regions
+        la, lc = _point_logs(logs, ion)
+        Vm = y[:, 0]
+        y = jnp.concatenate([y, jnp.stack([jnp.where(s["a_mask"] > 0, la + Vm / Vt, 0.0),
+                                           jnp.where(s["c_mask"] > 0, lc - Vm / Vt, 0.0)], -1)],
+                            -1)  # fmt: skip
+    caps = _caps(Vt, y.shape[-1])
     traps = "ti" in s
 
-    def full_of(y, Vint):  # the contacts' densities as the current takes them (`_with_contacts`)
-        b = _bounds(d, Vint)
-        return _with_contacts(jnp.concatenate([b[0][None], y, b[1][None]]), s, d["Vt"], B)
+    def full_of(y, Vint, dti_):  # the contacts as the current takes them (`_with_contacts`)
+        full = _with_contacts(_full(_bounds(d, Vint), y), s, Vt, B)
+        return _ion_full(full, ion, Vt, B, dti_) if ions else full
 
     def stencils(before, dti_k, fb, fi):
         """The step's stencils and device: the state before it, the traps' occupations."""
@@ -97,12 +106,15 @@ def _solve_one(d, dti, V, G_frac, B, tol, max_iter):
         pad = jnp.zeros_like(fb[:1])
         tr = {"dti": dti_k, "n": jnp.exp(before[:, 1]), "p": jnp.exp(before[:, 2]),
               "V": before[:, 0], "fb": jnp.concatenate([pad, fb, pad])}  # fmt: skip
+        if ions:
+            ma, mc = _ion_membership(ion)
+            tr["ions"] = {"a": jnp.exp(before[:, 3]) * ma, "c": jnp.exp(before[:, 4]) * mc}
         return s_k, dict(d, s=s_k, tr=tr)
 
     def step(carry, x):
         y, logs, y_prev, logs_prev, V_now, dti_now, fb, fi, first = carry
         dti_k, V_k, G_k = x
-        before = full_of(y, V_now)
+        before = full_of(y, V_now, dti_now)
         s_k, d_k = stencils(before, dti_k, fb, fi)
         # The start: the last two states extrapolated linearly in time (ZimT's
         # `Extrapolate_Solution`, in V and ln n), held to one Newton step's caps; none from or
@@ -111,11 +123,15 @@ def _solve_one(d, dti, V, G_frac, B, tol, max_iter):
         rt = jnp.where(moving, dti_now / jnp.where(moving, dti_k, 1.0), 0.0)  # Δt_k / Δt_before
         guess = y + jnp.clip(rt * (y - y_prev), -caps, caps)
         logs_guess = logs + jnp.clip(rt * (logs - logs_prev), -ION_LOG_CAP, ION_LOG_CAP)
+        if ions:  # over a step the slots are the ions' scales (1 at the start), in the steady
+            # state Boltzmann's normalisations
+            steady = _ion_logs(full_of(guess, V_k, 0.0)[:, 0], ion)
+            logs_guess = jnp.where(dti_k > 0, jnp.where(moving, logs_guess, 0.0), steady)
         y_new, logs_new, J, ok, it = _newton_solve(
             guess, logs_guess, d_k, s_k, ion, V_k, G_k, B, tol, max_iter, False
         )
         # The traps' occupations at the step's end, from its solution.
-        after = full_of(y_new, V_k)
+        after = full_of(y_new, V_k, dti_k)
         fb_new = _bulk_occupation(jnp.exp(after[1:-1, 1]), jnp.exp(after[1:-1, 2]), s_k)
         fi_new = (_interface_occupation(jnp.exp(after[:, 1]), jnp.exp(after[:, 2]), s_k["ti"])
                   if traps else fi)  # fmt: skip
@@ -134,9 +150,10 @@ def _solve_one(d, dti, V, G_frac, B, tol, max_iter):
     return J, ok, its
 
 
-@functools.partial(jax.jit, static_argnames=("bernoulli_name", "max_iter"))
-def _solve_batch(batch, dti, V, G_frac, tol, max_iter, bernoulli_name):
-    one = functools.partial(_solve_one, B=BERNOULLI[bernoulli_name], tol=tol, max_iter=max_iter)
+@functools.partial(jax.jit, static_argnames=("bernoulli_name", "max_iter", "ions"))
+def _solve_batch(batch, dti, V, G_frac, tol, max_iter, bernoulli_name, ions):
+    one = functools.partial(_solve_one, B=BERNOULLI[bernoulli_name], tol=tol, max_iter=max_iter,
+                            ions=ions)  # fmt: skip
     J, ok, its = jax.vmap(one)(batch, dti, V, G_frac)
     return J, J + batch["G_shunt"][:, None] * V, ok, its
 
@@ -153,6 +170,8 @@ def solve_transient(batch, tvg: TVG | list[TVG], tol=1e-10, max_iter=200,
         raise NotImplementedError("the open circuit (Vext = oc) is not in jaxdd's transients yet")
     dti, V, G = (jnp.asarray(np.stack([getattr(t, k) for t in tvgs]))
                  for k in ("dti", "Vext", "G_frac"))  # fmt: skip
+    ion = batch["ion"]
+    ions = bool(np.any(np.asarray(ion["a_totals"]) > 0) or np.any(np.asarray(ion["c_totals"]) > 0))
     with _quiet():
-        J, J_ext, ok, its = _solve_batch(batch, dti, V, G, tol, max_iter, bernoulli_name)
+        J, J_ext, ok, its = _solve_batch(batch, dti, V, G, tol, max_iter, bernoulli_name, ions)
     return TransientResult(*(np.asarray(a) for a in (J, J_ext, ok, its)))

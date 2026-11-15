@@ -93,6 +93,24 @@ so that the solver is never the larger error in what is computed from it.
   and gold, and on a 20/500/10 nm stack between glass, 150 nm ITO and silver, the profile on the
   grid is SimSS's within 4e-12 and the curves within 2e-7 and 6e-7 of SimSS's scale; a uniform
   profile (`genProfile = none`) within 2.4e-6.
+- **The grid on hard devices** (2026-11-15, `validation/grid.py` on an A100): `hard.py`'s 4096
+  devices (frozen ions up to 4e18 cm⁻³, absorbers of 250–1000 nm, transport layers of 1–300 nm),
+  each in the light and the dark, on SIMsalabim's grid against 3200 points: at the default 400
+  points 32 % meet both criteria (η within 1e-3 up to 1.0 V, `J_SC` within 0.1 %), η off by
+  1.3e-3 in the median and up to 5e-2; at 800 points 78 %, at 1600 95 %. On such devices the
+  grid, not the solver, is the larger error (PLAN.md §2.1, M4).
+- **Mobile ions in time** (2026-11-15, Stage C): sweeps to a voltage and back under light with
+  free ions, against ZimT 5.36 at tolerances of 1e-9: ions in the absorber of
+  `steady_1e17_thin_light` over 2 × 5 s to 1.2 V (`tests/data/zimt_ions_slow_light`) and over
+  2 × 50 ms to 0.9 V (`zimt_ions_fast_light`), ions in the region of two layers of
+  `region_etl_light` over 2 × 5 s to 0.9 V (`zimt_region_slow_light`) and with the
+  differential current over 2 × 50 ms (`zimt_region_diff_light`): within 1.8e-9, 4.0e-8,
+  3.3e-9 and 3.8e-9 of ZimT's scale, where the hysteresis is 9.5e-2, 4.2e-2, 2.5e-2 and about
+  1e-2 of the scale; in one batch with devices without ions, which keep their accuracy, at
+  3–4 Newton steps per time step. Beyond about 0.93 V, near the open circuit, ZimT's Gummel
+  iteration stops converging with ions (its densities moving by up to 99 % at its limit of
+  2000 iterations), at 1e-9 and at 1e-12 alike and whatever its acceleration; jaxdd agrees
+  with it up to its first unconverged step, after which ZimT carries unconverged states.
 - **Traps in time** (2026-11-15, Stage C): light on and off at short circuit with the
   absorber's traps neutral (`tests/data/zimt_traps_photo_light`, `thin_l1_light` itself), charged
   as acceptors (`zimt_acceptor_photo_light`) and three levels from a trap file with two at an
@@ -292,6 +310,9 @@ differences, about 12 s each for the slowest:
 | `test_transients_of_electrons_and_holes_reproduce_zimt` | the four ZimT cases without traps, to 1e-9 of ZimT's scale |
 | `test_transients_with_traps_reproduce_zimt` | the four ZimT cases with traps (neutral, charged, a trap file, interface), to 1e-9 |
 | `test_transients_in_a_batch_reproduce_zimt` | all eight as one batch, each device with its own steps |
+| `test_transients_with_mobile_ions_reproduce_zimt` | the four ZimT cases with mobile ions, to 1e-7 of ZimT's scale |
+| `test_transients_with_and_without_ions_in_a_batch` | devices with mobile ions beside devices with traps and with neither, in one batch of 5×5 blocks |
+| `test_the_ions_blocks_in_time_are_autodiff` | `_assemble_ions`' 5×5 blocks and slot columns against `jax.jacfwd`, over a step and in the steady state |
 | `test_transients_refuse_what_they_lack` | mobile ions, the open circuit and series resistance refused by name |
 | `test_zimt_steady_states_reproduce_zimt` | a ZimT input read and built, its steady states (`tests/data/zimt_steady_light`) to 1e-9 of ZimT's scale |
 | `test_tvg_as_zimt_reads_it` | `read_tvg` as ZimT reads its `tVGFile`, and ZimT's checks on it |

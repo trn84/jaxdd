@@ -355,7 +355,29 @@ R_n = C_n·N_t·(n − (n + n_t0)·f̄)     R_p = C_p·N_t·((p + p_t0)·f̄ −
 (`solver._trap_step`; ZimT's `Calc_Recombination_n/p` integrate the ODE's capture over the
 step). With `dti = 0` both are `b/a` and the rates the steady state's SRH; over a step the two
 carriers recombine at different rates while the traps fill or empty, so each continuity
-equation and each carrier's current take their own. Mobile ions, the open circuit and series
+equation and each carrier's current take their own.
+
+**Mobile ions** become unknowns of their own: five per point, `(V, ln n, ln p, ln a, ln c)`,
+5×5 blocks (`solver._assemble_ions`). In each of its regions an ion's row is ZimT's
+(`Solve_Neg_Ions`, `Solve_Pos_Ions`): Scharfetter–Gummel fluxes in `V` over the region's
+intervals, none through its ends or through a contact (a contact's density follows its
+neighbour's by that zero flux), each interval's mobility its left point's, and implicit Euler in
+the same control volume the carriers have, also at the region's end points:
+
+```
+anions:  h_{i−1}·F_r − h_i·F_l + fac·dti·(e^{l_k}·a_prev − a) = 0,   F = Vt·μ·(B(x)·a₁ − B(−x)·a₀)
+```
+
+(cations as holes). ZimT rescales the ions to their total after every solve
+(`Rescale_Ion_Density`, the trapezoid rule over the region); its converged state is therefore
+the discrete equation's with the density before the step scaled by a factor per region,
+`e^{l_k}`, which is a slot (one unknown per region, its constraint the total; Stage B's). With
+`dti = 0` the row is Boltzmann's and `l_k` its normalisation, as in the steady state. Outside
+its regions an ion's unknown is held. The ions' currents (each region by the integral form with
+the densities' change as its integrand, or by its fluxes with `currDiffInt = 1`, the current
+across a layer interface the one before it) join the carriers' and the displacement current in
+the average. The 5×5 blocks are solved by the scan (the sweep kernels take 3×3; a batch takes
+5×5 where any device has mobile ions, the others' ion rows held). The open circuit and series
 resistance in time are the next steps of Stage C ([PLAN.md](../PLAN.md) §4.1), refused until
 then (`transient_problems`).
 

@@ -280,7 +280,8 @@ def block_sweep(A, B, C, d):
 def _block_sweep_vmap(axis_size, in_batched, A, B, C, d):
     A, B, C, d = (x if batched else jnp.broadcast_to(x, (axis_size, *x.shape))
                   for x, batched in zip((A, B, C, d), in_batched, strict=True))  # fmt: skip
-    kind = sweep_kind()
+    # The kernels take 3×3 blocks (the steady state); the 5×5 of mobile ions in time the scan.
+    kind = sweep_kind() if A.shape[-1] == 3 else "scan"
     if kind == "pallas":
         return pallas_sweep(A, B, C, d), True
     if kind == "mosaic":

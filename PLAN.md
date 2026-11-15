@@ -8,8 +8,9 @@ the handbook.
 
 ### 1.1 Stage C: transients
 
-Begun: electrons, holes and traps in time with the voltage given reproduce ZimT 5.36. The next
-steps (mobile ions, the open circuit, output, gradients, speed) are in section 4.1.
+Begun: electrons, holes, traps and mobile ions in time with the voltage given reproduce ZimT
+5.36. The next steps (the open circuit and series resistance, output, gradients, speed) are in
+section 4.1.
 
 ### 1.3 M8: the MI50 cards
 
@@ -65,10 +66,19 @@ The study: `J(V)` and `η` at 200, 400, 800, 1600 points, uniform against graded
 r-adaptive, on the hardest devices known (`L_diff/d` 0.1–0.2, ions at 1e18 cm⁻³, thick undoped
 layers). Its baseline, SIMsalabim's own grid at 200 to 3200 points on `hard.py`'s
 devices against the criteria, is `validation/grid.py` (`STEPS=grid benchmarks/apptainer.sh`),
-to be run on an A100; on four of them on a CPU, 200 points miss η's 1e-3 by 4×. A first run on
-the Apptainer host's two A100s solved 200 to 800 points (4213, 1887 and 509 curves/s) and then
-lost both GPUs at 1600 (`CUDA_ERROR_UNKNOWN`, `nvidia-smi` hung: the driver, or the kernel at
-1600 points; to be reproduced on one GPU before it runs again), before its comparison.
+run on one A100 (2026-11-15; a first run on two lost both GPUs at 1600 points, the driver
+hung, not reproduced on one). Against 3200 points, of 4096 hard devices in the light and the dark:
+
+| `NP` | meet both criteria | η: median, 99 %, max | `J_SC`: median, 99 % |
+|---|---|---|---|
+| 200 | 5.5 % | 3.8e-3, 4.0e-2, 0.16 | 3.3e-3, 2.3e-2 |
+| 400 | 32.4 % | 1.3e-3, 1.4e-2, 5.0e-2 | 1.2e-3, 9.4e-3 |
+| 800 | 77.8 % | 4.7e-4, 5.7e-3, 1.7e-2 | 4.4e-4, 3.8e-3 |
+| 1600 | 95.3 % | 1.4e-4, 2.0e-3, 5.6e-3 | 1.3e-4, 1.3e-3 |
+
+So SIMsalabim's grid at its default 400 points misses η's 1e-3 on two thirds of these devices,
+by up to 5e-2; the error falls by about 3 per doubling. Step 1 (the graded mesh) is the next
+thing to try against these numbers.
 
 ### 2.2 M6: fewer devices instead of faster ones
 
@@ -138,7 +148,7 @@ separate arrays, would spare a third of the blocks' writes and reads.
 Order: Stage B in JAX (done); then the kernel for the physics that has settled. A first
 measurement before deciding: the Newton step of Stage A's physics without ions as one CUDA
 kernel on devices without ions, against the JAX step's time on the A100. The fused kernel is not
-needed for the steady state; it is decided with Stage C's speed (section 4.1, step 5).
+needed for the steady state; it is decided with Stage C's speed (section 4.1, step 4).
 
 ### 2.4 M7: what fits still need
 
@@ -268,21 +278,17 @@ steady state at `t = 0` is today's solver.
 
 **Steps**, each validated against ZimT 5.36 at `tolPois = tolDens = 1e-12` (at 1e-9 ZimT moves
 by 1.7e-7 of the scale; `zimt` in the image `jaxdd/simss:5.36`, its input read by `read_tvg`).
-Electrons, holes and traps in time, with the voltage given, are done (`jaxdd.transient`,
+Electrons, holes, traps and mobile ions in time, with the voltage given, are done (`jaxdd.transient`,
 docs/model.md "Transients"); next:
 
-1. **Mobile ions in time**: the 5×5 blocks, region ends and contacts as ZimT writes them, the
-   rescaling as a slot per region, the ions' currents. Done when hysteresis (forward and
-   back at two scan rates) with ions in the absorber and in a region of several layers
-   matches ZimT, batched with devices without ions.
-2. **`oc` and `R_series`**: `Vint` as an unknown. Done when photovoltage after a light pulse
+1. **`oc` and `R_series`**: `Vint` as an unknown. Done when photovoltage after a light pulse
    at open circuit and a sweep with series resistance match ZimT, and `oc` at `t = 0`
    matches SimSS's `Voc`.
-3. **Stopping, failures, output**: `Track` and `failureMode` per device, the `tJFile` columns.
+2. **Stopping, failures, output**: `Track` and `failureMode` per device, the `tJFile` columns.
    Done when every input ZimT 5.36 takes runs on jaxdd or is refused by name.
-4. **Gradients through time**: tangents of a transient in its parameters. Done when they match
+3. **Gradients through time**: tangents of a transient in its parameters. Done when they match
    finite differences, and a fit of a transient recovers its parameters.
-5. **Speed**: a transient batch on the A100 (steps per second, Newton steps per time step, the
+4. **Speed**: a transient batch on the A100 (steps per second, Newton steps per time step, the
    5×5 step's cost against the 3×3 one). Done when its numbers are in the handbook; with them
    the fused kernel is decided (section 7).
 
@@ -375,5 +381,5 @@ microseconds per evaluation are needed.
 
 | Decision | When | With |
 |---|---|---|
-| The fused kernel as an optional mode (2.3) | after Stage C's step 5 (4.1) | the applications' needs (section 5) and a first measurement of a Stage A kernel |
+| The fused kernel as an optional mode (2.3) | after Stage C's step 4 (4.1) | the applications' needs (section 5) and a first measurement of a Stage A kernel |
 | The steric ion model and its `N_max` | when a source for `N_max` is found | its users: results with and without it differ at high ion density |

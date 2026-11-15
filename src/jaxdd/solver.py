@@ -149,6 +149,11 @@ class JVResult:
     V_ext: np.ndarray | None = None  # V + J·R_series
 
 
+def _or_zero(a, n, xp=np):
+    """`a`, or zeros of length `n` where a device has none."""
+    return xp.zeros(n) if a is None else a
+
+
 def _stencils(dev: Device, xp=np) -> dict[str, jnp.ndarray]:
     """Every static quantity row i (1..NP) needs, as arrays over the interior points; in NumPy,
     or in `jax.numpy` for a device built there (`device.device_arrays`)."""
@@ -163,6 +168,7 @@ def _stencils(dev: Device, xp=np) -> dict[str, jnp.ndarray]:
         h[i - 1] ** 2 * L**2
     )
     fac_u = 2 * eps[i] / (h[i] * (h[i] + h[i - 1]) * L**2)
+    mu_a, mu_c = _or_zero(dev.mu_anion, NP + 2, xp), _or_zero(dev.mu_cation, NP + 2, xp)
     out = {
         "fac_l": fac_l, "fac_m": fac_m, "fac_u": fac_u,
         "hm": h[i - 1], "hp": h[i],
@@ -181,6 +187,9 @@ def _stencils(dev: Device, xp=np) -> dict[str, jnp.ndarray]:
         "a_mask": dev.anion_mask[i].astype(float), "c_mask": dev.cation_mask[i].astype(float),
         "a_fix": dev.anion_fixed[i], "c_fix": dev.cation_fixed[i],
         "n_floor": xp.full(NP, DENSITY_FLOOR * xp.max(dev.N_c)),
+        # The ions' mobility on each point's intervals (the left point's, as SIMsalabim's
+        # `Solve_Neg_Ions`): what their fluxes take in time (`_assemble_ions`).
+        "mua_m": mu_a[i - 1], "mua_p": mu_a[i], "muc_m": mu_c[i - 1], "muc_p": mu_c[i],
         # Row scales: each equation over the size of its terms, for a well-conditioned solve.
         "sP": 1.0 / (Q * dev.N_c[i]),
         "sC": 1.0 / (xp.maximum(dev.mu_n[i], dev.mu_p[i]) * dev.Vt * dev.N_c[i] * h[i]),
@@ -395,8 +404,8 @@ def _with_contacts(full, s, Vt, B=bernoulli):
     (`_contact_ends`), where there is any."""
     if "ct" not in s:
         return full
-    left, right = _contact_ends(full[1], full[-2], full[0], full[-1], s, Vt, B)
-    return full.at[0].set(left).at[-1].set(right)
+    left, right = _contact_ends(full[1, :3], full[-2, :3], full[0, :3], full[-1, :3], s, Vt, B)
+    return full.at[0, :3].set(left).at[-1, :3].set(right)
 
 
 def _time_terms(s: dict, full_prev, dti, f_bulk=None, f_iface=None) -> dict:
@@ -411,6 +420,9 @@ def _time_terms(s: dict, full_prev, dti, f_bulk=None, f_iface=None) -> dict:
           "p": jnp.exp(full_prev[1:-1, 2])}  # fmt: skip
     if f_bulk is not None:
         tr["fb"] = f_bulk
+    if full_prev.shape[-1] == 5:  # mobile ions in time (`_assemble_ions`)
+        tr["ions"] = {"a": jnp.exp(full_prev[1:-1, 3]) * s["a_mask"],
+                      "c": jnp.exp(full_prev[1:-1, 4]) * s["c_mask"]}  # fmt: skip
     s = dict(s, tr=tr)
     if f_iface is not None and "ti" in s:
         s["ti"] = dict(s["ti"], f_old=f_iface, dti=jnp.broadcast_to(dti, (NP + 1,)))
@@ -812,6 +824,126 @@ def _ion_constraints(V_full, logs, ion):
     return jnp.where(totals > 0, number / jnp.where(totals > 0, totals, 1.0) - 1.0, 0.0)
 
 
+def _ion_membership(ion):
+    """Each species' mobile regions on the full grid (NP + 2): the union of its slots."""
+    return jnp.sum(ion["a_slots"], 0), jnp.sum(ion["c_slots"], 0)
+
+
+def _ion_full(full, ion, Vt, B, dti):
+    """`full` (NP + 2 × 5: `V, ln n, ln p, ln a, ln c`) with each contact's ion densities where a
+    region reaches it, from its neighbour: no flux through the contact's interval (ZimT's
+    `Solve_Neg_Ions`, `Solve_Pos_Ions`, `B`'s ratio), Boltzmann's in the steady state; 0 (a
+    density of 1, masked) elsewhere."""
+    ma, mc = _ion_membership(ion)
+    V = full[:, 0]
+    x0, xN = (V[1] - V[0]) / Vt, (V[-1] - V[-2]) / Vt
+
+    def ratio(x):  # ln(B(x)/B(−x)), −x for the exact B
+        return jnp.where(dti > 0, jnp.log(B(x)) - jnp.log(B(-x)), -x)
+
+    left = jnp.stack([full[1, 3] + ratio(x0), full[1, 4] - ratio(x0)])
+    right = jnp.stack([full[-2, 3] - ratio(xN), full[-2, 4] + ratio(xN)])
+    full = full.at[0, 3:].set(jnp.where(jnp.stack([ma[0], mc[0]]) > 0, left, 0.0))
+    return full.at[-1, 3:].set(jnp.where(jnp.stack([ma[-1], mc[-1]]) > 0, right, 0.0))
+
+
+def _ion_constraints_time(full, logs, ion):
+    """Each slot's number of ions over its total, less 1, from the ions' own densities (`full`'s
+    columns 3 and 4, the contacts' filled by `_ion_full`), trapezoidal over its region (ZimT's
+    `Rescale_Ion_Density`); 0 for a slot without ions. `logs` (the slots' scales) do not enter."""
+    masks, totals, _ = _slots(ion)
+    ka = ion["a_slots"].shape[0]
+    kc = masks.shape[0] - ka
+    n = full.shape[0]
+    dens = masks * jnp.concatenate([jnp.broadcast_to(jnp.exp(full[:, 3]), (ka, n)),
+                                    jnp.broadcast_to(jnp.exp(full[:, 4]), (kc, n))])  # fmt: skip
+    pair = masks[:, 1:] * masks[:, :-1]
+    number = jnp.sum(0.5 * (dens[:, 1:] + dens[:, :-1]) * pair * ion["hL"], axis=1)
+    del logs
+    return jnp.where(totals > 0, number / jnp.where(totals > 0, totals, 1.0) - 1.0, 0.0)
+
+
+def _assemble_ions(full, s, Vt, g_frac, logs, ion, B=bernoulli):
+    """A time step with mobile ions as unknowns (`jaxdd.transient`): the residual (NP × 5), its
+    blocks `A, B, C` (NP × 5 × 5) and its columns in the slots (NP × 5 × K), from `full` (NP + 2 ×
+    5: `V, ln n, ln p, ln a, ln c`).
+
+    The carriers' rows are `_assemble`'s, the ions in Poisson's at their own densities. Each
+    ion's row, in its regions, is ZimT's (`Solve_Neg_Ions`, `Solve_Pos_Ions`): Scharfetter–Gummel
+    fluxes over the region's intervals (none through its ends or the contacts) and implicit
+    Euler with the density before the step scaled by its slot's `exp(logs)`, the factor ZimT's
+    `Rescale_Ion_Density` applies after each solve (`_ion_constraints_time` its constraint).
+    With `dti = 0` (the steady state) the row is Boltzmann's, `logs` its normalisations, as
+    `_assemble`'s. Outside its regions the unknown is held at 0."""
+    tr = s["tr"]
+    dti = tr["dti"][0]
+    full = _ion_full(full, ion, Vt, B, dti)
+    V, Vm = full[:, 0], full[1:-1, 0]
+    a_m, c_m = s["a_mask"] * jnp.exp(full[1:-1, 3]), s["c_mask"] * jnp.exp(full[1:-1, 4])
+    # The carriers' rows, the ions' densities as Boltzmann's of the normalisations that give them.
+    la, lc = full[1:-1, 3] - Vm / Vt, full[1:-1, 4] + Vm / Vt
+    F3, A3, B3, C3, U3 = _assemble(full[:, :3], s, Vt, g_frac, la, lc, B)
+    NP = Vm.shape[0]
+
+    def grow(m):
+        return jnp.zeros((NP, 5, 5)).at[:, :3, :3].set(m)
+
+    A5, B5, C5 = grow(A3), grow(B3), grow(C3)
+    # Poisson's: the ions' densities do not follow V here, they are unknowns of their own.
+    B5 = B5.at[:, 0, 0].add(Q * (a_m + c_m) / Vt * s["sP"])
+    B5 = B5.at[:, 0, 3].set(U3[:, 0, 0]).at[:, 0, 4].set(U3[:, 0, 1])
+    F5 = jnp.concatenate([F3, jnp.zeros((NP, 2))], -1)
+    K = logs.shape[0]
+    ka = ion["a_slots"].shape[0]
+    U5 = jnp.zeros((NP, 5, K))
+    la_pt, lc_pt = _point_logs(logs, ion)
+    ma, mc = _ion_membership(ion)
+    hm, hp, fac = s["hm"], s["hp"], s["fac"]
+    one = jnp.ones(NP)
+
+    def species(sn, col, mfull, mu_m, mu_p, before, lslot):
+        m_i = mfull[1:-1]
+        el = (mfull[:-2] * m_i).at[0].set(0.0)  # the left interval inside a region, not a contact's
+        er = (m_i * mfull[2:]).at[-1].set(0.0)
+        cl, cr = Vt * mu_m, Vt * mu_p
+        prev = jnp.where(before > 0, before, 1.0)
+        scale = 1.0 / (prev * (fac * dti + hm * cr + hp * cl))
+
+        def r(Vl, Vc, Vr, ll, lc_, lr, ls):
+            xl, xr = (Vc - Vl) / Vt, (Vr - Vc) / Vt
+            nl, nc, nr = jnp.exp(ll), jnp.exp(lc_), jnp.exp(lr)
+            if sn < 0:  # anions, as electrons: F = c·(B(x)·n₁ − B(−x)·n₀)
+                Fl, Fr = cl * (B(xl) * nc - B(-xl) * nl), cr * (B(xr) * nr - B(-xr) * nc)
+                flux = er * hm * Fr - el * hp * Fl
+            else:  # cations, as holes: F = c·(B(x)·n₀ − B(−x)·n₁)
+                Fl, Fr = cl * (B(xl) * nl - B(-xl) * nc), cr * (B(xr) * nc - B(-xr) * nr)
+                flux = el * hp * Fl - er * hm * Fr
+            moving = (flux + fac * dti * (jnp.exp(ls) * before - nc)) * scale
+            steady = lc_ - ls + sn * Vc / Vt
+            return jnp.where(m_i > 0, jnp.where(dti > 0, moving, steady), lc_)
+
+        args = (V[:-2], Vm, V[2:], full[:-2, col], full[1:-1, col], full[2:, col], lslot)
+        value = r(*args)
+        z = jnp.zeros(NP)
+        d = [jax.jvp(r, args, tuple(one if j == k else z for j in range(7)))[1] for k in range(7)]
+        return value, d
+
+    out = []
+    for sn, col, mfull, mu_m, mu_p, before, lslot in (
+        (-1.0, 3, ma, s["mua_m"], s["mua_p"], tr["ions"]["a"], la_pt),
+        (1.0, 4, mc, s["muc_m"], s["muc_p"], tr["ions"]["c"], lc_pt),
+    ):
+        value, d = species(sn, col, mfull, mu_m, mu_p, before, lslot)
+        F5 = F5.at[:, col].set(value)
+        A5 = A5.at[:, col, 0].set(d[0]).at[:, col, col].set(d[3])
+        B5 = B5.at[:, col, 0].set(d[1]).at[:, col, col].set(d[4])
+        C5 = C5.at[:, col, 0].set(d[2]).at[:, col, col].set(d[5])
+        out.append(d[6])
+    U5 = U5.at[:, 3, :ka].set(out[0][:, None] * ion["a_slots"][:, 1:-1].T)
+    U5 = U5.at[:, 4, ka:].set(out[1][:, None] * ion["c_slots"][:, 1:-1].T)
+    return F5, A5, B5, C5, U5
+
+
 #: Grid points per kernel in the block Thomas sweep: unrolling lets XLA fuse several of the
 #: sweep's sequential steps into one kernel, which on a GPU is what the sweep costs (M3).
 SWEEP_UNROLL = 8
@@ -834,6 +966,12 @@ def _inverse3(m):
     return co / det[..., None, None]
 
 
+def _inverse(m):
+    """The inverse of square blocks: `_inverse3` for 3×3 (the steady state), else LAPACK's (the
+    5×5 blocks of mobile ions in time)."""
+    return _inverse3(m) if m.shape[-1] == 3 else jnp.linalg.inv(m)
+
+
 def _mm(a, b):
     """`a @ b` for 3×3 blocks (`... × 3 × 3` times `... × 3 × k`), written as multiply and sum
     so that XLA fuses it with the arithmetic around it. `@` on such small matrices becomes a
@@ -853,7 +991,7 @@ def _block_thomas(A, B, C, d):
     def forward(carry, blocks):
         c_prev, d_prev = carry
         a, b, c, r = blocks
-        m_inv = _inverse3(b - _mm(a, c_prev))  # one block
+        m_inv = _inverse(b - _mm(a, c_prev))  # one block
         c_new = _mm(m_inv, c)
         d_new = _mm(m_inv, r - _mm(a, d_prev))
         return (c_new, d_new), (c_new, d_new)

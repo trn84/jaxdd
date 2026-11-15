@@ -35,12 +35,15 @@ from jaxdd.solver import (
     STALL_STEPS,
     STEP_CAPS,
     _assemble,
+    _assemble_ions,
     _bulk_rates,
     _contact_branch,
     _field_mobilities,
     _held,
     _interface_points,
     _ion_constraints,
+    _ion_constraints_time,
+    _ion_full,
     _ion_logs,
     _ion_setup,
     _on_points,
@@ -50,6 +53,7 @@ from jaxdd.solver import (
     _poisson_val,
     _recombination,
     _slot_columns,
+    _slots,
     _stencils,
     _with_contacts,
     bernoulli,
@@ -87,6 +91,8 @@ def _device_tree(dev: Device, xp=np) -> dict:
         "ln_p_left": xp.log(dev.p_left), "ln_p_right": xp.log(dev.p_right),
         "offset_n": dev.offset_n, "offset_p": dev.offset_p,
         "mu_n": dev.mu_n, "mu_p": dev.mu_p, "G": dev.G,
+        "mu_a": xp.zeros(NP + 2) if dev.mu_anion is None else dev.mu_anion,
+        "mu_c": xp.zeros(NP + 2) if dev.mu_cation is None else dev.mu_cation,
         "rec": {"kd": dev.k_direct, "ni2": dev.ni**2, "Nt": dev.srh_Nt, "Cn": dev.srh_Cn,
                 "Cp": dev.srh_Cp, "nt0": dev.srh_nt0, "pt0": dev.srh_pt0},
         "iface": iface,
@@ -189,6 +195,20 @@ def _bounds(d, Vint):
     ])  # fmt: skip
 
 
+def _full(bounds, y):
+    """`y` with the contacts' rows from `bounds`, padded to `y`'s columns (with mobile ions in time
+    the ions' two, filled where they matter by `solver._ion_full`)."""
+    pad = y.shape[-1] - bounds.shape[-1]
+    b = jnp.pad(bounds, ((0, 0), (0, pad))) if pad else bounds
+    return jnp.concatenate([b[0][None], y, b[1][None]])
+
+
+def _caps(Vt, width):
+    """Newton's step caps for `width` unknowns per point: the ions' logarithms as the densities'."""
+    caps = step_caps(Vt)
+    return jnp.concatenate([caps, jnp.full(width - 3, STEP_CAPS[1])]) if width > 3 else caps
+
+
 def _initial(d, Vint):
     """SIMsalabim's `Init_Pot_Dens_Ions_Traps`: linear potential, linear Fermi level."""
     x = d["x"]
@@ -255,12 +275,59 @@ def _current(d, full, g_frac, B=bernoulli):
     Jn = carrier(-1.0, V + d["offset_n"], n, mu_n, Rn, R_int[0], before_n)
     Jp = carrier(1.0, V + d["offset_p"], p, mu_p, Rp, R_int[1], before_p)
     total = Jn + Jp
+    if tr is not None and "ions" in tr:  # mobile ions in time: their currents (ZimT's Jnion, Jpion)
+        full = _ion_full(full, d["ion"], Vt, B, tr["dti"])
+        total = total + _ion_currents(d, full, tr, B)
     if tr is not None:  # the displacement current on each interval
         dV, dV_before = jnp.diff(V), jnp.diff(tr["V"])
         total = total + d["eps"][: NP + 1] * (dV - dV_before) * tr["dti"] / (L * h[: NP + 1])
     hh = h[: NP + 1]
     # With the anode on the left SIMsalabim turns every current's sign.
     return -d["left_elec"] * (jnp.sum(hh * total) / jnp.sum(hh))
+
+
+def _ion_currents(d, full, tr, B):
+    """The mobile ions' currents on each interval (NP + 1) over a time step, each region on its own
+    (ZimT's `Calc_All_Currents`: `Calc_Curr_Int` of the region with the densities' change as its
+    integrand, or `Calc_Curr_Diff` with `curr_diff`), as the carriers' (`_current`): no
+    recombination, so the current across a layer interface is the one before it; 0 outside."""
+    Vt, x, h, L, ion = d["Vt"], d["x"], d["h"], d["L"], d["ion"]
+    NP = x.shape[0] - 2
+    V = full[:, 0]
+    dx, hh = jnp.diff(x), h[: NP + 1]
+    masks, totals, _ = _slots(ion)
+    ka = ion["a_slots"].shape[0]
+    out = jnp.zeros(NP + 1)
+    for k in range(masks.shape[0]):
+        anion = k < ka
+        sn = -1.0 if anion else 1.0
+        dens = jnp.exp(full[:, 3] if anion else full[:, 4])
+        before = tr["ions"]["a"] if anion else tr["ions"]["c"]
+        mu = d["mu_a"] if anion else d["mu_c"]
+        mask = masks[k]
+        pair = mask[1:] * mask[:-1]
+        U = tr["dti"] * (dens - before)
+        ev = jnp.exp(sn * V / Vt)
+        mu_ = jnp.where(mu > 0, mu, 1.0)
+        int_u = jnp.concatenate([jnp.zeros(1), jnp.cumsum(0.5 * dx * (U[:-1] + U[1:]) * pair)])
+        single = jnp.sum(0.5 * dx * (ev[:-1] / mu_[:-1] + ev[1:] / mu_[1:]) * pair)
+        double = jnp.sum(0.5 * dx * (ev[:-1] * int_u[:-1] / mu_[:-1] + ev[1:] * int_u[1:] / mu_[1:])
+                         * pair)  # fmt: skip
+        first = jnp.argmax(mask > 0)
+        last = NP + 1 - jnp.argmax(mask[::-1] > 0)
+        single = jnp.where(single > 0, single, 1.0)
+        ends = sn * (dens[last] * ev[last] - dens[first] * ev[first])
+        K = (Vt * ends - sn * double) / single
+        e = jnp.arange(NP + 1)
+        step = jnp.where(e > first, sn * Q * L * hh * U[: NP + 1], 0.0) * pair
+        J = Q * K + jnp.cumsum(step)
+        if "curr_diff" in d:
+            dV = sn * jnp.diff(V) / Vt
+            flux = sn * Q * mu[: NP + 1] * Vt * (dens[1:] * B(-dV) - dens[:-1] * B(dV)) / (L * hh)
+            J = jnp.where(d["curr_diff"] > 0, flux, J)
+        J = jnp.where(d["iface"], jnp.roll(J, 1), J)
+        out = out + jnp.where((pair > 0) & (totals[k] > 0), J, 0.0)
+    return out
 
 
 def _poisson_solve(y, d, s, ion, Vint, max_iter):
@@ -271,7 +338,7 @@ def _poisson_solve(y, d, s, ion, Vint, max_iter):
 
     def body(carry):
         y, _, it = carry
-        full = jnp.concatenate([bounds[0][None], y, bounds[1][None]])
+        full = _full(bounds, y)
         V = full[:, 0]
         la, lc = _point_logs(_ion_logs(V, ion), ion)
         args = (_on_points(s), Vt, full[:-2], full[1:-1], full[2:], la, lc)
@@ -295,7 +362,11 @@ def _poisson_solve(y, d, s, ion, Vint, max_iter):
 def _residual(y, logs, bounds, s, ion, Vt, g_frac, B):
     """Newton's system at `(y, logs)`: the rows' residual (NP × 3) and the ions' constraints,
     a held normalisation's row its own value (an identity row, as in `_system`)."""
-    full = jnp.concatenate([bounds[0][None], y, bounds[1][None]])
+    full = _full(bounds, y)
+    if y.shape[-1] == 5:  # mobile ions in time (`solver._assemble_ions`)
+        F = _assemble_ions(full, s, Vt, g_frac, logs, ion, B)[0]
+        g = _ion_constraints_time(_ion_full(full, ion, Vt, B, s["tr"]["dti"][0]), logs, ion)
+        return F, g + _held(ion) * logs
     F = _assemble(full, s, Vt, g_frac, *_point_logs(logs, ion), B)[0]
     return F, _ion_constraints(full[:, 0], logs, ion) + _held(ion) * logs
 
@@ -305,8 +376,19 @@ def _system(y, logs, bounds, s, ion, Vt, g_frac, B):
     `(A, B, C, U, W, D)` of the bordered system `[[T, U], [Wᵀ, D]]` — `T` block tridiagonal
     (`A, B, C`), `U` the rows' derivatives in the normalisations, `W` the constraints' in the
     potentials (column 0 of each point), `D` theirs in the normalisations."""
+    if y.shape[-1] == 5:  # mobile ions in time: the ions' constraints in their own densities
+        dti = s["tr"]["dti"][0]
+        F, A, Bb, C, U = _assemble_ions(_full(bounds, y), s, Vt, g_frac, logs, ion, B)
+
+        def in_time(y_, logs_):
+            return _ion_constraints_time(_ion_full(_full(bounds, y_), ion, Vt, B, dti), logs_, ion)
+
+        g = in_time(y, logs)
+        dg_dy, D = jax.jacrev(in_time, argnums=(0, 1))(y, logs)  # K × NP × 5, K × K
+        D = D + jnp.diag(_held(ion))
+        return F, g, (A, Bb, C, U, jnp.moveaxis(dg_dy, 0, -1), D)
     la, lc = _point_logs(logs, ion)
-    full = jnp.concatenate([bounds[0][None], y, bounds[1][None]])
+    full = _full(bounds, y)
     F, A, Bb, C, U = _assemble(full, s, Vt, g_frac, la, lc, B)
     U = _slot_columns(U, ion)
 
@@ -407,7 +489,7 @@ def _tangent(B, valid, y, logs, params, params_dot):
     _, _, blocks = _system(y, logs, _bounds(d, Vint), s, ion, d["Vt"], g_frac, B)
     # An invalid voltage: the identity, whose solve of a zero right-hand side is zero even
     # where its own blocks are not finite.
-    eye = jnp.eye(3)
+    eye = jnp.eye(y.shape[-1])
     K = logs.shape[0]
     identity = (0.0, eye, 0.0, 0.0, 0.0, jnp.eye(K))
     blocks = tuple(jnp.where(valid, b, jnp.broadcast_to(i, b.shape))
@@ -436,7 +518,7 @@ def _tangent(B, valid, y, logs, params, params_dot):
     def current(y, params):
         d, _, _, Vint, g_frac = params
         bounds = _bounds(d, Vint)
-        return _current(d, jnp.concatenate([bounds[0][None], y, bounds[1][None]]), g_frac, B)
+        return _current(d, _full(bounds, y), g_frac, B)
 
     _, J_dot = jax.jvp(current, (y, params), (y_dot, params_dot))
     return y_dot, logs_dot, jnp.where(valid, J_dot, 0.0)
@@ -453,12 +535,12 @@ def _newton_loop(y, logs, d, s, ion, Vint, g_frac, B, tol, max_iter, strict):
         return dict(s, ct=dict(s["ct"], branch=branch)) if contacts else s
 
     def full_of(y):
-        return jnp.concatenate([bounds[0][None], y, bounds[1][None]])
+        return _full(bounds, y)
 
     def step(y, logs, branch):
         F, g, blocks = _system(y, logs, bounds, held(branch), ion, Vt, g_frac, B)
         delta, d_logs = _bordered_solve(blocks, -F, -g)
-        caps = step_caps(Vt)
+        caps = _caps(Vt, y.shape[-1])
         stepv = jnp.clip(delta, -caps, caps)
         d_logs = jnp.clip(d_logs, -ION_LOG_CAP, ION_LOG_CAP)
         new = y + stepv
@@ -473,7 +555,7 @@ def _newton_loop(y, logs, d, s, ion, Vint, g_frac, B, tol, max_iter, strict):
         return new, logs + d_logs, size
 
     def current(y):
-        return _current(d, jnp.concatenate([bounds[0][None], y, bounds[1][None]]), g_frac, B)
+        return _current(d, _full(bounds, y), g_frac, B)
 
     hist0 = jnp.full(STALL_STEPS + 1, jnp.inf)
     J0 = jnp.full(STALL_STEPS + 1, jnp.inf)

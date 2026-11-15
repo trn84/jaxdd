@@ -410,6 +410,8 @@ ZIMT_CASES = ["zimt_photo_light", "zimt_sweep_light", "zimt_sweep_diff_light",
               "zimt_photo_surface_light"]  # fmt: skip
 ZIMT_TRAP_CASES = ["zimt_traps_photo_light", "zimt_acceptor_photo_light",
                    "zimt_trapfiles_photo_light", "zimt_iface_sweep_light"]  # fmt: skip
+ZIMT_ION_CASES = ["zimt_ions_slow_light", "zimt_ions_fast_light", "zimt_region_slow_light",
+                  "zimt_region_diff_light"]  # fmt: skip
 
 
 def _zimt_case(case):
@@ -450,6 +452,37 @@ def test_transients_with_traps_reproduce_zimt(case: str) -> None:
     assert np.max(np.abs(r.J_ext[0] - ref["Jext"])) < 1e-9 * np.max(np.abs(ref["Jext"]))
 
 
+@pytest.mark.parametrize("case", ZIMT_ION_CASES)
+def test_transients_with_mobile_ions_reproduce_zimt(case: str) -> None:
+    """Mobile ions in time (5×5 blocks, each region's rescaling a slot): ZimT 5.36's `Jext` to
+    1e-7 of its scale through a sweep and back, ions in the absorber over 2 × 5 s to 1.2 V and
+    over 2 × 50 ms to 0.9 V, ions in a region of two layers over 2 × 5 s and, with the
+    differential current, 2 × 50 ms to 0.9 V (ZimT's Gummel iteration fails beyond, near the
+    open circuit). The hysteresis is 1e-2 to 1e-1 of the scale."""
+    from jaxdd.batch import prepare
+    from jaxdd.transient import solve_transient
+
+    setup, tvg, ref = _zimt_case(case)
+    r = solve_transient(prepare([build_device(setup)]), tvg, bernoulli_name="simss")
+    assert r.converged.all()
+    assert np.max(np.abs(r.J_ext[0] - ref["Jext"])) < 1e-7 * np.max(np.abs(ref["Jext"]))
+
+
+def test_transients_with_and_without_ions_in_a_batch() -> None:
+    """Devices with mobile ions beside devices with traps and with neither, in one batch of 5×5
+    blocks (the others' ion rows held): each within 1e-7 of ZimT's scale."""
+    from jaxdd.batch import prepare
+    from jaxdd.transient import solve_transient
+
+    cases = [_zimt_case(c) for c in ("zimt_ions_slow_light", "zimt_region_diff_light",
+                                     "zimt_photo_light", "zimt_traps_photo_light")]  # fmt: skip
+    batch = prepare([build_device(setup) for setup, _, _ in cases])
+    r = solve_transient(batch, [tvg for _, tvg, _ in cases], bernoulli_name="simss")
+    assert r.converged.all()
+    for k, (_, _, ref) in enumerate(cases):
+        assert np.max(np.abs(r.J_ext[k] - ref["Jext"])) < 1e-7 * np.max(np.abs(ref["Jext"]))
+
+
 def test_transients_in_a_batch_reproduce_zimt() -> None:
     """The ZimT cases as one batch, each device with its own steps (the integral form beside
     the differential one, infinite surface recombination beside finite, devices with traps of
@@ -466,11 +499,10 @@ def test_transients_in_a_batch_reproduce_zimt() -> None:
 
 
 def test_transients_refuse_what_they_lack() -> None:
-    """Mobile ions, the open circuit and series resistance: refused by name (Stage C's next
-    steps)."""
+    """The open circuit and series resistance: refused by name (Stage C's next steps)."""
     from jaxdd.transient import transient_problems
 
-    lacking = [("steady_1e17_thin_light", "mobile ions"), ("resist_light", "R_series")]
+    lacking = [("resist_light", "R_series")]
     for case, what in lacking:
         dev = build_device(read_setup(DATA / case / "simulation_setup.txt"))
         assert any(what in p for p in transient_problems(dev)), case
@@ -1636,3 +1668,41 @@ print("ok")
     done = subprocess.run([sys.executable, "-c", code], env=env, capture_output=True, text=True,
                           cwd=root)  # fmt: skip
     assert done.returncode == 0 and done.stdout.strip().endswith("ok"), done.stderr[-2000:]
+
+
+@pytest.mark.parametrize("dti", [0.0, 1e2])
+def test_the_ions_blocks_in_time_are_autodiff(dti: float) -> None:
+    """`_assemble_ions`' blocks and slot columns (the ions' rows by hand, the carriers' from
+    `_assemble`) are `jax.jacfwd` of its residual in the whole state (block tridiagonal) and in
+    the slots, at a perturbed state of a region of two layers: over a step and in the steady
+    state."""
+    from jaxdd import solver as S
+
+    dev = build_device(read_setup(DATA / "region_etl_light" / "simulation_setup.txt"))
+    s = jax.tree_util.tree_map(jnp.asarray, S._stencils(dev))
+    ion = jax.tree_util.tree_map(jnp.asarray, S._ion_setup(dev))
+    rng = np.random.default_rng(4)
+    y0 = S._initial(dev, 0.4)
+    NP = len(dev.x) - 2
+    ma, mc = (np.asarray(m) for m in S._ion_membership(ion))
+    ions = np.stack([np.where(ma > 0, 48.0, 0.0), np.where(mc > 0, 48.0, 0.0)], -1)
+    full = np.concatenate([y0, ions], -1)
+    full[1:-1] += rng.normal(0, 1, (NP, 5)) * np.array([dev.Vt, 0.5, 0.5, 0.3, 0.3])
+    full = jnp.asarray(full)
+    s = S._time_terms(s, full, dti)
+    logs = jnp.asarray(rng.normal(0, 0.1, ion["a_slots"].shape[0] + ion["c_slots"].shape[0]))
+    _, A, B, C, U = S._assemble_ions(full, s, dev.Vt, dev.G_frac, logs, ion, S.bernoulli)
+
+    def residual(y, slot_logs):
+        return S._assemble_ions(full.at[1:-1].set(y), s, dev.Vt, dev.G_frac, slot_logs, ion,
+                                S.bernoulli)[0]  # fmt: skip
+
+    J = np.asarray(jax.jacfwd(residual)(full[1:-1], logs))  # NP × 5 × NP × 5
+    i = np.arange(NP)
+    for name, got, ref in (("B", B, J[i, :, i, :]), ("A", A[1:], J[i[1:], :, i[:-1], :]),
+                           ("C", C[:-1], J[i[:-1], :, i[1:], :])):  # fmt: skip
+        ref, got = np.asarray(ref), np.asarray(got)
+        scale = np.max(np.abs(ref), axis=(1, 2), keepdims=True)
+        assert np.max(np.abs(got - ref) / np.maximum(scale, 1e-300)) < 1e-10, name
+    Ul = np.asarray(jax.jacfwd(residual, argnums=1)(full[1:-1], logs))
+    assert np.max(np.abs(np.asarray(U) - Ul)) < 1e-10 * max(np.max(np.abs(Ul)), 1e-300)

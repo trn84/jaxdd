@@ -274,6 +274,10 @@ class Device:
     anion_totals: np.ndarray | None = None
     cation_slots: np.ndarray | None = None
     cation_totals: np.ndarray | None = None
+    # The ions' mobilities at each point (m²/Vs, the layer's `mu_anion`, `mu_cation`): what the
+    # ions' fluxes take in time (`jaxdd.transient`); the steady state needs none.
+    mu_anion: np.ndarray | None = None
+    mu_cation: np.ndarray | None = None
 
 
 @dataclass(frozen=True)
@@ -348,8 +352,8 @@ SURFACE_PARAMETERS = ("S_n_L", "S_p_L", "S_n_R", "S_p_R")
 LAYER_PARAMETERS = (
     "L", "eps_r", "E_c", "E_v", "N_c", "N_D", "N_A", "mu_n", "mu_p", "nu_int_n", "nu_int_p",
     "gamma_n", "gamma_p", "k_direct", "preLangevin", "N_t_bulk", "C_n_bulk", "C_p_bulk",
-    "E_t_bulk", "N_anion", "N_cation", "N_t_int", "E_t_int", "C_n_int", "C_p_int", "G_ehp",
-    "P0", "a", "k_f",
+    "E_t_bulk", "N_anion", "N_cation", "mu_anion", "mu_cation", "N_t_int", "E_t_int", "C_n_int",
+    "C_p_int", "G_ehp", "P0", "a", "k_f",
 )  # fmt: skip
 
 
@@ -803,6 +807,7 @@ def device_arrays(structure: Structure, p: dict, xp=np) -> Device:
         curr_diff=st.curr_diff,
         anion_slots=ions["anion"][3], anion_totals=ions["anion"][4],
         cation_slots=ions["cation"][3], cation_totals=ions["cation"][4],
+        mu_anion=p["mu_anion"][lid], mu_cation=p["mu_cation"][lid],
     )  # fmt: skip
 
 

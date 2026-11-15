@@ -16,7 +16,7 @@ The order (2026-11-15, an estimate at the pace so far):
 4. M6 (2.2), and the fused kernel if Stage C's speed decides for it (2.3, about 1–2 weeks):
    0.2.
 
-On the hub: 0.2 Cl's second sampling run, which closes M7 (2.4). Not before the release: M8 (1.3), the measured cell's optics (2.4, waiting for n,k
+0.2 Cl's second sampling run is done on the hub; its chain closes M7 (2.4). Not before the release: M8 (1.3), the measured cell's optics (2.4, waiting for n,k
 data), the steric ions (3, waiting for a source of `N_max`).
 
 ### 1.1 Stage C: transients
@@ -175,9 +175,10 @@ that agree (`validation/sample_measured.py`, [docs/validation.md](docs/validatio
 
 - **A second run of 0.2 Cl's posterior.** 0.1 and 0.6 Cl are sampled around their best minimum
   by two runs that agree (docs/validation.md); 0.2 Cl, whose best minimum is the cold fit's,
-  by one only (A100, seed 0, `benchmarks/samples/chain_02Cl.npz`, not committed). Its second,
-  on the A100 hub: `STEPS=sample SAMPLES=02Cl SAMPLE_ARGS="--walkers 128 --steps 3000 --seed 1"
-  benchmarks/apptainer.sh` (about 80 min; its chain back as `chain_02Cl_best_s1.npz`), compared with the first as `benchmarks/samples/compare_seeds.py` compares
+  by one only (A100, seed 0, `benchmarks/samples/chain_02Cl.npz`, not committed). Its second
+  ran on the A100 hub (seed 1, 128 walkers, 2026-11-15, 75 min, 1287 independent samples) and
+  agrees by its log (every median within about 0.1 half-widths, the half-widths within 5 %);
+  its chain is still on the hub, to come here as `chain_02Cl_best_s1.npz` and be compared with the first as `benchmarks/samples/compare_seeds.py` compares
   0.1 and 0.6 Cl's (it reads `chain_{SAMPLE}_best_s{0,1}.npz`: link or adapt), and the 0.2 Cl
   column and the runs' sentence in docs/validation.md from both. M7 is then done.
 - **The optics for the measured cell**: the measured fits assume a uniform generation. The cell
@@ -268,7 +269,8 @@ and with a series resistance (`Vint` an unknown of each step), ZimT's automatic 
 modes and `tJFile` columns, and the gradients through time are done (`jaxdd.transient`,
 docs/model.md "Transients"); next:
 
-1. **Speed**: a transient batch on the A100 (steps per second, Newton steps per time step, the
+1. **Speed** (`validation/transient_bench.py`, `STEPS=transient benchmarks/apptainer.sh`): a
+   transient batch on the A100 (steps per second, Newton steps per time step, the
    5×5 step's cost against the 3×3 one). Done when its numbers are in the handbook; with them
    the fused kernel is decided (section 7).
 

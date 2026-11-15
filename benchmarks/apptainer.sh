@@ -43,6 +43,10 @@
 #              writes benchmarks/results/<label>.json for benchmarks/plot.py
 #   chunk      validation/chunk.py on the batch file CHUNK (a real workload built elsewhere and
 #              copied here; not in the default steps)
+#   transient  validation/transient_bench.py ${TRANSIENT_ARGS:-16384 4096}: Stage C's speed,
+#              transients per second with traps (3×3), with mobile ions (5×5) and at the open
+#              circuit, the Newton steps per time step and one Newton step's cost; not in the
+#              default steps (about 10 min on an A100)
 #   sample     validation/sample_measured.py on each of SAMPLES (default "02Cl 06Cl 01Cl"), with
 #              SAMPLE_ARGS (default "--walkers 128 --steps 3000"): a posterior of the measured
 #              cells' parameters; each chain to benchmarks/samples/chain_<sample>.npz, saved every
@@ -137,6 +141,10 @@ if [ "${1:-}" = "--inside" ]; then
             chunk)
                 "$py" validation/chunk.py "$CHUNK"
                 ;;
+            transient)
+                # shellcheck disable=SC2086
+                "$py" validation/transient_bench.py ${TRANSIENT_ARGS:-16384 4096}
+                ;;
             sample)
                 mkdir -p benchmarks/samples
                 for s in ${SAMPLES:-02Cl 06Cl 01Cl}; do
@@ -149,7 +157,7 @@ if [ "${1:-}" = "--inside" ]; then
                 done
                 ;;
             *)
-                echo "unknown step $step (info tests breakdown bench hard slots gpus grid run chunk sample)"
+                echo "unknown step $step (info tests breakdown bench hard slots gpus grid run chunk transient sample)"
                 ;;
         esac || echo "!! step $step failed (exit $?); going on"
     done
@@ -198,6 +206,7 @@ export APPTAINERENV_STEPS="$STEPS" APPTAINERENV_LABEL="$LABEL" APPTAINERENV_JAXD
 [ -n "${SAMPLES:-}" ] && export APPTAINERENV_SAMPLES="$SAMPLES"
 [ -n "${SAMPLE_ARGS:-}" ] && export APPTAINERENV_SAMPLE_ARGS="$SAMPLE_ARGS"
 [ -n "${GRID_ARGS:-}" ] && export APPTAINERENV_GRID_ARGS="$GRID_ARGS"
+[ -n "${TRANSIENT_ARGS:-}" ] && export APPTAINERENV_TRANSIENT_ARGS="$TRANSIENT_ARGS"
 if [[ " $STEPS " == *" chunk "* ]]; then
     [ -f "${CHUNK:-}" ] || { echo "the chunk step needs CHUNK=<batch file>"; exit 1; }
     export APPTAINERENV_CHUNK="$(realpath "$CHUNK")"

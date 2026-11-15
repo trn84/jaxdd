@@ -40,7 +40,7 @@ about two A100s).
 | **M4** | The grid in space (2.1) | 400 points or fewer meet the validation criteria on the hardest devices, or bucketing by grid size is justified |
 | **M6** | Adaptive parameter axes (2.2) | the refined axes meet a table's interpolation tolerance with fewer devices than hand-made ones |
 | **M7** | What fits still need (2.4): the posteriors of 0.1 and 0.6 Cl around their best minimum; the curves are differentiable in the input's parameters, measured curves are fitted from many starts at once (`validation/fit_measured.py --starts N`, `jaxdd.fit`), and the posteriors sampled by two independent runs that agree (`validation/sample_measured.py`), for 0.1 and 0.6 Cl around the cold fit's minimum | every measured sample's posterior around the best of many starts, from two independent runs that agree with 1000 independent samples or more between them |
-| — | Several GPUs in one process: the batch axis sharded (`NamedSharding` or `shard_map`, not `pmap`); the devices are independent, so no communication | the rate scales with the number of GPUs |
+| — | Several GPUs in one process: built (`solve_batch` splits its batch across the GPUs it sees, `shard_map`; docs/hardware.md), to be measured on the two A100s of the Apptainer host (`STEPS=gpus benchmarks/apptainer.sh`) | the rate scales with the number of GPUs |
 
 Gradients are taken by implicit differentiation of the converged solution: the backward pass
 needs only the solution and the JAX residual, never the iterations that found it, so any forward
@@ -64,7 +64,9 @@ the node **positions** may differ per device. Three steps, cheapest first:
 
 The study: `J(V)` and `η` at 200, 400, 800, 1600 points, uniform against graded against
 r-adaptive, on the hardest devices known (`L_diff/d` 0.1–0.2, ions at 1e18 cm⁻³, thick undoped
-layers).
+layers). Its baseline, SIMsalabim's own grid at 200 to 3200 points on `hard.py`'s
+devices against the criteria, is `validation/grid.py` (`STEPS=grid benchmarks/apptainer.sh`),
+to be run on an A100; on four of them on a CPU, 200 points miss η's 1e-3 by 4×.
 
 ### 2.2 M6: fewer devices instead of faster ones
 

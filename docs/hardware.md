@@ -40,6 +40,13 @@ large batches: the sweep along the grid is sequential, so a GPU is busy only whe
 covers thousands of devices. On an A100-SXM4-40GB batch 16384 gives about 2800 curves/s
 (`benchmarks/run.py` and `validation/bench.py` alike), batch 4096 about 2140.
 
+**Several GPUs in one process.** `solve_batch` splits a batch along its devices across every
+GPU the process sees (`shard_map`; the devices are independent, so the GPUs do not talk), each
+solving its share; a batch is padded to a whole number per GPU. `CUDA_VISIBLE_DEVICES` chooses
+the GPUs, `solve_batch(..., devices=[...])` too. The batch is then the whole: 32768 on two GPUs
+is 16384 on each. Not split where the batch or the voltages are traced (inside `jax.jit`,
+`jax.jvp`, `jax.vmap`), nor in `jaxdd.transient`.
+
 **Time a solver from its third call on, or check that nothing compiles.** A benchmark that
 excludes the first call excludes one compilation. `jaxdd.batch._solve_batch._cache_size()`
 counts the compiled programs: it must not grow between the calls that are timed.

@@ -20,6 +20,9 @@
 # Ctrl+C ends only the following of the log; the run goes on. To follow it again:
 #   tail -F benchmarks/apptainer.log
 #
+# solve_batch splits a batch across every GPU the job sees, so on a host with several the default
+# steps measure them together; one GPU's numbers: CUDA_VISIBLE_DEVICES=0 benchmarks/apptainer.sh.
+#
 # Steps (STEPS, in this order by default):
 #   info       the GPU, JAX and its devices
 #   tests      the test suite (a broken install fails here, in a minute)
@@ -29,6 +32,12 @@
 #              light and dark), two passes against one, the Newton steps a batch pays
 #   slots      validation/slots.py 16384 4096: devices with two mobile ion regions per species
 #              against one, through the sweep kernel and the scan (about 5 min)
+#   gpus       validation/bench.py on one GPU (CUDA_VISIBLE_DEVICES=0) and on all the job's GPUs,
+#              the batch split across them (solve_batch's devices): 16384 per GPU, and 16384 in
+#              all; not in the default steps (a host with several GPUs)
+#   grid       validation/grid.py 4096 4096: M4's baseline, the hard devices in the light and the
+#              dark on SIMsalabim's grid at 200 to 3200 points (about 15 min); not in the
+#              default steps
 #   run        benchmarks/run.py: GPU at batch 4096 and 16384, jaxdd on this job's CPU cores;
 #              writes benchmarks/results/<label>.json for benchmarks/plot.py
 #   chunk      validation/chunk.py on the batch file CHUNK (a real workload built elsewhere and
@@ -110,6 +119,14 @@ if [ "${1:-}" = "--inside" ]; then
             slots)
                 "$py" validation/slots.py 16384 4096
                 ;;
+            gpus)
+                CUDA_VISIBLE_DEVICES=0 "$py" validation/bench.py 65536 16384
+                "$py" validation/bench.py 65536 32768
+                "$py" validation/bench.py 65536 16384
+                ;;
+            grid)
+                (cd validation && "$py" grid.py 4096 4096)
+                ;;
             run)
                 # No SimSS in the container: jaxdd on the GPU and on this job's cores only.
                 "$py" benchmarks/run.py --label "$LABEL" --skip simss,accuracy \
@@ -130,7 +147,7 @@ if [ "${1:-}" = "--inside" ]; then
                 done
                 ;;
             *)
-                echo "unknown step $step (info tests breakdown bench hard slots run chunk sample)"
+                echo "unknown step $step (info tests breakdown bench hard slots gpus grid run chunk sample)"
                 ;;
         esac || echo "!! step $step failed (exit $?); going on"
     done

@@ -626,6 +626,52 @@ def _solve_batch(batch, voltages, tol, max_iter, start_iter, bernoulli_name, str
     return J, ok[:, back], its[:, back]
 
 
+def _shard_map(f, mesh, in_specs, out_specs):
+    """`shard_map` of JAX 0.12 (`jax.shard_map`) or of JAX 0.4.31 (`jax.experimental`), without
+    the replication check: each device solves its own devices, nothing is replicated."""
+    if hasattr(jax, "shard_map"):
+        return jax.shard_map(f, mesh=mesh, in_specs=in_specs, out_specs=out_specs, check_vma=False)
+    from jax.experimental.shard_map import shard_map
+
+    return shard_map(f, mesh, in_specs, out_specs, check_rep=False)
+
+
+@functools.partial(
+    jax.jit, static_argnames=("bernoulli_name", "max_iter", "start_iter", "strict", "mesh")
+)
+def _solve_sharded(batch, voltages, tol, max_iter, start_iter, bernoulli_name, strict, mesh):
+    """`_solve_batch` with the batch split along its first axis across `mesh`'s devices, each
+    solving its share (no communication: the devices are independent)."""
+    P = jax.sharding.PartitionSpec
+
+    def local(b, v, tol):
+        return _solve_batch(b, v, tol, max_iter, start_iter, bernoulli_name, strict)
+
+    return _shard_map(local, mesh, (P("b"), P(), P()), P("b"))(batch, voltages, tol)
+
+
+def _mesh(devices):
+    """The devices a batch is split across (`solve_batch`'s `devices`), as a one-axis mesh, or
+    None for one device."""
+    devices = jax.local_devices() if devices is None else list(devices)
+    return jax.sharding.Mesh(np.array(devices), ("b",)) if len(devices) > 1 else None
+
+
+def _run(batch, voltages, tol, max_iter, start_iter, bernoulli_name, strict, mesh):
+    """One pass on one device, or split across `mesh`: the batch padded to a whole number of
+    devices per accelerator by repeating its last device, the padding dropped again."""
+    if mesh is None:
+        return _solve_batch(batch, voltages, tol, max_iter, start_iter, bernoulli_name, strict)
+    n = jax.tree_util.tree_leaves(batch)[0].shape[0]
+    k = mesh.devices.size
+    m = -(-n // k) * k
+    if m > n:
+        idx = np.concatenate([np.arange(n), np.full(m - n, n - 1)])
+        batch = jax.tree_util.tree_map(lambda leaf: leaf[idx], batch)
+    out = _solve_sharded(batch, voltages, tol, max_iter, start_iter, bernoulli_name, strict, mesh)
+    return tuple(o[:n] for o in out)
+
+
 def external_voltages(batch, voltages, J):
     """The external voltage of each device at each voltage `solve_batch` solved at (the internal
     one), from its curve `J`: `V_ext = V_int + J·R_series` (SimSS's); the voltages themselves
@@ -659,7 +705,7 @@ def _traced(*trees) -> bool:
 
 
 def solve_batch(batch, voltages, tol=1e-10, max_iter=60, first_max_iter=6,
-                bernoulli_name="exact", strict=False):  # fmt: skip
+                bernoulli_name="exact", strict=False, devices=None):  # fmt: skip
     """J-V curves of a batch (`prepare`) at `voltages`: `(J, converged, iterations)`, each
     batch × voltages, in the order of `voltages`.
 
@@ -675,23 +721,27 @@ def solve_batch(batch, voltages, tol=1e-10, max_iter=60, first_max_iter=6,
     `voltages` are traced (inside `jax.jit`, `jax.jvp`, `jax.vmap`): the stragglers' number,
     which sets the second pass's shape, is known only once the first has run.
     `strict`: Newton only to `tol` (or the round-off floor) — no quadratic stop, no settled
-    current; for checking the shortcuts, at about one more step per voltage."""
+    current; for checking the shortcuts, at about one more step per voltage.
+    `devices`: the accelerators the batch is split across, each solving its share in one
+    process (docs/hardware.md); by default every local device of JAX's backend, so all the GPUs
+    a process sees (`CUDA_VISIBLE_DEVICES` chooses). Not split where `batch` or `voltages` are
+    traced."""
+    voltages = jnp.asarray(voltages, dtype=float)
+    mesh = None if _traced(batch, voltages) else _mesh(devices)
     with _quiet():
-        return _passes(batch, jnp.asarray(voltages, dtype=float), tol, max_iter, first_max_iter,
-                       bernoulli_name, strict)  # fmt: skip
+        return _passes(batch, voltages, tol, max_iter, first_max_iter, bernoulli_name, strict,
+                       mesh)  # fmt: skip
 
 
-def _passes(batch, voltages, tol, max_iter, first_max_iter, bernoulli_name, strict):
+def _passes(batch, voltages, tol, max_iter, first_max_iter, bernoulli_name, strict, mesh=None):
     """`solve_batch`'s one or two passes."""
     if first_max_iter is None or first_max_iter >= max_iter or _traced(batch, voltages):
-        return _solve_batch(batch, voltages, tol, max_iter, max_iter, bernoulli_name, strict)
-    J, ok, its = _solve_batch(
-        batch, voltages, tol, first_max_iter, max_iter, bernoulli_name, strict
-    )
+        return _run(batch, voltages, tol, max_iter, max_iter, bernoulli_name, strict, mesh)
+    J, ok, its = _run(batch, voltages, tol, first_max_iter, max_iter, bernoulli_name, strict, mesh)
     idx, padded = _stragglers(ok)
     if idx.size == 0:
         return J, ok, its
     part = jax.tree_util.tree_map(lambda leaf: leaf[padded], batch)
-    J2, ok2, its2 = _solve_batch(part, voltages, tol, max_iter, max_iter, bernoulli_name, strict)
+    J2, ok2, its2 = _run(part, voltages, tol, max_iter, max_iter, bernoulli_name, strict, mesh)
     n = idx.size
     return J.at[idx].set(J2[:n]), ok.at[idx].set(ok2[:n]), its.at[idx].set(its2[:n])

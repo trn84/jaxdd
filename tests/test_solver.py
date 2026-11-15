@@ -1602,3 +1602,31 @@ def test_a_trap_level_outside_the_gap_is_refused(tmp_path) -> None:
     (tmp_path / "bulk_traps.txt").write_text("E Ntrap\n4.5 1e21\n5.7 1e21\n")
     with pytest.raises(ValueError, match="outside the gap"):
         device_parameters(read_setup(tmp_path / "simulation_setup.txt"))
+
+
+def test_a_batch_split_across_devices_is_the_batch_on_one() -> None:
+    """`solve_batch` across two devices (two XLA host devices here, the GPUs of a process on a
+    GPU host): a batch of five, padded to six, gives the curves, flags and Newton steps of the
+    batch on one device; the padding is dropped."""
+    code = """
+import sys, jax, numpy as np
+sys.path.insert(0, "validation")
+from bench import V, variants
+from jaxdd.batch import prepare, solve_batch
+assert len(jax.devices()) == 2
+batch = prepare(variants(5))
+J1, ok1, it1 = solve_batch(batch, V, devices=jax.devices()[:1])
+J2, ok2, it2 = solve_batch(batch, V)
+assert J2.shape == J1.shape == (5, len(V))
+assert np.array_equal(np.asarray(ok1), np.asarray(ok2)) and np.asarray(ok1).all()
+assert np.array_equal(np.asarray(it1), np.asarray(it2))
+scale = np.asarray(batch["J_scale"])[:, None]
+assert np.max(np.abs(np.asarray(J1) - np.asarray(J2)) / scale) < 1e-10
+print("ok")
+"""
+    env = {**os.environ, "JAX_PLATFORMS": "cpu",
+           "XLA_FLAGS": "--xla_force_host_platform_device_count=2"}  # fmt: skip
+    root = Path(__file__).resolve().parents[1]
+    done = subprocess.run([sys.executable, "-c", code], env=env, capture_output=True, text=True,
+                          cwd=root)  # fmt: skip
+    assert done.returncode == 0 and done.stdout.strip().endswith("ok"), done.stderr[-2000:]

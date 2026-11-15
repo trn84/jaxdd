@@ -8,12 +8,27 @@ the handbook.
 
 0.1.0 is released (CHANGELOG.md). The order now (2026-11-15, an estimate at the pace so far):
 
-1. **The light with traps in time on the graded grid.** Switched on and off it is 1.6e-3 of the
-   scale off at 400 points, little better than SIMsalabim's grid (2.5e-3), where the steady
-   state is ten times better on the graded grid. The graded grid is the default, so this is
-   what a user gets. First where the error sits: in time (the first picoseconds after a switch,
-   a step-size study against the grid study) or in space (the generation profile on the grid,
-   the traps' occupations near the interfaces).
+1. **The current in time: ZimT's integral form converges slowly.** Found 2026-11-15: the light
+   with traps switched on and off (1.6e-3 of the scale off at 400 graded points) is not the
+   traps' doing: without traps (`zimt_photo_light`) the error is the same to three digits. The
+   solution converges; the current's estimate does not. The integral form (`currDiffInt = 2`,
+   ZimT's default) converges at about first order in time, the differential form (`= 1`) of the
+   same solution at the steady state's rate. Against the differential form at 6400 graded
+   points, at 400 / 1600: the light on and off (with and without traps) integral 1.6–2.1e-3 /
+   5–6.5e-4, differential ~5e-5 / ~2e-6; with surface recombination 3.0e-2 / 7.8e-3 against
+   4e-5 / 2.4e-6; the sweep without ions 3.9e-3 / 7.9e-4 against 9e-6 / 6e-7; the photovoltage
+   at the open circuit (through `Jext = 0`) 1.8e-3 / 3.5e-4 of it against 1e-5 / 5e-7. At 1 ps
+   after the switch, where the current comes from the carriers within √(D·Δt) ≈ 5 nm of the
+   interfaces, the integral form at 6400 points is still 2 % off that step's current. With
+   mobile ions both forms are the same (6e-4 at 400: the ions' own spatial error); in the steady
+   state the two forms agree to 1e-9 at 6400 points and converge alike. Earlier references (the
+   integral form at 3200 graded points) were themselves ~3e-4 of the scale off.
+   Next: why the integral form is first order in time (a guess: its trapezoids of
+   `dti·(n − n_prev)`, which varies exponentially across the interfaces' layers, against the
+   residual's control volumes), and whether a quadrature consistent with the residual converges
+   as the differential form does. Then the default in time, by the rule for SimSS's errors: the
+   accurate current by default, ZimT's integral form a switch, docs/differences.md; the
+   validation's transient numbers again against the differential form.
 2. **The QFLS below Newton's floor** (4.1).
 3. M6 (2.2): 0.2.
 

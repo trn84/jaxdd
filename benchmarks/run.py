@@ -153,7 +153,7 @@ def _cpu_worker(index: int, batch: int, repeats: int, go, queue) -> None:
     from jaxdd.device import build_device
 
     setups = variant_setups(batch * (index + 1), SEED)[batch * index :]
-    devices = prepare([build_device(s) for s in setups])
+    devices = prepare([build_device(s, grid="simss") for s in setups])  # the devices SimSS solves
     J, ok, its = solve_batch(devices, V)  # compiles
     J.block_until_ready()
     queue.put(("ready", index))

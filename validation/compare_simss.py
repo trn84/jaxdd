@@ -19,7 +19,7 @@ BERN = "exact"
 def compare(case: Path) -> dict:
     setup = read_setup(case / "simulation_setup.txt")
     check_supported(setup)
-    dev = build_device(setup)
+    dev = build_device(setup, grid="simss")  # SimSS's grid, point by point
     ref = np.genfromtxt(case / "JV.dat", names=True)
     start = time.perf_counter()
     res = solve_jv(dev, ref["Vint"], bernoulli_name=BERN)

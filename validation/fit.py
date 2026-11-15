@@ -71,7 +71,8 @@ def _rms(r) -> float:
 def fit(case: Path, start: float = 1.0, fix=(), noise: float = 0.0, seed: int = 0) -> Fit:
     """Fit `FITTED` (and `ION` where there are mobile anions), but `fix`, to the case's SimSS
     curve plus `noise`, from `start` times the offsets."""
-    structure, true = device_parameters(read_setup(case / "simulation_setup.txt"))
+    # SimSS's grid: the curve to fit is SimSS's own.
+    structure, true = device_parameters(read_setup(case / "simulation_setup.txt"), grid="simss")
     fitted = FITTED + ([ION] if structure.anion_mobile.any() else [])
     fitted = [f for f in fitted if f[0] not in fix]
     ref = np.genfromtxt(case / "JV.dat", names=True)

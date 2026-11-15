@@ -93,33 +93,32 @@ so that the solver is never the larger error in what is computed from it.
   and gold, and on a 20/500/10 nm stack between glass, 150 nm ITO and silver, the profile on the
   grid is SimSS's within 4e-12 and the curves within 2e-7 and 6e-7 of SimSS's scale; a uniform
   profile (`genProfile = none`) within 2.4e-6.
-- **The grid on hard devices** (2026-11-15, `validation/grid.py`): `hard.py`'s devices (frozen
-  ions up to 4e18 cm⁻³, absorbers of 250–1000 nm, transport layers of 1–300 nm), each in the
-  light and the dark, against the criteria (η within 1e-3 up to 1.0 V, `J_SC` within 0.1 %).
-  On SIMsalabim's grid against its own 3200 points (4096 devices, an A100): at the default 400
-  points 32 % meet both, η off by 1.3e-3 in the median and up to 5e-2; at 800 78 %, at 1600
-  95 %. That reference is not converged: SIMsalabim's grid keeps a layer whose share is below
-  five points at five at any `NP`, and its 3200 points are up to 6.8e-3 in η off the converged
-  curves on the devices with a 1 nm transport layer. On the graded grid (`grid="graded"`, docs/model.md)
-  every size converges to the same curves (SIMsalabim's grid with `grad = 8` at 3200 points to
-  1e-5 in the median; the graded grid with other parameters to 4e-4 at most), by about 4 per
-  doubling. Against the graded grid at 3200 points (512 devices, the RTX 4070 Ti SUPER):
+- **The grid on hard devices** (2026-11-15, `validation/grid.py` on an A100): `hard.py`'s 4096
+  devices (frozen ions up to 4e18 cm⁻³, absorbers of 250–1000 nm, transport layers of 1–300 nm),
+  each in the light and the dark, against the criteria (η within 1e-3 up to 1.0 V, `J_SC` within
+  0.1 %), on both grids against the graded one at 3200 points:
 
-  | `NP` | graded: meet both | η: median, 99 %, max | `J_SC`: median, max | SIMsalabim's: meet both |
-  |---|---|---|---|---|
-  | 200 | 89.6 % | 3.2e-4, 2.2e-3, 3.7e-3 | 2.2e-4, 5.9e-3 | 3.1 % |
-  | 300 | 98.2 % | 1.1e-4, 8.9e-4, 1.6e-3 | 6.4e-5, 3.2e-3 | |
-  | 400 | 99.8 % | 5.4e-5, 4.9e-4, 9.5e-4 | 2.4e-5, 2.1e-3 | 24.8 % |
-  | 800 | 100 % | 1.2e-5, 2.4e-4, 5.4e-4 | 6.2e-6, 8.2e-4 | 71.5 % |
-  | 1600 | 100 % | 1.1e-5, 2.0e-4, 4.3e-4 | 9.0e-6, 3.2e-4 | 87.9 % |
+  | `NP` | graded: meet both | η: median, 99 %, max | `J_SC`: median, max | SIMsalabim's: meet both | η median |
+  |---|---|---|---|---|---|
+  | 200 | 89.3 % | 3.4e-4, 2.1e-3, 6.5e-3 | 2.3e-4, 4.0e-2 | 4.6 % | 3.9e-3 |
+  | 300 | 98.1 % | 1.2e-4, 1.0e-3, 2.9e-3 | 7.8e-5, 1.6e-2 | 11.7 % | 2.1e-3 |
+  | 400 | 99.6 % | 6.0e-5, 6.0e-4, 1.7e-3 | 3.7e-5, 8.1e-3 | 27.4 % | 1.5e-3 |
+  | 800 | 100 % | 1.2e-5, 1.8e-4, 4.6e-4 | 6.9e-6, 1.9e-3 | 71.1 % | 6.0e-4 |
+  | 1600 | 100 % | 2.3e-6, 5.2e-5, 1.4e-4 | 1.3e-6, 4.4e-4 | 88.3 % | 2.6e-4 |
+  | 3200 | | | | 95.0 % | 1.2e-4 |
 
-  Below about 4e-4 the differences are the reference's own (two converged grids at 3200 points
-  differ by that). The one device at 400 points that misses is 30/1000/300 nm with a diffusion
-  length far below the absorber and accumulated ions, its `J_SC` off by 2.1e-3. Its parameters
-  are a choice on these devices (β 2–16 and `d₀` 0.3 pm–0.1 nm tried: 93–99.8 % at 400 points;
-  the first attempt, boundary layers a few Debye lengths of the doping and ions wide, met them on
-  22 % at most): the hard devices' worst errors were at interfaces with accumulated ions, whose
-  fields make the densities change on picometres. With the same points it costs Newton nothing
+  The graded grid's error falls by about 4 per doubling; SIMsalabim's by 2–3, and its own 3200
+  points are up to 9e-3 in η off: it keeps a layer whose share is below five points at five at
+  any `NP` (differences.md §12), and the devices with a 1 nm transport layer never converge on
+  it. Both converge to the same curves (SIMsalabim's grid with `grad = 8` at 3200 points within
+  1e-5 of the graded one in the median, 512 devices). One voltage of 499 712 did not converge on
+  the graded grid at 1600 and at 3200 points, none at fewer. The same on 512 of the devices on
+  the RTX 4070 Ti SUPER: 99.8 % at 400 points; the one device that misses is 30/1000/300 nm with
+  a diffusion length far below the absorber and accumulated ions, its `J_SC` off by 2.1e-3. The
+  grid's parameters are a choice on those 512 (β 2–16 and `d₀` 0.3 pm–0.1 nm tried: 93–99.8 %
+  at 400 points; the first attempt, boundary layers a few Debye lengths of the doping and ions
+  wide, met them on 22 % at most): the hard devices' worst errors were at interfaces with
+  accumulated ions, whose fields make the densities change on picometres. With the same points it costs Newton nothing
   more: 2.82 Newton steps per voltage on both grids at 400 points, the batch paying 4.30.
 
   The committed SimSS cases (25, `tests/data`) on both grids against the graded one at 3200
@@ -363,7 +362,9 @@ convergence", and a rerun at tight tolerances. The cases where SimSS was wrong s
 
 ## The tests
 
-`pytest` runs on whatever JAX has (CPU or GPU), in parallel, one worker per physical core
+The tests compare with SimSS's and ZimT's runs on their grid (`grid="simss"`, a wrapper of
+`build_device` and `device_parameters` in `tests/test_solver.py`); the graded grid's own tests
+name it. `pytest` runs on whatever JAX has (CPU or GPU), in parallel, one worker per physical core
 (pytest-xdist; `-n 0` for one process): on a 16-core desktop about 75 s, and 30 s once JAX's
 compilation cache (`.pytest_cache/jax`, `tests/conftest.py`) holds the programs; in one process
 it was 400 s. What is left is tracing, which JAX does not cache, and the gradients' finite

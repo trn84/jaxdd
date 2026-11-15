@@ -8,17 +8,17 @@ the handbook.
 
 The order (2026-11-15, an estimate at the pace so far):
 
-1. M4's graded mesh (2.1): its A100 run on 4096 hard devices, then M4 is done.
-2. **Release 0.1.0**: the steady state (SimSS) and the transients (ZimT); a version, a
-   changelog, the README's installation, a wheel, CI, a pass over the handbook and the API.
-   SIMsalabim's grid stays the default (decided 2026-11-15); README and tutorial recommend
-   `grid="graded"` for tables, fits and parameter studies, saying that its curves differ from
-   SimSS's by SimSS's own grid error. About a day.
-3. M6 (2.2), and the fused kernel if the A100's numbers with the 5×5 sweep kernel decide for
-   it (2.3, section 7; about 1–2 weeks): 0.2.
+1. **Release 0.1.0**: the steady state (SimSS) and the transients (ZimT), on jaxdd's graded
+   grid by default and SIMsalabim's as `grid="simss"` for SimSS comparisons (decided
+   2026-11-15); a version, a changelog, the README's installation, a wheel, CI, a pass over the
+   handbook and the API. About a day.
+2. M6 (2.2), and the fused kernel if it is decided for (2.3, section 7; about 1–2 weeks): 0.2.
 
-Stage C (ZimT's transients) and M7 (fits and their posteriors) are done (docs/model.md
-"Transients", docs/validation.md). Open from Stage C: the QFLS below Newton's floor (4.1). Not
+Stage C (ZimT's transients), M4 (the graded grid) and M7 (fits and their posteriors) are done
+(docs/model.md, docs/validation.md). Open: the QFLS below Newton's floor (4.1); the light
+switched on and off with traps is 1.6e-3 of the scale off on the graded grid at 400 points,
+little better than SIMsalabim's 2.5e-3 where the steady state is ten times better (where the
+error sits: the first picoseconds, the generation profile on the grid?). Not
 before the release: M8 (1.3), the measured cell's optics (2.4, waiting for n,k data), the steric
 ions (3, waiting for a source of `N_max`).
 
@@ -48,41 +48,11 @@ about two A100s).
 
 | | Work | Done when |
 |---|---|---|
-| **M4** | The grid in space (2.1) | 400 points or fewer meet the validation criteria on the hardest devices, or bucketing by grid size is justified |
 | **M6** | Adaptive parameter axes (2.2) | the refined axes meet a table's interpolation tolerance with fewer devices than hand-made ones |
 
 Gradients are taken by implicit differentiation of the converged solution: the backward pass
 needs only the solution and the JAX residual, never the iterations that found it, so any forward
 solver is a black box to them, and a fused kernel (section 2.3) needs no adjoint of its own.
-
-### 2.1 M4: the grid in space
-
-JAX compiles for static shapes: every device in a batch has the same number of grid points, but
-the node **positions** may differ per device. Three steps, cheapest first:
-
-1. **A priori graded mesh per device.** Geometric refinement towards every interface and
-   contact, scaled by the local Debye length `L_D = √(ε·V_T/(q·N))` of dopants and ions. At
-   1e18 cm⁻³ of ions `L_D` is about 6 nm (ε 24.1), and strongly screening ions are where
-   interpolated tables are worst.
-2. **r-adaptivity (moving nodes, fixed count).** After a first solve, move the nodes to
-   equidistribute a monitor function (the arc length of `V`, `ln n`, `ln p`) and solve again.
-   The count stays fixed, so it fits static shapes and batching.
-3. **h-adaptivity (changing count)** only by bucketing: batches compiled at 200, 400, 800
-   points, each device in the smallest bucket that meets its error estimate. Only if 1 and 2
-   are not enough.
-
-Step 1 is done on a sample: the graded grid (`build_device(grid="graded")`, geometric towards
-every layer's ends rather than by the Debye length, which was tried first and failed) meets
-both criteria at 400 points on 99.8 % of 512 hard devices against a converged reference, where
-SIMsalabim's grid meets them on 25 % (docs/validation.md "The grid on hard devices", docs/model.md).
-To close M4: the same on the A100 with 4096 devices
-(`STEPS=grid GRID_ARGS="4096 4096 200,300,400,800,1600,3200 simss,graded"`, the simss sizes from
-the earlier run), then steps 2 and 3 are not needed. The graded grid becomes the default in 0.2
-(`grid="simss"` for SimSS comparisons) when the A100 confirms it; the committed cases and two
-transients already run on it (docs/validation.md). Open there: the light switched on and off
-with traps is 1.6e-3 of the scale off at 400 points, little better than SIMsalabim's 2.5e-3,
-where the steady state is ten times better: where that error sits (the first picoseconds, the
-generation profile on the grid?).
 
 ### 2.2 M6: fewer devices instead of faster ones
 
@@ -287,5 +257,5 @@ microseconds per evaluation are needed.
 
 | Decision | When | With |
 |---|---|---|
-| The fused kernel as an optional mode (2.3) | with the A100's transients through the 5×5 sweep kernel (`STEPS=transient`, auto against `JAXDD_SWEEP=scan`; before it a 5×5 Newton step was 4.5× a 3×3 one, the lockstep 40 % more with ions: docs/hardware.md "Transients") | the applications' needs (section 5) and a first measurement of a Stage A kernel |
+| The fused kernel as an optional mode (2.3) | now: with the 5×5 sweep kernel a Newton step with ions is 2.3× a 3×3 one (was 4.5×), the lockstep 40 % more with ions, 185 transients/s with ions on the A100 (docs/hardware.md "Transients") | the applications' needs (section 5) and a first measurement of a Stage A kernel |
 | The steric ion model and its `N_max` | when a source for `N_max` is found | its users: results with and without it differ at high ion density |

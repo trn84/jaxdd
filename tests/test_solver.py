@@ -11,7 +11,9 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from jaxdd.device import build_device, make_grid
+from jaxdd.device import build_device as _build_device
+from jaxdd.device import device_parameters as _device_parameters
+from jaxdd.device import make_grid
 from jaxdd.simss_input import (
     Setup,
     check_supported,
@@ -23,6 +25,17 @@ from jaxdd.simss_input import (
 from jaxdd.solver import bernoulli, bernoulli_simss, solve_jv
 
 DATA = Path(__file__).parent / "data"
+
+
+def build_device(setup, *args, grid="simss", **kwargs):
+    """`device.build_device` on SimSS's grid unless told otherwise: the tests compare with SimSS's
+    and ZimT's runs point by point (jaxdd's default is its graded grid)."""
+    return _build_device(setup, *args, grid=grid, **kwargs)
+
+
+def device_parameters(setup, *args, grid="simss", **kwargs):
+    """`device.device_parameters` on SimSS's grid unless told otherwise, as `build_device`."""
+    return _device_parameters(setup, *args, grid=grid, **kwargs)
 
 
 def test_bernoulli_is_finite_with_a_finite_derivative_at_zero() -> None:
@@ -129,7 +142,6 @@ def test_the_graded_grid_is_differentiable() -> None:
     as SIMsalabim's is: `device_parameters(grid="graded")` builds `batch.device_tree` in JAX, the
     same device as `build_device`, and its derivative in a thickness is finite."""
     from jaxdd.batch import device_tree
-    from jaxdd.device import device_parameters
 
     setup = read_setup(DATA / "thin_l1_light" / "simulation_setup.txt")
     structure, p = device_parameters(setup, grid="graded")
@@ -305,7 +317,6 @@ def test_the_gradient_in_one_regions_ions_is_finite_differences() -> None:
     HTL's cation density, through `device_tree` and the converged solution, against central
     finite differences."""
     from jaxdd.batch import device_tree, solve_batch
-    from jaxdd.device import device_parameters
 
     structure, params = device_parameters(read_setup(DATA / "two_regions_light" /
                                                      "simulation_setup.txt"))  # fmt: skip
@@ -613,7 +624,6 @@ def test_tangents_through_time_are_finite_differences(case: str, name: str, step
     the logarithm, where the differences' own error is smallest: 2.7e-7 in the first, 8e-6 in
     the photovoltage, whose Newton tolerance enters them)."""
     from jaxdd.batch import device_tree
-    from jaxdd.device import device_parameters
     from jaxdd.transient import solve_transient
 
     setup, tvg, _ = _zimt_case(case)
@@ -1020,7 +1030,6 @@ def test_the_gradient_in_the_surface_recombination_is_finite_differences() -> No
     `device_tree` and the converged solution, against central finite differences (a step of
     1e-3: close to the open-circuit voltage the curve's round-off is 1e-7 A/m²)."""
     from jaxdd.batch import device_tree, solve_batch
-    from jaxdd.device import device_parameters
 
     structure, params = device_parameters(read_setup(DATA / "surface_light" /
                                                      "simulation_setup.txt"))  # fmt: skip
@@ -1066,7 +1075,6 @@ def test_the_gradient_in_the_langevin_prefactor_is_finite_differences(case: str)
     converged solution, against central finite differences; with constant and with
     field-dependent mobilities."""
     from jaxdd.batch import device_tree, solve_batch
-    from jaxdd.device import device_parameters
 
     structure, params = device_parameters(read_setup(DATA / case / "simulation_setup.txt"))
     V = np.round(np.arange(-0.1, 1.0 + 1e-9, 0.1), 6)
@@ -1103,7 +1111,6 @@ def test_the_gradient_in_the_field_dependence_is_finite_differences() -> None:
     """The curve's derivative in the absorber's `gamma_n` and `gamma_p`, through `device_tree`
     and the converged solution, against central finite differences."""
     from jaxdd.batch import device_tree, solve_batch
-    from jaxdd.device import device_parameters
 
     structure, params = device_parameters(read_setup(DATA / "fieldmob_light" /
                                                      "simulation_setup.txt"))  # fmt: skip
@@ -1236,7 +1243,6 @@ def test_the_gradient_in_the_braun_parameters_is_finite_differences() -> None:
     """The curve's derivative in the absorber's `a`, `k_f` and `P0`, through `device_tree` and
     the converged solution, against central finite differences."""
     from jaxdd.batch import device_tree, solve_batch
-    from jaxdd.device import device_parameters
 
     structure, params = device_parameters(read_setup(DATA / "braun_light" /
                                                      "simulation_setup.txt"))  # fmt: skip
@@ -1343,7 +1349,6 @@ def test_the_gradient_through_the_optics_is_finite_differences() -> None:
     stack): the derivative of the short-circuit current, through `device_tree`, against central
     finite differences."""
     from jaxdd.batch import device_tree, solve_batch
-    from jaxdd.device import device_parameters
 
     structure, params = device_parameters(read_setup(DATA / "pin_calc_light" /
                                                      "simulation_setup.txt"))  # fmt: skip
@@ -1843,7 +1848,6 @@ def test_the_device_in_jax_is_numpys(case: str) -> None:
     import functools
 
     from jaxdd.batch import device_tree, prepare
-    from jaxdd.device import device_parameters
 
     setup = read_setup(DATA / case / "simulation_setup.txt")
     structure, params = device_parameters(setup)
@@ -1870,7 +1874,6 @@ def test_gradients_in_physical_parameters_are_finite_differences() -> None:
     layer stay), a transport layer's band edge, the ion density, the temperature and a work
     function; against central finite differences along a random direction."""
     from jaxdd.batch import device_tree, solve_batch
-    from jaxdd.device import device_parameters
 
     cases = ["thin_l1_light", "frozen_1e17_x1_thin_light", "steady_1e17_thin_light"]
     parts = [device_parameters(read_setup(DATA / c / "simulation_setup.txt")) for c in cases]
@@ -1920,7 +1923,6 @@ def test_the_gradient_in_the_interface_traps_is_finite_differences() -> None:
     """The curve's derivative in both interfaces' trap densities, through `device_tree` and the
     converged solution (forward mode), against central finite differences."""
     from jaxdd.batch import device_tree, solve_batch
-    from jaxdd.device import device_parameters
 
     structure, params = device_parameters(read_setup(DATA / "pin_iface_light" /
                                                      "simulation_setup.txt"))  # fmt: skip
@@ -1945,7 +1947,6 @@ def test_the_gradient_of_the_differential_current_is_finite_differences() -> Non
     mobilities, through `device_tree` and the converged solution, against central finite
     differences."""
     from jaxdd.batch import device_tree, solve_batch
-    from jaxdd.device import device_parameters
 
     setup = read_setup(DATA / "diff_iface_light" / "simulation_setup.txt")
     structure, params = device_parameters(setup)
@@ -1972,7 +1973,6 @@ def test_the_gradient_in_trap_file_levels_is_finite_differences() -> None:
     (their densities and one energy), through `device_tree` and the converged solution, against
     central finite differences."""
     from jaxdd.batch import device_tree, solve_batch
-    from jaxdd.device import device_parameters
 
     structure, params = device_parameters(read_setup(DATA / "trapfiles_light" /
                                                      "simulation_setup.txt"))  # fmt: skip
@@ -1998,7 +1998,6 @@ def test_the_gradient_in_trap_file_levels_is_finite_differences() -> None:
 
 def test_a_trap_level_outside_the_gap_is_refused(tmp_path) -> None:
     """As SIMsalabim's `Init_Trapping`: every level of a trap file within its layer's gap."""
-    from jaxdd.device import device_parameters
 
     for f in (DATA / "trapfiles_light").iterdir():
         (tmp_path / f.name).write_text(f.read_text())

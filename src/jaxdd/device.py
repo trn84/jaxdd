@@ -133,8 +133,8 @@ def _layout(thicknesses: Sequence[str | float], NP: int, grad: float, split: str
     return i0, i1, lid, raw, norm
 
 
-#: The grids `build_device` takes (`grid`): SIMsalabim's `Make_Grid`, or one graded
-#: geometrically towards every layer's ends (`_graded_layout`, PLAN.md §2.1).
+#: The grids `build_device` takes (`grid`): jaxdd's, graded geometrically towards every layer's
+#: ends (`_graded_layout`, the default), or SIMsalabim's `Make_Grid` (SimSS's own).
 GRIDS = ("simss", "graded")
 #: The graded grid's points per e-fold of the distance to a layer's end, and the distance at
 #: which the grading starts (m): `V_T/E` at the fields of ions accumulated at an interface
@@ -467,7 +467,7 @@ def device_parameters(
     surface: str = "extraction",
     langevin: str = "layer",
     braun: str = "exact",
-    grid: str = "simss",
+    grid: str = "graded",
 ) -> tuple[Structure, dict]:
     """A SIMsalabim input (Stage A, `check_supported` first) as its `Structure` and its
     parameters: a dict of `LAYER_PARAMETERS`, each an array over the layers, and `T`, `W_L`,
@@ -478,7 +478,7 @@ def device_parameters(
     `S_n_L`, `S_p_L`, `S_n_R`, `S_p_R` (m/s, negative infinite), acting as `surface` says
     (`SURFACE_MODELS`); `langevin` which mobilities the Langevin rate takes
     (`LANGEVIN_MOBILITIES`); `braun` how the field-dependent generation's dissociation
-    probability is integrated (`BRAUN_RULES`). `grid_split`
+    probability is integrated (`BRAUN_RULES`). `grid_split` and `grid`
     as in `build_device`. Changing a parameter keeps the structure: a trap density set on a
     layer without traps, or an ion density outside an ionic region, does nothing; the points
     per layer stay those of the input's thicknesses."""
@@ -882,12 +882,13 @@ def device_arrays(structure: Structure, p: dict, xp=np) -> Device:
 
 def build_device(setup: Setup, grid_split: str = "exact", surface: str = "extraction",
                  langevin: str = "layer", braun: str = "exact",
-                 grid: str = "simss") -> Device:  # fmt: skip
+                 grid: str = "graded") -> Device:  # fmt: skip
     """The device of a SIMsalabim input (Stage A, `check_supported` first), in NumPy. `grid_split`
     "simss" shares the grid points among the layers as SimSS's 10-byte reals do
     (`layer_points`; docs/differences.md §5), for a comparison point by point; `surface` how
     finite surface recombination at the contacts acts (`SURFACE_MODELS`); `langevin` which
     mobilities the Langevin rate takes (`LANGEVIN_MOBILITIES`); `braun` how Braun's dissociation
-    probability is integrated (`BRAUN_RULES`); `grid` SIMsalabim's grid or one graded
-    geometrically towards every layer's ends (`GRIDS`, `_graded_layout`)."""
+    probability is integrated (`BRAUN_RULES`); `grid` jaxdd's grid, graded geometrically towards
+    every layer's ends (`"graded"`, `_graded_layout`, the default), or SIMsalabim's (`"simss"`,
+    `Make_Grid`: SimSS's own, for a comparison with it point by point; docs/differences.md §12)."""
     return device_arrays(*device_parameters(setup, grid_split, surface, langevin, braun, grid))

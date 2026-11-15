@@ -87,7 +87,8 @@ def problem(sample: str, device: str = "mirrored") -> dict:
     jsc = np.array([abs(np.interp(0.0, c[:, 0], c[:, 1])) for c in curves])
     suns, scale = jsc / jsc[0], jsc[0]
     path, (ETL, ABSORBER, HTL) = DEVICES[device]
-    structure, base = device_parameters(read_setup(path / "simulation_setup.txt"))
+    # SIMsalabim's grid, on which the fits and posteriors of docs/validation.md were made.
+    structure, base = device_parameters(read_setup(path / "simulation_setup.txt"), grid="simss")
     base = {k: jnp.asarray(v) for k, v in base.items()}
     base["E_v"] = base["E_v"].at[ABSORBER].set(base["E_c"][ABSORBER] + GAP_eV[sample])
     if structure.gen_mode == "file":  # the mirrored device's profile was made for 187 A/m²

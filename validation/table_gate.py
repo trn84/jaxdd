@@ -14,11 +14,15 @@ from pathlib import Path
 
 import numpy as np
 
-from jaxdd.device import build_device
+from jaxdd.device import build_device as _build_device
 from jaxdd.simss_input import read_setup
 from jaxdd.solver import solve_jv
 
 V_TOP = 1.0
+
+
+def build_device(setup):  # against SimSS: on its grid
+    return _build_device(setup, grid="simss")
 
 
 def main(sample: Path, bernoulli_name: str = "simss") -> None:

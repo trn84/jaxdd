@@ -4,10 +4,13 @@ jaxdd's equations are SIMsalabim 5.36's, point for point (`Units/DDRoutines.pas`
 states them as jaxdd implements them; the names in brackets are SIMsalabim's routines, for a
 reader who wants to check one against the other. Units are SI, energies in eV, potentials in V.
 
-## The grid (`Make_Grid`)
+## The grid
 
 `NP + 2` points from the left electrode (`x[0] = 0`) to the right one (`x[NP+1]`); the `NP`
-interior points carry the unknowns, the two ends are the contacts. Each layer gets points in
+interior points carry the unknowns, the two ends are the contacts. Two grids: jaxdd's graded
+one, the default, and SIMsalabim's (`grid="simss"`), SimSS's own.
+
+**SIMsalabim's (`Make_Grid`).** Each layer gets points in
 proportion to its thickness, at least five (`MinGridPointsPerLayer`). Within a layer the spacing
 grows exponentially from both ends towards the middle, with the setup's `grad`; afterwards the
 spacing of the three intervals around each interface is made equal. The spacing is kept relative
@@ -20,7 +23,7 @@ The points per layer are fixed by the thicknesses of the input; within them the 
 smooth in the thicknesses, so a device built in JAX (`batch.device_tree`) is differentiable in
 them ([solver.md](solver.md#derivatives)).
 
-**The graded grid** (`build_device(setup, grid="graded")`, M4). SIMsalabim's grid gives a layer
+**The graded grid** (`build_device(setup)`, `grid="graded"`, the default). SIMsalabim's grid gives a layer
 whose share is below five points those five at any `NP`, and its spacing at a layer's end
 follows `grad`, not the device: on devices with a 1 nm transport layer, ions accumulated at the
 interfaces or thin doped layers it converges slowly or not at all (docs/validation.md). The
@@ -30,8 +33,9 @@ per e-fold of the distance to each end, from `d₀ = 3 pm` (`V_T/E` at the field
 ions) on. Each layer gets its share of the density's integral, `L/H + 2β·ln(1 + L/d₀)`, so a
 1 nm layer has its ends resolved as a 500 nm one has; within it the points equidistribute the
 integral. The equalisation at the interfaces and the scaling by the thicknesses are SIMsalabim's,
-so it is differentiable in the thicknesses as that one is. SIMsalabim's grid stays the default:
-it is SimSS's, against which jaxdd is validated point by point.
+so it is differentiable in the thicknesses as that one is, and its points per layer are fixed
+by the input's thicknesses as SIMsalabim's are. Where a curve is compared with SimSS's point by
+point, SIMsalabim's grid is the one to take ([differences.md](differences.md) §12).
 
 A layer's share of the points, `FLOOR((NP − n_thin·5)·L/(Ltot − L_thin))`, is taken in exact
 arithmetic from the input's decimal values (`device.layer_points`). Where it is a whole number,

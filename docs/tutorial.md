@@ -31,7 +31,7 @@ from jaxdd.solver import solve_jv
 
 setup = read_setup(Path("tests/data/thin_l1_light/simulation_setup.txt"))
 check_supported(setup)              # NotImplementedError naming anything outside the scope
-dev = build_device(setup)           # SIMsalabim's grid and every static array (NumPy)
+dev = build_device(setup)           # the graded grid and every static array (NumPy)
 
 V = np.round(np.arange(-0.2, 1.3 + 1e-9, 0.025), 6)   # or simss_voltages(setup), SimSS's own
 res = solve_jv(dev, V)
@@ -193,7 +193,18 @@ batch's devices in worker processes while the solver runs on the current one.
 
 ## Comparing with SimSS
 
-To compare with a SimSS run of the same input:
+jaxdd's grid is its own by default, graded towards every layer's ends: at SimSS's 400 points it
+meets the validation criteria on 99.6 % of hard devices where SimSS's own grid meets them on
+27 % ([validation.md](validation.md)). Its curves therefore differ from SimSS's by SimSS's grid
+error, about 1e-3 of the current in the median there and up to a few percent. For a comparison
+point by point take SimSS's grid:
+
+```python
+dev = build_device(setup, grid="simss")   # SIMsalabim's Make_Grid, as SimSS has it
+```
+
+`validation/compare_simss.py`, the benchmark against SimSS and the test suite do. To compare with
+a SimSS run of the same input:
 
 ```bash
 .venv/bin/python validation/compare_simss.py path/to/case_dir      # inputs + SimSS's JV.dat
@@ -215,5 +226,5 @@ with the exact Bernoulli function. Larger gaps are usually SimSS's: rerun SimSS 
 - **`fixIons` without `preCond`** holds the ions at SimSS's starting density, uniform in each
   layer, for the whole scan, which is rarely meant: with uniform ions of both signs at the same
   density they cancel, and the device behaves as one without ions.
-- **One grid size per batch**, and the grid is SIMsalabim's; no adaptive mesh yet
-  ([PLAN.md](../PLAN.md)).
+- **One grid size per batch**; the graded grid is set before the solve from the layers'
+  thicknesses, not adapted to the solution.

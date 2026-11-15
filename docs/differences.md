@@ -1,7 +1,7 @@
 # Where jaxdd differs from SIMsalabim, and why
 
-jaxdd solves SIMsalabim 5.36's discrete equations (the same grid but for §5, the same Scharfetter–Gummel
-discretisation in the generalised potentials, the same current in either of its forms). Where
+jaxdd solves SIMsalabim 5.36's discrete equations (on SIMsalabim's grid with `grid="simss"`,
+§12; the same Scharfetter–Gummel discretisation in the generalised potentials, the same current in either of its forms). Where
 SIMsalabim's result is not the solution of those equations, or where SIMsalabim approximates
 something jaxdd can compute exactly, jaxdd takes the physically correct answer by default and
 says so here. Each difference has a way to reproduce SIMsalabim's number, so a comparison can
@@ -249,6 +249,23 @@ species only the last one's current is left, in the ions' columns of the `tJFile
 
 **jaxdd.** Every region's current, by default; ZimT's with
 `solve_transient(..., zimt_ion_currents=True)`, to 1e-8 of the scale.
+
+## 12 The grid: jaxdd's own by default
+
+**What.** SIMsalabim's `Make_Grid` gives each layer points in proportion to its thickness and
+at least five, and grades them within it by `grad`. A layer whose share is below five keeps
+five at any `NP`, so a 1 nm transport layer stays at five points however many the device has,
+and on devices with ions accumulated at interfaces, thin doped layers or 1 nm layers the grid
+converges slowly, not always monotonically, or not at all: on 4096 hard devices at its default
+400 points 27 % meet the validation criteria, at 3200 points 95 % (docs/validation.md). This is
+no error in SIMsalabim's equations; it is how far its grid's curves are from the equations'
+solution in space.
+
+**jaxdd.** Its own grid by default (`build_device(setup, grid="graded")`, docs/model.md): every
+layer graded geometrically towards its ends, its points by need. At 400 points it meets the
+criteria on 99.6 % of the same devices, all at 800; both grids converge to the same curves.
+SIMsalabim's grid with `grid="simss"` (also `device_parameters`), for a comparison with SimSS
+point by point; the curves then differ from the graded grid's by SimSS's grid error.
 
 ## Not differences
 

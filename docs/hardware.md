@@ -65,11 +65,16 @@ densities drawn at random:
 
 A time step without ions costs about what a voltage of a J-V curve does at the same batch
 (2140 curves of 61 voltages per second at 4096: 131 000 voltages/s). With ions a Newton step
-costs 4.5× a 3×3 one (the 5×5 blocks go through the scan, not the sweep kernel, and hold 25
-entries per block where the 3×3 hold 9), and the lockstep adds 40 %: the batch pays the slowest
-device's 3.25 Newton steps per time step where a device needs 2.32. The internal voltage's
-border at the open circuit costs 7 % per Newton step. On the RTX 4070 Ti SUPER at batch 64: 41,
-4.5 and 69 transients/s.
+cost 4.5× a 3×3 one there, its 5×5 blocks then through the scan with LAPACK's inverse per
+point (they hold 25 entries per block where the 3×3 hold 9), and the lockstep adds 40 %: the
+batch pays the slowest device's 3.25 Newton steps per time step where a device needs 2.32. The
+internal voltage's border at the open circuit costs 7 % per Newton step. On the RTX 4070 Ti
+SUPER at batch 64: 41, 4.5 and 69 transients/s.
+
+Since then the 5×5 blocks are inverted elementwise (`solver._inverse5`) and go through the sweep
+kernels: on the RTX 4070 Ti SUPER at batch 256 a 5×5 Newton step takes 44 µs per device against
+85 with LAPACK's inverse, the kernel and the scan alike there (the card's FP64 rate is the
+limit); the A100's numbers with them are still to be measured.
 
 **Time a solver from its third call on, or check that nothing compiles.** A benchmark that
 excludes the first call excludes one compilation. `jaxdd.batch._solve_batch._cache_size()`

@@ -1506,21 +1506,23 @@ def test_the_jacobian_by_edges_is_autodiff_of_the_rows(case: str, bern: str) -> 
         assert np.max(np.abs(r - g) / np.maximum(scale, 1e-300)) < 1e-11, name
 
 
+@pytest.mark.parametrize("b", [3, 5])
 @pytest.mark.parametrize("transposed", [False, True])
 @pytest.mark.parametrize("n", [5, 70])
-def test_the_sweep_kernel_is_the_scan(n: int, transposed: bool) -> None:
+def test_the_sweep_kernel_is_the_scan(n: int, transposed: bool, b: int) -> None:
     """`sweep.pallas_sweep` (the whole batch's sweep in one kernel) gives `_block_thomas`'s
-    solution to round-off, three right-hand sides, a batch that is not a whole number of tiles,
-    in either layout of the blocks; on a CPU in Pallas's interpreter."""
+    solution to round-off, 3×3 blocks with three right-hand sides and the 5×5 of mobile ions in
+    time with four, a batch that is not a whole number of tiles, in either layout of the blocks;
+    on a CPU in Pallas's interpreter."""
     from jaxdd import solver as S
     from jaxdd.sweep import pallas_sweep
 
     rng = np.random.default_rng(3)
-    NP = 12
-    A = rng.normal(size=(n, NP, 3, 3))
-    C = rng.normal(size=(n, NP, 3, 3))
-    B = rng.normal(size=(n, NP, 3, 3)) + 8 * np.eye(3)
-    d = rng.normal(size=(n, NP, 3, 3))
+    NP, k = 12, b - 1
+    A = rng.normal(size=(n, NP, b, b))
+    C = rng.normal(size=(n, NP, b, b))
+    B = rng.normal(size=(n, NP, b, b)) + 8 * np.eye(b)
+    d = rng.normal(size=(n, NP, b, k))
     ref = np.asarray(jax.vmap(S._block_thomas)(A, B, C, d))
     gpu = jax.default_backend() == "gpu"
     got = np.asarray(pallas_sweep(*(jnp.asarray(x) for x in (A, B, C, d)), tile=32,
@@ -1528,11 +1530,12 @@ def test_the_sweep_kernel_is_the_scan(n: int, transposed: bool) -> None:
     assert np.max(np.abs(got - ref)) < 1e-12 * np.max(np.abs(ref))
 
 
+@pytest.mark.parametrize("b", [3, 5])
 @pytest.mark.parametrize("transposed", [False, True])
-def test_the_mosaic_kernel_is_the_scan(transposed: bool) -> None:
+def test_the_mosaic_kernel_is_the_scan(transposed: bool, b: int) -> None:
     """`sweep.mosaic_sweep` (the kernel in Pallas's Mosaic GPU backend) gives `_block_thomas`'s
-    solution to round-off, a batch that is not a whole number of tiles. Only on an NVIDIA GPU
-    (Mosaic GPU has no interpreter that runs this kernel on a CPU)."""
+    solution to round-off, 3×3 and 5×5 blocks, a batch that is not a whole number of tiles.
+    Only on an NVIDIA GPU (Mosaic GPU has no interpreter that runs this kernel on a CPU)."""
     from jaxdd import solver as S
     from jaxdd.sweep import kernel_available, mosaic_sweep
 
@@ -1540,10 +1543,10 @@ def test_the_mosaic_kernel_is_the_scan(transposed: bool) -> None:
         pytest.skip("Mosaic GPU runs on an NVIDIA GPU, Ampere or newer")
     rng = np.random.default_rng(4)
     n, NP = 200, 12
-    A = rng.normal(size=(n, NP, 3, 3))
-    C = rng.normal(size=(n, NP, 3, 3))
-    B = rng.normal(size=(n, NP, 3, 3)) + 8 * np.eye(3)
-    d = rng.normal(size=(n, NP, 3, 3))
+    A = rng.normal(size=(n, NP, b, b))
+    C = rng.normal(size=(n, NP, b, b))
+    B = rng.normal(size=(n, NP, b, b)) + 8 * np.eye(b)
+    d = rng.normal(size=(n, NP, b, b))
     ref = np.asarray(jax.vmap(S._block_thomas)(A, B, C, d))
     got = np.asarray(mosaic_sweep(*(jnp.asarray(x) for x in (A, B, C, d)), transposed=transposed))
     assert np.max(np.abs(got - ref)) < 1e-12 * np.max(np.abs(ref))
@@ -1571,6 +1574,46 @@ def test_the_batch_is_the_same_with_either_sweep(monkeypatch, kind: str) -> None
     jax.clear_caches()
     assert np.array_equal(kernel[1], scan[1]) and np.array_equal(kernel[2], scan[2])
     assert np.max(np.abs(kernel[0] - scan[0])) < 1e-9 * np.max(np.abs(scan[0]))
+
+
+def test_the_five_by_five_inverse_is_lapacks() -> None:
+    """`solver._inverse5` (by the carriers' 3×3 block and the ions' 2×2 Schur complement,
+    elementwise) against LAPACK's inverse, with an ion's row held (an identity row) too."""
+    from jaxdd.solver import _inverse5
+
+    rng = np.random.default_rng(5)
+    m = rng.normal(size=(500, 5, 5)) + 4 * np.eye(5)
+    held = m.copy()
+    held[:, 3, :] = np.eye(5)[3]
+    for x in (m, held):
+        assert np.max(np.abs(np.asarray(_inverse5(jnp.asarray(x))) - np.linalg.inv(x))) < 1e-12
+
+
+@pytest.mark.parametrize("kind", ["pallas", "mosaic"])
+def test_transients_with_ions_are_the_same_with_either_sweep(monkeypatch, kind: str) -> None:
+    """Mobile ions in time (5×5 blocks) through the sweep kernel and through the scan
+    (`JAXDD_SWEEP`): the same currents to round-off, the same flags and Newton steps. Only where
+    the kernels run."""
+    from jaxdd.batch import prepare
+    from jaxdd.sweep import kernel_available
+    from jaxdd.transient import solve_transient
+
+    if not kernel_available(kind):
+        pytest.skip(f"the {kind} kernel does not run here")
+    setup, tvg, _ = _zimt_case("zimt_ions_fast_light")
+    tvg = dataclasses.replace(tvg, **{k: getattr(tvg, k)[:40] for k in
+                                      ("t", "Vext", "oc", "G_frac", "track", "dti")})  # fmt: skip
+    batch = prepare([build_device(setup), build_device(_zimt_case("zimt_photo_light")[0])])
+    runs = []
+    for sweep in (kind, "scan"):
+        monkeypatch.setenv("JAXDD_SWEEP", sweep)
+        jax.clear_caches()  # the sweep is chosen when the solver is traced
+        runs.append(solve_transient(batch, tvg, bernoulli_name="simss"))
+    jax.clear_caches()
+    kernel, scan = runs
+    assert np.array_equal(kernel.converged, scan.converged)
+    assert np.array_equal(kernel.iterations, scan.iterations)
+    assert np.max(np.abs(kernel.J_ext - scan.J_ext)) < 1e-9 * np.max(np.abs(scan.J_ext))
 
 
 def test_the_kernels_imports_do_not_compile_the_solver_again() -> None:

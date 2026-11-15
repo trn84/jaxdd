@@ -5,7 +5,9 @@ grid points. Under `vmap` that scan becomes two XLA while loops of about 50 iter
 (400 points, unrolled by 8), and every iteration launches some 30 kernels: about 1450 launches
 per sweep, which on an A100 cost more than the arithmetic (docs/solver.md, "The block sweep").
 Here the whole sweep, forward and back, is one kernel: each program takes a tile of devices and
-runs over every grid point itself, with the carry in registers.
+runs over every grid point itself, with the carry in registers. It takes 3×3 blocks (the
+steady state) and the 5×5 of mobile ions in time, those inverted by their partition
+(`solver._inverse5`).
 
 The kernel wants the devices on the last axis, so that a tile's loads are contiguous: each
 block's nine entries (and the right-hand sides') become `(entries, NP, devices)`. The transposes
@@ -96,17 +98,18 @@ def kernel_available(kind: str) -> bool:
     return kind == "pallas" or float(getattr(device, "compute_capability", 0)) >= 8.0
 
 
-# Lists of (tile,) vectors: one per entry of a 3×3 block, or of 3×k right-hand sides. `at`
-# gives the index of entry `e` at grid point `i` in the layout at hand; `cols` selects the
-# program's devices (all of a Triton program's block, a slice of the whole array in Mosaic).
+# Lists of (tile,) vectors: one per entry of a b×b block (b = 3, or 5 with mobile ions in time),
+# or of b×k right-hand sides. `at` gives the index of entry `e` at grid point `i` in the layout
+# at hand; `cols` selects the program's devices (all of a Triton program's block, a slice of the
+# whole array in Mosaic).
 def _at(transposed, cols=slice(None)):
     if transposed:
         return lambda e, i: (e, i, cols)
     return lambda e, i: (cols, i, e)
 
 
-def _load(ref, i, cols, at):
-    return [[ref[at(cols * r + c, i)] for c in range(cols)] for r in range(3)]
+def _load(ref, i, rows, cols, at):
+    return [[ref[at(cols * r + c, i)] for c in range(cols)] for r in range(rows)]
 
 
 def _store(ref, i, m, at):
@@ -116,12 +119,25 @@ def _store(ref, i, m, at):
 
 
 def _mm(a, b):
-    return [[a[r][0] * b[0][c] + a[r][1] * b[1][c] + a[r][2] * b[2][c] for c in range(len(b[0]))]
-            for r in range(3)]  # fmt: skip
+    def dot(row, c):
+        out = row[0] * b[0][c]
+        for k in range(1, len(row)):
+            out = out + row[k] * b[k][c]
+        return out
+
+    return [[dot(row, c) for c in range(len(b[0]))] for row in a]
 
 
 def _sub(a, b):
     return [[x - y for x, y in zip(ra, rb, strict=True)] for ra, rb in zip(a, b, strict=True)]
+
+
+def _add(a, b):
+    return [[x + y for x, y in zip(ra, rb, strict=True)] for ra, rb in zip(a, b, strict=True)]
+
+
+def _neg(a):
+    return [[-x for x in row] for row in a]
 
 
 def _inverse3(m):
@@ -134,18 +150,42 @@ def _inverse3(m):
     return [[x * inv for x in row] for row in co]
 
 
+def _inverse2(m):
+    (a, b), (c, d) = m
+    inv = 1.0 / (a * d - b * c)
+    return [[d * inv, -b * inv], [-c * inv, a * inv]]
+
+
+def _inverse(m):
+    """`_inverse3`, or for 5×5 the partition of `solver._inverse5`: the carriers' 3×3 block by
+    its adjugate, the ions' 2×2 Schur complement by its own."""
+    if len(m) == 3:
+        return _inverse3(m)
+    P, Q = [r[:3] for r in m[:3]], [r[3:] for r in m[:3]]
+    R, S = [r[:3] for r in m[3:]], [r[3:] for r in m[3:]]
+    Pi = _inverse3(P)
+    PiQ, RPi = _mm(Pi, Q), _mm(R, Pi)
+    Si = _inverse2(_sub(S, _mm(R, PiQ)))
+    top = _add(Pi, _mm(PiQ, _mm(Si, RPi)))
+    right, bottom = _neg(_mm(PiQ, Si)), _neg(_mm(Si, RPi))
+    return [t + r for t, r in zip(top, right, strict=True)] + [
+        b + s for b, s in zip(bottom, Si, strict=True)
+    ]
+
+
 def _flat(m):
     return tuple(x for row in m for x in row)
 
 
 def _rows(t, cols):
-    return [list(t[cols * r : cols * r + cols]) for r in range(3)]
+    return [list(t[cols * r : cols * r + cols]) for r in range(len(t) // cols)]
 
 
-def _kernel(NP, k, transposed, columns=None):
+def _kernel(NP, b, k, transposed, columns=None):
     """Forward: `m = B − A·c'`, `c' = m⁻¹·C`, `d' = m⁻¹·(d − A·d')`, kept in the outputs; back:
-    `x = d' − c'·x_next`, over `d'` in place (`solver._block_thomas`). `columns`, called in the
-    kernel, gives the program's devices and their number (default: the whole block)."""
+    `x = d' − c'·x_next`, over `d'` in place (`solver._block_thomas`), for b×b blocks and b×k
+    right-hand sides. `columns`, called in the kernel, gives the program's devices and their
+    number (default: the whole block)."""
 
     def kernel(a_ref, b_ref, c_ref, d_ref, x_ref, cp_ref):
         if columns is None:
@@ -154,39 +194,40 @@ def _kernel(NP, k, transposed, columns=None):
             cols, tile = columns()
         at = _at(transposed, cols)
         zero = jnp.zeros((tile,), a_ref.dtype)
+        bb = b * b
 
         def forward(i, carry):
-            cp, dp = _rows(carry[:9], 3), _rows(carry[9:], k)
-            a = _load(a_ref, i, 3, at)
-            m_inv = _inverse3(_sub(_load(b_ref, i, 3, at), _mm(a, cp)))
-            cn = _mm(m_inv, _load(c_ref, i, 3, at))
-            dn = _mm(m_inv, _sub(_load(d_ref, i, k, at), _mm(a, dp)))
+            cp, dp = _rows(carry[:bb], b), _rows(carry[bb:], k)
+            a = _load(a_ref, i, b, b, at)
+            m_inv = _inverse(_sub(_load(b_ref, i, b, b, at), _mm(a, cp)))
+            cn = _mm(m_inv, _load(c_ref, i, b, b, at))
+            dn = _mm(m_inv, _sub(_load(d_ref, i, b, k, at), _mm(a, dp)))
             _store(cp_ref, i, cn, at)
             _store(x_ref, i, dn, at)
             return _flat(cn) + _flat(dn)
 
-        jax.lax.fori_loop(0, NP, forward, (zero,) * (9 + 3 * k))
+        jax.lax.fori_loop(0, NP, forward, (zero,) * (bb + b * k))
 
         def backward(j, x_next):
             i = NP - 1 - j
-            x = _sub(_load(x_ref, i, k, at), _mm(_load(cp_ref, i, 3, at), _rows(x_next, k)))
+            x = _sub(_load(x_ref, i, b, k, at), _mm(_load(cp_ref, i, b, b, at), _rows(x_next, k)))
             _store(x_ref, i, x, at)
             return _flat(x)
 
-        jax.lax.fori_loop(0, NP, backward, (zero,) * (3 * k))
+        jax.lax.fori_loop(0, NP, backward, (zero,) * (b * k))
 
     return kernel
 
 
 def pallas_sweep(A, B, C, d, tile: int = SWEEP_TILE, interpret: bool = False,
                  transposed: bool | None = None):  # fmt: skip
-    """`_block_thomas` for a batch in one kernel: `A, B, C` (n × NP × 3 × 3), `d`
-    (n × NP × 3 × k); returns `x` like `d`. `interpret` runs it without a GPU (tests);
+    """`_block_thomas` for a batch in one kernel: `A, B, C` (n × NP × b × b, b 3 or 5), `d`
+    (n × NP × b × k); returns `x` like `d`. `interpret` runs it without a GPU (tests);
     `transposed` as `SWEEP_TRANSPOSED`, which is its default."""
     from jax.experimental import pallas as pl
 
     transposed = SWEEP_TRANSPOSED if transposed is None else transposed
-    _, NP, _, k = d.shape
+    _, NP, b, k = d.shape
     ins, N, shape, unlay = _lay(A, B, C, d, tile, transposed)
 
     def spec(rows):
@@ -200,14 +241,14 @@ def pallas_sweep(A, B, C, d, tile: int = SWEEP_TILE, interpret: bool = False,
 
         params["compiler_params"] = plgpu.CompilerParams(num_warps=_WARPS.get(tile, 2))
     x, _ = pl.pallas_call(
-        _kernel(NP, k, transposed),
+        _kernel(NP, b, k, transposed),
         out_shape=(
-            jax.ShapeDtypeStruct(shape(3 * k), d.dtype),
-            jax.ShapeDtypeStruct(shape(9), d.dtype),
+            jax.ShapeDtypeStruct(shape(b * k), d.dtype),
+            jax.ShapeDtypeStruct(shape(b * b), d.dtype),
         ),
         grid=(N // tile,),
-        in_specs=[spec(9), spec(9), spec(9), spec(3 * k)],
-        out_specs=(spec(3 * k), spec(9)),
+        in_specs=[spec(b * b), spec(b * b), spec(b * b), spec(b * k)],
+        out_specs=(spec(b * k), spec(b * b)),
         interpret=interpret,
         **params,
     )(*ins)
@@ -218,17 +259,17 @@ def _lay(A, B, C, d, tile, transposed):
     """The kernels' inputs: each block's entries flat, the batch padded to whole tiles, and
     transposed to `(entries, NP, devices)` or not; the padded batch, the output shape for a
     number of entries, and the way back for the solution."""
-    n, NP, _, k = d.shape
+    n, NP, b, k = d.shape
     pad = (-n) % tile
     # The blocks once, in the solver's layout: without the barrier XLA fuses their whole
     # assembly into each of the four transposes (or paddings) below, and computes it four times.
     barrier = getattr(jax.lax, "optimization_barrier", lambda x: x)  # not in JAX 0.4.31
     A, B, C, d = barrier((A, B, C, d))
 
-    def lay(M, cols):  # n × NP × 3 × cols → (n + pad) × NP × 3·cols, or its transpose
-        M = M.reshape(n, NP, 3 * cols)
+    def lay(M, cols):  # n × NP × b × cols → (n + pad) × NP × b·cols, or its transpose
+        M = M.reshape(n, NP, b * cols)
         if pad:
-            M = jnp.concatenate([M, jnp.broadcast_to(M[-1:], (pad, NP, 3 * cols))])
+            M = jnp.concatenate([M, jnp.broadcast_to(M[-1:], (pad, NP, b * cols))])
         return M.transpose(2, 1, 0) if transposed else M
 
     N = n + pad
@@ -238,9 +279,9 @@ def _lay(A, B, C, d, tile, transposed):
 
     def unlay(x):
         x = x.transpose(2, 1, 0) if transposed else x
-        return x[:n].reshape(n, NP, 3, k)
+        return x[:n].reshape(n, NP, b, k)
 
-    return (lay(A, 3), lay(B, 3), lay(C, 3), lay(d, k)), N, shape, unlay
+    return (lay(A, b), lay(B, b), lay(C, b), lay(d, k)), N, shape, unlay
 
 
 def mosaic_sweep(A, B, C, d, tile: int = MOSAIC_TILE, transposed: bool | None = None):
@@ -251,17 +292,17 @@ def mosaic_sweep(A, B, C, d, tile: int = MOSAIC_TILE, transposed: bool | None = 
     from jax.experimental.pallas import mosaic_gpu as plgpu
 
     transposed = SWEEP_TRANSPOSED if transposed is None else transposed
-    k = d.shape[-1]
+    b, k = d.shape[-2:]
     ins, N, shape, unlay = _lay(A, B, C, d, tile, transposed)
 
     def columns():
         return pl.ds(jax.lax.axis_index("tiles") * tile, tile), tile
 
     x, _ = plgpu.kernel(
-        _kernel(d.shape[1], k, transposed, columns),
+        _kernel(d.shape[1], b, k, transposed, columns),
         out_type=(
-            jax.ShapeDtypeStruct(shape(3 * k), d.dtype),
-            jax.ShapeDtypeStruct(shape(9), d.dtype),
+            jax.ShapeDtypeStruct(shape(b * k), d.dtype),
+            jax.ShapeDtypeStruct(shape(b * b), d.dtype),
         ),
         grid=(N // tile,),
         grid_names=("tiles",),
@@ -280,8 +321,8 @@ def block_sweep(A, B, C, d):
 def _block_sweep_vmap(axis_size, in_batched, A, B, C, d):
     A, B, C, d = (x if batched else jnp.broadcast_to(x, (axis_size, *x.shape))
                   for x, batched in zip((A, B, C, d), in_batched, strict=True))  # fmt: skip
-    # The kernels take 3×3 blocks (the steady state); the 5×5 of mobile ions in time the scan.
-    kind = sweep_kind() if A.shape[-1] == 3 else "scan"
+    # The kernels take 3×3 blocks (the steady state) and the 5×5 of mobile ions in time.
+    kind = sweep_kind()
     if kind == "pallas":
         return pallas_sweep(A, B, C, d), True
     if kind == "mosaic":

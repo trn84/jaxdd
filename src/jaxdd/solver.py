@@ -966,14 +966,36 @@ def _inverse3(m):
     return co / det[..., None, None]
 
 
+def _inverse2(m):
+    """The inverse of 2×2 matrices by the adjugate."""
+    a, b, c, d = m[..., 0, 0], m[..., 0, 1], m[..., 1, 0], m[..., 1, 1]
+    inv = 1.0 / (a * d - b * c)
+    return jnp.stack([jnp.stack([d, -b], -1), jnp.stack([-c, a], -1)], -2) * inv[..., None, None]
+
+
+def _inverse5(m):
+    """The inverse of the 5×5 blocks of mobile ions in time (`V, ln n, ln p | ln a, ln c`) by
+    their partition, elementwise as `_inverse3`: the carriers' 3×3 block `P` (the steady state's,
+    well scaled) by its adjugate, then the ions' 2×2 Schur complement `S − R·P⁻¹·Q` by its own
+    (an identity where a species is held). The sweep kernel (`jaxdd.sweep`) inverts by the same
+    steps, so that it and the scan agree to round-off."""
+    P, Q, R, S = m[..., :3, :3], m[..., :3, 3:], m[..., 3:, :3], m[..., 3:, 3:]
+    Pi = _inverse3(P)
+    PiQ, RPi = _mm(Pi, Q), _mm(R, Pi)
+    Si = _inverse2(S - _mm(R, PiQ))
+    top = jnp.concatenate([Pi + _mm(PiQ, _mm(Si, RPi)), -_mm(PiQ, Si)], -1)
+    bottom = jnp.concatenate([-_mm(Si, RPi), Si], -1)
+    return jnp.concatenate([top, bottom], -2)
+
+
 def _inverse(m):
-    """The inverse of square blocks: `_inverse3` for 3×3 (the steady state), else LAPACK's (the
-    5×5 blocks of mobile ions in time)."""
-    return _inverse3(m) if m.shape[-1] == 3 else jnp.linalg.inv(m)
+    """The inverse of square blocks: `_inverse3` for 3×3 (the steady state), `_inverse5` for the
+    5×5 blocks of mobile ions in time."""
+    return _inverse3(m) if m.shape[-1] == 3 else _inverse5(m)
 
 
 def _mm(a, b):
-    """`a @ b` for 3×3 blocks (`... × 3 × 3` times `... × 3 × k`), written as multiply and sum
+    """`a @ b` for small blocks (`... × r × m` times `... × m × k`), written as multiply and sum
     so that XLA fuses it with the arithmetic around it. `@` on such small matrices becomes a
     batched GEMM of its own on a GPU: a kernel per product, launched in every step of a sweep
     and every level of the reduction (M3)."""

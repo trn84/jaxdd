@@ -12,8 +12,8 @@ The order (2026-11-15, an estimate at the pace so far):
 2. **Release 0.1.0**: the steady state (SimSS) and the transients (ZimT); a version, a
    changelog, the README's installation, a wheel, CI, a pass over the handbook and the API.
    About a day.
-3. M6 (2.2), and the fused kernel or a 5×5 sweep kernel, as the decision on Stage C's speed
-   goes (2.3, section 7; about 1–2 weeks): 0.2.
+3. M6 (2.2), and the fused kernel if the A100's numbers with the 5×5 sweep kernel decide for
+   it (2.3, section 7; about 1–2 weeks): 0.2.
 
 Stage C (ZimT's transients) and M7 (fits and their posteriors) are done (docs/model.md
 "Transients", docs/validation.md). Open from Stage C: the QFLS below Newton's floor (4.1). Not
@@ -290,5 +290,5 @@ microseconds per evaluation are needed.
 
 | Decision | When | With |
 |---|---|---|
-| The fused kernel as an optional mode (2.3), or first a 5×5 sweep kernel | now: Stage C's speed is measured (docs/hardware.md "Transients": a 5×5 Newton step 4.5× a 3×3 one, the lockstep 40 % more with ions) | the applications' needs (section 5) and a first measurement of a Stage A kernel |
+| The fused kernel as an optional mode (2.3) | with the A100's transients through the 5×5 sweep kernel (`STEPS=transient`, auto against `JAXDD_SWEEP=scan`; before it a 5×5 Newton step was 4.5× a 3×3 one, the lockstep 40 % more with ions: docs/hardware.md "Transients") | the applications' needs (section 5) and a first measurement of a Stage A kernel |
 | The steric ion model and its `N_max` | when a source for `N_max` is found | its users: results with and without it differ at high ion density |

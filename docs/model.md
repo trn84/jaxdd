@@ -376,8 +376,10 @@ the discrete equation's with the density before the step scaled by a factor per 
 its regions an ion's unknown is held. The ions' currents (each region by the integral form with
 the densities' change as its integrand, or by its fluxes with `currDiffInt = 1`, the current
 across a layer interface the one before it) join the carriers' and the displacement current in
-the average. The 5×5 blocks are solved by the scan (the sweep kernels take 3×3; a batch takes
-5×5 where any device has mobile ions, the others' ion rows held).
+the average. The 5×5 blocks are solved by the sweep kernels as the 3×3 are (or the scan), each
+block inverted by its partition (`solver._inverse5`: the carriers' 3×3 by its adjugate, the
+ions' 2×2 Schur complement by its own); a batch takes 5×5 where any device has mobile ions,
+the others' ion rows held.
 
 **The internal voltage.** ZimT's `Vext` is the external voltage; given, and without a series
 resistance, `Vint = Vext`. At the open circuit (`Vext = oc`, at `t = 0` too) `Vint` is the

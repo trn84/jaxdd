@@ -11,7 +11,8 @@
 # Once: uv in ~/.local/bin and the repository:
 #   curl -LsSf https://astral.sh/uv/install.sh | sh
 #   git clone https://github.com/trn84/jaxdd.git ~/jaxdd
-# The image (~100 MB) and the container's venv (.venvct) are made on the first start if missing.
+# The image (~100 MB) and the container's venv (.venvct) are made on the first start if missing;
+# every start installs into the venv what pyproject.toml asks for and it lacks.
 #
 # Each time:
 #   cd ~/jaxdd && git pull
@@ -209,10 +210,13 @@ if [ ! -f "$SIF" ]; then
 fi
 if [ ! -x "$VENV/bin/python" ]; then
     echo "making $VENV in the container (Python 3.12, current jax[cuda12]); a few minutes"
-    apptainer -s exec --nv "$SIF" bash -c "
-        '$UV' venv --python 3.12 --python-preference only-managed '$VENV' &&
-        '$UV' pip install --python '$VENV/bin/python' -e '$ROOT[dev,bench]' 'jax[cuda12]'"
+    apptainer -s exec --nv "$SIF" \
+        "$UV" venv --python 3.12 --python-preference only-managed "$VENV"
 fi
+# Every start: what pyproject.toml asks for now (a venv made before pytest-xdist was in the dev
+# extra failed the tests step with "unrecognized arguments: -n"); what is there stays, JAX too.
+apptainer -s exec --nv "$SIF" \
+    "$UV" pip install -q --python "$VENV/bin/python" -e "$ROOT[dev,bench]" 'jax[cuda12]'
 
 GPU="$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1 || true)"
 LABEL="${LABEL:-${GPU#NVIDIA } apptainer}"

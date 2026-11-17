@@ -404,6 +404,12 @@ so that the solver is never the larger error in what is computed from it.
   174 curves/s against 227 without sites, the start's two more solves (docs/solver.md). The
   curves' largest difference from Boltzmann's over their scale, median / 99 % / most: 5.8e-7 /
   2.1e-4 / 1.6e-3 at 1.21e28, 3.5e-6 / 1.3e-3 / 9.6e-3 at 2e27, 7.1e-5 / 2.5e-2 / 0.17 at 1e26.
+  On 16 384 of these devices (`validation/hard.py 16384 16384 N_max`, `STEPS=steric
+  benchmarks/apptainer.sh`, 2026-11-16, A100-SXM4-40GB) the tail is longer: every voltage
+  converges at 1.21e28 and 2e27, the differences 5.5e-7 / 3.4e-4 / 1.7e-2 and 3.3e-6 / 2.0e-3 /
+  0.10; at 1e26 one device does not converge at three voltages (reported), the others differ by
+  6.7e-5 / 3.9e-2 / 1.6, and one pass pays 9.66 Newton steps per voltage against 6.4 without
+  sites (60 at most at one voltage). 1230, 1221 and 1191 curves/s in two passes against 1533.
   At the lattice's sites the bound is a correction of 1e-3 at most to these devices; as the
   parameter the codes take it is the model. On the 1 nm stack with 1e23 m⁻³ of each species
   (`tests/data/steady_1e17_thin_light`, Boltzmann's ions up to 3.9e25 m⁻³), free at every

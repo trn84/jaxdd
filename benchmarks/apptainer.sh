@@ -120,7 +120,16 @@ if [ "${1:-}" = "--inside" ]; then
                 echo "$(nproc) cores for this job"
                 ;;
             tests)
-                "$py" -m pytest -q
+                # A GPU in exclusive-process mode takes one process: every parallel worker but
+                # one fails with CUDA_ERROR_DEVICE_UNAVAILABLE, so the tests run in one there.
+                # Otherwise a worker per core of this job (-n auto counts the host's).
+                if nvidia-smi --query-gpu=compute_mode --format=csv,noheader 2>/dev/null |
+                        grep -qi exclusive; then
+                    echo "the GPUs are exclusive to one process: the tests in one"
+                    "$py" -m pytest -q -n 0
+                else
+                    "$py" -m pytest -q -n "$(nproc)"
+                fi
                 ;;
             breakdown)
                 (cd validation && "$py" breakdown.py 4096 && "$py" breakdown.py 16384)

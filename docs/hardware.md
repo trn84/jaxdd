@@ -53,30 +53,33 @@ GPU, and at 4767 with 8192 per GPU; the grid study's small batches gain less (1.
 devices per GPU and 800 points, 1.45× at 512 and 1600), a GPU being busy only with thousands.
 
 **Transients** (`validation/transient_bench.py 16384 4096`, `STEPS=transient
-benchmarks/apptainer.sh`, 2026-11-15), on one A100-SXM4-40GB (`solve_transient` does not split a
-batch across GPUs), 16384 ZimT runs in batches of 4096, each device's trap, ion and doping
-densities drawn at random:
+benchmarks/apptainer.sh`, 2026-11-17), on one A100-SXM4-40GB (`solve_transient` does not split a
+batch across GPUs), 16384 ZimT runs in batches of 4096 on the graded grid, each device's trap,
+ion and doping densities drawn at random:
 
 | Workload | Transients/s | Time steps/s | Newton steps per time step: device, batch | One Newton step per device |
 |---|---|---|---|---|
-| traps, light on and off (241 steps, 3×3) | 564 | 136 000 | 2.34, 2.41 | 3.05 µs |
-| mobile ions, a sweep and back (241 steps, 5×5) | 93 | 22 400 | 2.32, 3.25 | 13.75 µs |
-| the photovoltage at the open circuit (151 steps) | 991 | 150 000 | 1.89, 2.06 | 3.25 µs |
+| traps, light on and off (241 steps, 3×3) | 576 | 139 000 | 2.32, 2.40 | 3.00 µs |
+| mobile ions, a sweep and back (241 steps, 5×5) | 183 | 44 100 | 2.32, 3.14 | 7.22 µs |
+| the photovoltage at the open circuit (151 steps) | 975 | 147 000 | 1.88, 2.06 | 3.29 µs |
 
 A time step without ions costs about what a voltage of a J-V curve does at the same batch
 (2140 curves of 61 voltages per second at 4096: 131 000 voltages/s). With ions a Newton step
-cost 4.5× a 3×3 one there, its 5×5 blocks then through the scan with LAPACK's inverse per
-point (they hold 25 entries per block where the 3×3 hold 9), and the lockstep adds 40 %: the
-batch pays the slowest device's 3.25 Newton steps per time step where a device needs 2.32. The
-internal voltage's border at the open circuit costs 7 % per Newton step. On the RTX 4070 Ti
-SUPER at batch 64: 41, 4.5 and 69 transients/s.
+costs 2.4× a 3×3 one, near their blocks' 25 entries against 9; the 5×5 blocks are inverted
+elementwise (`solver._inverse5`) and go through the sweep kernels. The lockstep adds 35 %: the
+batch pays the slowest device's 3.14 Newton steps per time step where a device needs 2.32. The
+internal voltage's border at the open circuit costs 10 % per Newton step.
 
-Since then the 5×5 blocks are inverted elementwise (`solver._inverse5`) and go through the sweep
-kernels. On the A100 the transients with ions run at 185 per second, twice the 93: a Newton
-step 6.91 µs per device, 2.3× the 3×3 one, against 13.75 with LAPACK's inverse in the scan and
-10.31 with the elementwise one in the scan (`JAXDD_SWEEP=scan`); the other two workloads are
-unchanged. On the RTX 4070 Ti SUPER at batch 256: 44 µs against 85, the kernel and the scan
-alike there (the card's FP64 rate is the limit).
+How the step with ions got there: 13.75 µs with LAPACK's inverse per point in the scan
+(2026-11-15), 10.31 with the elementwise inverse in the scan (`JAXDD_SWEEP=scan`), 6.91 through
+the kernel. The current in time over control volumes (docs/differences.md §13) and the densities
+below the floor (docs/solver.md) then cost 13 % and 4 % more, 8.12 µs, in what every Newton
+step formed anew: in the current it computes for its settled-current stop the integral form's
+widths, chosen between ZimT's and the control volume by a traced flag (both computed), and in
+its step the floor's test through `exp` at every point. Formed once per device, the choice made
+when tracing and the test in the logarithm, it is 7.22 µs; the RTX 4070 Ti SUPER (at batch 256
+44 µs, 85 in the scan, its FP64 rate the limit) showed none of it.
+On that card at batch 64: 41, 4.5 and 69 transients/s with the LAPACK inverse.
 
 **Time a solver from its third call on, or check that nothing compiles.** A benchmark that
 excludes the first call excludes one compilation. `jaxdd.batch._solve_batch._cache_size()`
@@ -172,7 +175,7 @@ It was decided against (2026-11-15), for three reasons:
 - **No planned use needs it.** Of the uses in [overview.md](overview.md#what-the-speed-is-for)
   only drift-diffusion inside a larger simulation would, and none is planned.
 - **The transients with ions are no longer its case.** With the 5×5 sweep kernel a Newton step
-  with ions is 2.3× a 3×3 one (it was 4.5×), close to the ratio of their blocks' entries
+  with ions is 2.4× a 3×3 one (it was 4.5×), close to the ratio of their blocks' entries
   (25/9). What is left is the memory traffic every workload shares.
 - **Its cost.** The solver's core would be written twice (800–1200 lines of CUDA, the Jacobian
   by hand where JAX takes it by autodiff), and it would need compiled wheels per CUDA (and ROCm)

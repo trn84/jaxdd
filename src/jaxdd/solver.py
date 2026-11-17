@@ -75,11 +75,11 @@ def density_steps(y, delta, step, n_floor):
     anywhere: its logarithm, the QFLS's, undetermined (docs/solver.md). A `δ` ≤ −1, a negative
     density, takes the ordinary cap."""
     d = delta[:, 1:3]
+    below = y[:, 1:3] < jnp.log(n_floor)[:, None]  # in the logarithm: no exp per step
     positive = d > -1
-    in_n = jnp.where(positive, jnp.log1p(jnp.where(positive, d, 0.0)), -STEP_CAPS[1])
+    in_n = jnp.where(positive, jnp.log1p(jnp.where(positive & below, d, 0.0)), -STEP_CAPS[1])
     in_n = jnp.clip(in_n, -FLOOR_DROP_CAP, STEP_CAPS[1])
-    below = jnp.exp(y[:, 1:3]) < n_floor[:, None]
-    return step.at[:, 1:3].set(jnp.where(below, in_n, step[:, 1:3]))
+    return jnp.concatenate([step[:, :1], jnp.where(below, in_n, step[:, 1:3]), step[:, 3:]], -1)
 
 
 #: Below |x| < this, `B(x)` by its series: the full expression is 0/0 at 0.

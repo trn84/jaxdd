@@ -281,8 +281,8 @@ def _current_parts(d, full, g_frac, B=bernoulli):
     if "ti" in d["s"]:
         R_int = _interface_points(n, p, d["s"]["ti"])[:2]
     dx = jnp.diff(x[: NP + 1])
-    width = _sum_widths(h[: NP + 1], tr)
-    zimt = tr is not None and tr.get("zimt_current", 0.0) > 0
+    width = h[: NP + 1] if tr is None else tr["width"]
+    zimt = tr is not None and "zimt_current" in tr
 
     def carrier(sn, Vg, dens, mu, R, R_i, before):
         U = R + R_i - G * g_frac
@@ -291,7 +291,7 @@ def _current_parts(d, full, g_frac, B=bernoulli):
             # ZimT's takes the left contact's change too (a finite surface recombination moves
             # it), in half an interval; no equation stores anything there.
             change = tr["dti"] * (dens - before)
-            U = U + jnp.where(zimt, change, change.at[0].set(0.0))
+            U = U + (change if zimt else change.at[0].set(0.0))
         ev = jnp.exp(sn * Vg[: NP + 1] / Vt)
         int_u = jnp.concatenate([jnp.zeros(1), jnp.cumsum(0.5 * dx * (U[:NP] + U[1 : NP + 1]))])
         single = jnp.sum(0.5 * dx * (ev[:-1] / mu[:NP] + ev[1:] / mu[1 : NP + 1]))
@@ -332,19 +332,19 @@ def _current_parts(d, full, g_frac, B=bernoulli):
     return parts, points
 
 
-def _sum_widths(hh, tr):
+def _sum_widths(hh, zimt):
     """The width each point's `U` takes in the integral form's sum along the device
     (`J[i] = J[i − 1] ± q·L·width[i]·U[i]`, over the intervals' `hh`). SIMsalabim's is the
-    interval after the point, `h[i]`: the steady state's (no `tr`), where the two carriers'
-    sums cancel in the total, and ZimT's in time (`tr["zimt_current"]` 1). Over a time step it
+    interval after the point, `h[i]`: the steady state's (`_current_parts` without `tr`), where
+    the two carriers' sums cancel in the total, and ZimT's in time (`zimt`). Over a time step it
     is by default the point's control volume, `(h[i − 1] + h[i])/2`, in which its continuity
     equation and Poisson's hold: the densities' change is then the displacement current's
     change from interval to interval, and the total is the same on every interval
-    (docs/differences.md §13)."""
-    if tr is None:
+    (docs/differences.md §13). Computed once per device (`tr["width"]`), not in every Newton
+    step's current: on the A100 that cost the transients with ions 13 %."""
+    if zimt:
         return hh
-    volume = jnp.concatenate([hh[:1], 0.5 * (hh[:-1] + hh[1:])])
-    return jnp.where(tr.get("zimt_current", 0.0) > 0, hh, volume)
+    return jnp.concatenate([hh[:1], 0.5 * (hh[:-1] + hh[1:])])
 
 
 def _ion_currents(d, full, tr, B):
@@ -359,7 +359,7 @@ def _ion_currents(d, full, tr, B):
     NP = x.shape[0] - 2
     V = full[:, 0]
     dx, hh = jnp.diff(x), h[: NP + 1]
-    width = _sum_widths(hh, tr)
+    width = tr["width"]
     masks, totals, _ = _slots(ion)
     ka = ion["a_slots"].shape[0]
     out = [jnp.zeros(NP + 1), jnp.zeros(NP + 1)]

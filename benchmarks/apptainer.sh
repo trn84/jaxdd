@@ -27,7 +27,10 @@
 #
 # Steps (STEPS, in this order by default):
 #   info       the GPU, JAX and its devices
-#   tests      the test suite (a broken install fails here, in a minute)
+#   tests      the test suite (a broken install fails here, in a minute); in parallel, a worker
+#              per core of the job, but in one process where the GPUs are exclusive to one
+#              (compute mode Exclusive_Process): 221 tests in 34 min on an A100 there, which the
+#              durations below do not include
 #   breakdown  validation/breakdown.py at batch 4096 and 16384: one Newton step, part by part
 #   bench      validation/bench.py 65536 16384: curves per second
 #   hard       validation/hard.py 16384 16384: a hard workload (frozen ions over a wide range,

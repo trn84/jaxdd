@@ -41,6 +41,7 @@ from jaxdd.batch import (
     _newton_solve,
     _poisson_solve,
     _quiet,
+    _sum_widths,
     _traced,
 )
 from jaxdd.constants import Q
@@ -246,6 +247,8 @@ def _solve_one(
     caps = _caps(Vt, y.shape[-1])
     v_cap = STEP_CAPS[0] * Vt
     traps = "ti" in s
+    # The integral form's widths, once per device: not in every Newton step's current.
+    width = _sum_widths(d["h"][: d["x"].shape[0] - 1], zimt_current)
 
     def full_of(y, Vint, dti_):  # the contacts as the current takes them (`_with_contacts`)
         full = _with_contacts(_full(_bounds(d, Vint), y), s, Vt, B)
@@ -256,8 +259,9 @@ def _solve_one(
         s_k = _time_terms(s, before, dti_k, fb, fi if traps else None)
         pad = jnp.zeros_like(fb[:1])
         tr = {"dti": dti_k, "n": jnp.exp(before[:, 1]), "p": jnp.exp(before[:, 2]),
-              "V": before[:, 0], "fb": jnp.concatenate([pad, fb, pad]),
-              "zimt_current": jnp.asarray(float(zimt_current))}  # fmt: skip
+              "V": before[:, 0], "fb": jnp.concatenate([pad, fb, pad]), "width": width}  # fmt: skip
+        if zimt_current:  # a key, not a value: the current's form chosen when tracing
+            tr["zimt_current"] = True
         if ions:
             ma, mc = _ion_membership(ion)
             tr["ions"] = {"a": jnp.exp(before[:, 3]) * ma, "c": jnp.exp(before[:, 4]) * mc}

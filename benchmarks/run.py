@@ -115,7 +115,7 @@ def measure_gpu(batches: list[int], unique: int, repeats: int) -> list[dict]:
 
     from jaxdd.batch import prepare, solve_batch
 
-    base = variants(min(unique, max(batches)), SEED)
+    base = variants(min(unique, max(batches)), SEED, grid="simss")  # SimSS's devices
     out = []
     for size in batches:
         devices = [base[k % len(base)] for k in range(size)]
@@ -321,7 +321,7 @@ def accuracy(curves: dict[int, np.ndarray]) -> dict:
     from jaxdd.batch import prepare, solve_batch
 
     keys = sorted(curves)[:ACCURACY_DEVICES]
-    devices = variants(max(keys) + 1, SEED)
+    devices = variants(max(keys) + 1, SEED, grid="simss")
     J, ok, _ = solve_batch(prepare([devices[k] for k in keys]), V, bernoulli_name="simss")
     J = np.where(np.asarray(ok), np.asarray(J), np.nan)
     gaps = []

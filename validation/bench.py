@@ -29,9 +29,9 @@ SIMSS_SECONDS_PER_DEVICE_ONE_CORE = 2.0
 CASES = ("thin_l1_light", "frozen_1e17_x1_thin_light", "steady_1e17_thin_light")
 
 
-def variants(n: int, seed: int = 20261107) -> list:
-    """`n` devices: `variant_setups` built."""
-    return [build_device(setup) for setup in variant_setups(n, seed)]
+def variants(n: int, seed: int = 20261107, **build) -> list:
+    """`n` devices: `variant_setups` built (`build`: build_device's keywords, e.g. the grid)."""
+    return [build_device(setup, **build) for setup in variant_setups(n, seed)]
 
 
 def variant_setups(n: int, seed: int = 20261107) -> list[Setup]:

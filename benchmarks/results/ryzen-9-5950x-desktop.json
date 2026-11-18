@@ -1,6 +1,6 @@
 {
  "label": "Ryzen 9 5950X desktop",
- "date": "2026-11-12",
+ "date": "2026-11-18",
  "machine": {
   "cpu": "AMD Ryzen 9 5950X 16-Core Processor",
   "logical_cores": 32,
@@ -9,7 +9,7 @@
   "gpu": "NVIDIA GeForce RTX 4070 Ti SUPER"
  },
  "versions": {
-  "jaxdd": "a58fc635f6fd",
+  "jaxdd": "4d37b4f177dd with local changes",
   "jax": "0.12.0.1",
   "python": "3.13.11",
   "simss": "5.36"
@@ -27,9 +27,9 @@
    "gpu": "NVIDIA GeForce RTX 4070 Ti SUPER",
    "batch": 4096,
    "runs": 8192,
-   "seconds": 10.391506500000105,
-   "runs_per_s": 788.336128163892,
-   "first_batch_s": 7.491976359999853,
+   "seconds": 7.999150823998207,
+   "runs_per_s": 1024.1087060670525,
+   "first_batch_s": 7.263289232003444,
    "converged": 1.0,
    "steps_needed": 2.760806224385246,
    "steps_paid": 3.3442622950819674,
@@ -41,9 +41,9 @@
    "gpu": "NVIDIA GeForce RTX 4070 Ti SUPER",
    "batch": 16384,
    "runs": 32768,
-   "seconds": 30.87317737100011,
-   "runs_per_s": 1061.3743964940822,
-   "first_batch_s": 19.64379130899988,
+   "seconds": 31.274766581998847,
+   "runs_per_s": 1047.7456295024958,
+   "first_batch_s": 19.773474270004954,
    "converged": 1.0,
    "steps_needed": 2.760806224385246,
    "steps_paid": 3.3442622950819674,
@@ -54,10 +54,10 @@
    "device": "cpu",
    "procs": 32,
    "batch": 2,
-   "runs": 4096,
-   "seconds": 5.608568764999973,
-   "runs_per_s": 730.3110956864625,
-   "per_process_runs_per_s": 24.194019053036534,
+   "runs": 1024,
+   "seconds": 1.6013758059998509,
+   "runs_per_s": 639.4501504040429,
+   "per_process_runs_per_s": 22.216695372300965,
    "converged": 1.0,
    "steps_needed": 2.754610655737705,
    "steps_paid": 3.2950819672131146,
@@ -67,21 +67,21 @@
    "solver": "simss",
    "device": "cpu",
    "procs": 32,
-   "runs": 1024,
-   "seconds": 22.100947501999826,
-   "runs_per_s": 46.33285518221978,
+   "runs": 128,
+   "seconds": 3.9097885660012253,
+   "runs_per_s": 32.73834322220479,
    "version": "5.36",
    "how": "docker jaxdd/simss:5.36",
    "failed_runs": 0,
-   "skipped_voltages": 1.600922131147541e-05
+   "skipped_voltages": 0.00012807377049180329
   }
  ],
  "accuracy": {
   "devices": 48,
   "bernoulli": "simss",
   "tolerance": 0.001,
-  "median": 1.8950271014567443e-06,
-  "max": 1.533754637410003e-05,
+  "median": 1.8950270988052762e-06,
+  "max": 1.53375463835161e-05,
   "beyond_tolerance": 0
  }
 }

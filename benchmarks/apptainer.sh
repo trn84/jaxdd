@@ -48,7 +48,7 @@
 #              (about 15 min per grid on one A100), against the graded one at 3200; saved per
 #              grid and size and resumed (validation/grid_<N>.npz); not in the default steps.
 #              GRID_ARGS="4096 4096 1600,3200 graded" for some sizes or one grid only
-#   run        benchmarks/run.py: GPU at batch 4096 and 16384, jaxdd on this job's CPU cores;
+#   run        benchmarks/run.py: GPU at batch 4096 and 16384 per GPU, jaxdd on this job's CPU cores;
 #              writes benchmarks/results/<label>.json for benchmarks/plot.py
 #   chunk      validation/chunk.py on the batch file CHUNK (a real workload built elsewhere and
 #              copied here; not in the default steps)

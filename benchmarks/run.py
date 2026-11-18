@@ -12,11 +12,13 @@ SimSS and built from those same inputs for jaxdd.
 
 **What is measured**, each part only where the machine has it:
 
-* `gpu` — jaxdd on JAX's GPUs, one process, at each `--gpu-batches` size; compilation and a
-  first batch excluded, then `--repeats` batches timed. The batch is split across every GPU
-  the process sees (`solve_batch`), their number in the row (`gpus`); one GPU's rate with
-  `CUDA_VISIBLE_DEVICES=0`. The batch is `--gpu-unique` distinct
-  devices tiled to its size (building a device is host time, ~25 ms, not the solver's).
+* `gpu` — jaxdd on JAX's GPUs, one process, at each `--gpu-batches` size per GPU;
+  compilation and a first batch excluded, then `--repeats` batches timed. The batch is split
+  across every GPU the process sees (`solve_batch`): on two GPUs 16384 is a batch of 32768.
+  Their number is in the row (`gpus`) and, beyond one, in the label and the file's name
+  ("… 2 GPUs"), beside one GPU's result; one GPU of several with `CUDA_VISIBLE_DEVICES=0`.
+  The batch is `--gpu-unique` distinct devices tiled to its size (building a device is host
+  time, ~25 ms, not the solver's).
 * `cpu` — jaxdd on the CPU the way it runs fastest there: one single-threaded process per core
   (`--cpu-procs`, default every logical core), each pinned to its core and solving
   `--cpu-batch` devices `--cpu-repeats` times after its own compilation, all started
@@ -117,9 +119,11 @@ def measure_gpu(batches: list[int], unique: int, repeats: int) -> list[dict]:
 
     from jaxdd.batch import prepare, solve_batch
 
-    base = variants(min(unique, max(batches)), SEED, grid="simss")  # SimSS's devices
+    gpus = jax.device_count()
+    base = variants(min(unique, max(batches) * gpus), SEED, grid="simss")  # SimSS's devices
     out = []
-    for size in batches:
+    for per_gpu in batches:
+        size = per_gpu * gpus
         devices = [base[k % len(base)] for k in range(size)]
         batch = prepare(devices)
         start = time.perf_counter()
@@ -133,11 +137,12 @@ def measure_gpu(batches: list[int], unique: int, repeats: int) -> list[dict]:
         seconds = time.perf_counter() - start
         runs = size * repeats
         row = {"solver": "jaxdd", "device": "gpu", "gpu": jax.devices()[0].device_kind,
-               "gpus": jax.device_count(), "batch": size, "runs": runs, "seconds": seconds,
+               "gpus": gpus, "batch": size, "runs": runs, "seconds": seconds,
                "runs_per_s": runs / seconds,
                "first_batch_s": first, "converged": float(np.asarray(ok).mean()),
                **_lockstep(np.asarray(its))}  # fmt: skip
-        print(f"gpu batch {size}: {row['runs_per_s']:.1f} runs/s (lockstep x{row['lockstep']:.2f})")
+        rate, lockstep = row["runs_per_s"], row["lockstep"]
+        print(f"gpu batch {per_gpu} x {gpus}: {rate:.1f} runs/s (lockstep x{lockstep:.2f})")
         out.append(row)
     return out
 
@@ -347,7 +352,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--label", required=True, help="the machine's name in the plot")
     parser.add_argument("--skip", default="", help="parts to leave out: gpu,cpu,simss,accuracy")
     parser.add_argument("--repeats", type=int, default=2)
-    parser.add_argument("--gpu-batches", default="4096,16384")
+    parser.add_argument("--gpu-batches", default="4096,16384", help="devices per GPU")
     parser.add_argument("--gpu-unique", type=int, default=2048)
     parser.add_argument("--cpu-procs", type=int, default=os.cpu_count())
     parser.add_argument("--cpu-batch", type=int, default=2, help="devices per process")
@@ -376,6 +381,8 @@ def main(argv: list[str] | None = None) -> int:
     }  # fmt: skip
     if "gpu" not in skip and jax.default_backend() != "cpu":
         report["machine"]["gpu"] = jax.devices()[0].device_kind
+        if jax.device_count() > 1:  # its own file, beside one GPU's
+            report["label"] += f" {jax.device_count()} GPUs"
         batches = [int(b) for b in args.gpu_batches.split(",")]
         report["results"] += measure_gpu(batches, args.gpu_unique, args.repeats)
     if "cpu" not in skip:
@@ -394,7 +401,7 @@ def main(argv: list[str] | None = None) -> int:
             report["accuracy"] = accuracy(curves)
             print(f"accuracy: {report['accuracy']}")
     RESULTS.mkdir(parents=True, exist_ok=True)
-    path = RESULTS / f"{_slug(args.label)}.json"
+    path = RESULTS / f"{_slug(report['label'])}.json"
     path.write_text(json.dumps(report, indent=1) + "\n", encoding="utf-8")
     print(f"written {path.relative_to(ROOT)}; now: python benchmarks/plot.py")
     return 0

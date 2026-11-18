@@ -3,7 +3,8 @@
 # driver, where current JAX runs directly, without Apptainer (benchmarks/apptainer.sh).
 #
 # Makes its own venv (.venv, Python 3.12 from uv, current jax[cuda12]) on the first start,
-# whatever Python the image has; installs uv if missing. Runs the steps in the background, so
+# whatever Python the image has (a PyTorch template is fine: its Python is not used); every
+# start installs into it what pyproject.toml asks for and it lacks; installs uv if missing. Runs the steps in the background, so
 # a closed web terminal or SSH session does not stop them, and follows the log.
 #
 # Once, in the pod's terminal (/workspace survives a stop of the pod, the rest does not):
@@ -18,14 +19,16 @@
 #
 # Steps (STEPS, in this order by default):
 #   info       the GPU, its driver, JAX and its devices, the pod's CPU cores
-#   tests      the test suite (a broken install fails here, in a minute)
+#   tests      the test suite (a broken install fails here, in a minute): a worker per core of
+#              the pod, one process where the GPUs are exclusive to one
 #   breakdown  validation/breakdown.py at batch 4096 and 16384: one Newton step, part by part
 #   bench      validation/bench.py 65536 16384: curves per second
 #   scan       breakdown.py 16384 and bench.py 65536 16384 again with JAXDD_SWEEP=scan: the
 #              block sweep as a scan instead of the Pallas kernel, on the same card
 #   hard       validation/hard.py 16384 16384: a hard workload (frozen ions over a wide range,
 #              light and dark), two passes against one, the Newton steps a batch pays
-#   run        benchmarks/run.py: GPU at batch 4096 and 16384, jaxdd on the pod's CPU cores;
+#   run        benchmarks/run.py: GPU at batch 4096 and 16384 per GPU (every GPU the pod has;
+#              beyond one, the label and the file say how many), jaxdd on the pod's CPU cores;
 #              writes benchmarks/results/<label>.json and prints it into the log
 #
 # Settings (environment): STEPS; LABEL, the machine's name in the plot (default: the GPU's
@@ -75,7 +78,15 @@ if [ "${1:-}" = "--inside" ]; then
                      "$(awk '/MemTotal/ {printf "%.0f GB", $2/1e6}' /proc/meminfo) host memory"
                 ;;
             tests)
-                "$py" -m pytest -q
+                # -n auto would count the host's cores, not the pod's; a GPU in exclusive-process
+                # mode takes one process (every other worker: CUDA_ERROR_DEVICE_UNAVAILABLE).
+                if nvidia-smi --query-gpu=compute_mode --format=csv,noheader 2>/dev/null |
+                        grep -qi exclusive; then
+                    echo "the GPUs are exclusive to one process: the tests in one"
+                    "$py" -m pytest -q -n 0
+                else
+                    "$py" -m pytest -q -n "$CPU_PROCS"
+                fi
                 ;;
             breakdown)
                 (cd validation && "$py" breakdown.py 4096 && "$py" breakdown.py 16384)
@@ -129,8 +140,10 @@ export UV_LINK_MODE=copy
 if [ ! -x "$VENV/bin/python" ]; then
     echo "making $VENV (Python 3.12, current jax[cuda12]); a few minutes"
     "$UV" venv --python 3.12 --python-preference only-managed "$VENV"
-    "$UV" pip install --python "$VENV/bin/python" -e "$ROOT[dev,bench]" "jax[cuda12]"
 fi
+# Every start: what pyproject.toml asks for now (a venv made before pytest-xdist was in the dev
+# extra fails the tests step with "unrecognized arguments: -n"); what is there stays, JAX too.
+"$UV" pip install -q --python "$VENV/bin/python" -e "$ROOT[dev,bench]" "jax[cuda12]"
 
 GPU="$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1 || true)"
 LABEL="${LABEL:-${GPU#NVIDIA } pod}"

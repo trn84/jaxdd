@@ -432,6 +432,12 @@ which is a row of that point alone, so the sweep is unchanged. In a batch the re
 masked per device (`gauge_on`), and the implicit derivatives take the same rows, because they
 come from `_assemble` too.
 
+The rates in the field read the boundary point. So at a free end `_assemble` sets the boundary
+point to its neighbour's state (`_free_ends`) and adds the boundary's columns to the neighbour's,
+`B[0] += A[0]` (or `B[NP] += C[NP]`): the chain rule of that copy. The copy is an identity, and
+nothing but those rates reads the boundary at a free end, so the system stays as it was
+everywhere else.
+
 In a batch two more rules apply to a device with a free end. Its current is 0 whatever the
 state, so "the current settled" ([below](#when-is-a-voltage-converged)) would stop Newton at its
 first small step. For such a device that rule is off: only the step's size and the round-off

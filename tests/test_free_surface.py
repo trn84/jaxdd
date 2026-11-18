@@ -10,6 +10,7 @@ import numpy as np
 import pytest
 
 from jaxdd.batch import device_tree, prepare, solve_batch, solve_states
+from jaxdd.constants import EPS_0, Q
 from jaxdd.device import build_device, device_parameters
 from jaxdd.simss_input import TVG, read_setup, setup_from_texts, simss_voltages
 from jaxdd.solver import solve_jv, solve_state
@@ -172,16 +173,47 @@ def test_mobile_ions_at_a_free_end() -> None:
     np.testing.assert_allclose(one[1].anion, one[0].anion, rtol=1e-8)
 
 
-@pytest.mark.parametrize(
-    ("layer", "S", "what"),
-    [
-        ({}, (-1, -1, 0, 0), "S_n_L < 0 at a free end"),
-        ({"fieldDepG": 1}, (0, 0, 0, 0), "field-dependent generation"),
-    ],
-)  # fmt: skip
-def test_what_a_free_end_does_not_yet_solve_is_refused(layer, S, what) -> None:
-    with pytest.raises(NotImplementedError, match=what):
-        stack([layer], S=S)
+def test_a_free_surface_needs_its_recombination_velocities() -> None:
+    with pytest.raises(ValueError, match="S_n_L < 0 at a free end"):
+        stack([{}], S=(-1, -1, 0, 0))
+
+
+def test_field_dependent_rates_in_a_film_without_field() -> None:
+    """A uniform film with both ends free has no field anywhere, so the rates in the field take
+    their zero-field values. Braun's generation (one distance `a`, `P0 = 0`): `P·G =
+    (1 − P)·k·(n² − n_i²)` with `P = k_d/(k_d + k_f)`, `k_d = 3k/(4π·a³)·exp(−E_B/V_T)`,
+    `E_B = q/(4π·ε·a)`. Langevin's rate in a field-dependent mobility: `G = k_L·(n² − n_i²)`,
+    `k_L = q·(μ_n + μ_p)/ε`."""
+    G, k, a, k_f, eps = 1.5e28, 4.7281398e-17, 1e-9, 1e9, 24.1 * EPS_0
+    d = stack([{"N_t_bulk": 0, "fieldDepG": 1, "thermLengDist": 1, "a": a, "k_f": k_f}])
+    r = solve_state(d)
+    k_d = 3 * k / (4 * np.pi * a**3) * np.exp(-Q / (4 * np.pi * eps * a) / d.Vt)
+    P = k_d / (k_d + k_f)
+    n = np.sqrt(P * G / ((1 - P) * k) + d.ni[1] ** 2)
+    assert r.converged and 0.1 < P < 0.9
+    np.testing.assert_allclose(r.n[1:-1], n, rtol=1e-8)
+    assert r.plqy == pytest.approx(P, rel=1e-6)  # the dissociated share recombines directly
+    mu = 1e-4
+    d = stack([{"N_t_bulk": 0, "useLangevin": 1, "mobnDep": 1, "mobpDep": 1, "gamma_n": 1e-4,
+                "gamma_p": 1e-4, "mu_n": mu, "mu_p": mu}])  # fmt: skip
+    r = solve_state(d)
+    n = np.sqrt(G * eps / (Q * 2 * mu) + d.ni[1] ** 2)
+    assert r.converged
+    np.testing.assert_allclose(r.n[1:-1], n, rtol=1e-8)
+
+
+def test_field_dependent_generation_in_a_free_stack() -> None:
+    """Braun's generation in the absorber of a charged HTL/absorber/ETL with both ends free,
+    where the interfaces' fields split pairs: converged, the same in a batch, and its implied
+    V_oc converged in the grid."""
+    braun = {"fieldDepG": 1, "a": 1e-9, "k_f": 1e9}
+    r = solve_state(stack([HTL, braun, ETL], S=(10, 10, 10, 10)))
+    fine = solve_state(stack([HTL, braun, ETL], S=(10, 10, 10, 10), NP=1600))
+    assert r.converged and fine.converged
+    assert fine.implied_voc == pytest.approx(r.implied_voc, abs=1e-5)
+    b = solve_states(prepare([stack([HTL, braun, ETL], S=(10, 10, 10, 10))]))
+    assert float(b["implied_voc"][0, 0]) == pytest.approx(r.implied_voc, abs=1e-8)
+    assert float(b["plqy"][0, 0]) == pytest.approx(r.plqy, rel=1e-7)
 
 
 def test_a_batch_with_free_ends_is_each_devices_own_solve() -> None:

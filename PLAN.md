@@ -9,20 +9,17 @@ handbook or the commit message, not here.
 
 0.2.0 is released (CHANGELOG.md).
 
-### 1.1 Free surfaces: the rest
+### 1.1 Free surfaces in time
 
 A free end (`W_L` or `W_R` = `free`, [docs/model.md](docs/model.md#free-surfaces-jaxdds-w_l-or-w_r--free))
-is solved in the steady state, one device (`solve_state`) or a batch (`solve_states`).
-Photoluminescence is measured on partial stacks of perovskite films, mobile ions and all (they
-work at a free end); refused there until done:
+is solved in the steady state, one device or a batch, with every module of the steady state.
+`solve_transient` refuses it: a transient photoluminescence decay (TRPL) is measured on the same
+partial stacks. In time the gauge row's argument fails (the carriers' rates differ while traps
+fill), so with both ends free the potential's gauge needs another row, and the film's charge is
+then fixed by its conservation in time.
 
-1. Field-dependent generation and Langevin in a field-dependent mobility: the field at the end
-   point one-sided.
-2. `solve_transient` (a transient photoluminescence decay): the gauge row holds only in the
-   steady state, so in time with both ends free it is the total charge's conservation instead.
-
-**Done when** each is in, with a test against an analytic case or a refined grid, and the
-refusals are gone.
+**Done when** `solve_transient` takes a free end, with a test against an analytic decay (a
+uniform film: `dn/dt = −k·n²` or `−n/τ`) and a refined time step, and the refusal is gone.
 
 ## 2 Waiting
 

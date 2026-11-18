@@ -332,8 +332,13 @@ point too (`_free_potential`), and the ions there are the end point's, as the ca
 A pre-bias (`preCond`, `fixIons`) changes nothing at a free end, where no voltage moves the
 state. `solve_state` and `solve_states` return the ions (`anion`, `cation`, mobile and fixed).
 
-Not yet at a free end (refused by name): field-dependent generation, Langevin recombination in a
-field-dependent mobility, and transients ([PLAN.md](../PLAN.md) 1.1).
+**The rates in the field** (Braun's generation, Langevin's rate in a field-dependent mobility)
+read the potential of the point's neighbours. At a free end the boundary point is its neighbour's
+state (`solver._free_ends`), so the end point's field is `(V₂ − V₁)/(x₂ − x₀)`: none over the dead
+interval, as there is none beyond the surface, averaged with the field after it. The implied
+`V_oc` and the PLQY take the direct rate in the field where it follows the field.
+
+Not yet at a free end (refused by name): transients ([PLAN.md](../PLAN.md) 1.1).
 
 ## Ions (`Init_Ionic_Region`, `Calc_Ion_Distribution_Steady_State`)
 

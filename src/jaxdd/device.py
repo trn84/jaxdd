@@ -481,9 +481,8 @@ def _free_ends(setup: Setup) -> tuple[bool, bool]:
 
 
 def _check_free(setup: Setup, st: Structure) -> None:
-    """A free end's surface recombination velocities are its surface's SRH (≥ 0; SIMsalabim's
-    negative 'infinite' means nothing there), and what is not yet solved at a free
-    end is refused by name (PLAN.md 1.1)."""
+    """A free end's surface recombination velocities are its surface's SRH, ≥ 0: SIMsalabim's
+    negative 'infinite' means nothing there (`ValueError`)."""
     if not any(st.free):
         return
     problems = []
@@ -492,12 +491,8 @@ def _check_free(setup: Setup, st: Structure) -> None:
             if on and float(setup.raw.get(k, "-1")) < 0:
                 problems.append(f"{k} < 0 at a free end: its surface's recombination velocity "
                                 "(m/s, ≥ 0) is needed")  # fmt: skip
-    if st.field_dep_g is not None and st.field_dep_g.any():
-        problems.append("field-dependent generation (fieldDepG) with a free end")
-    if st.mob_dep is not None and st.mob_dep.any() and st.langevin.any():
-        problems.append("Langevin recombination in a field-dependent mobility with a free end")
     if problems:
-        raise NotImplementedError("outside what jaxdd solves:\n  " + "\n  ".join(problems))
+        raise ValueError("; ".join(problems))
 
 
 def _sfb(N_A, N_D, E_c, E_v, N_c, Vt, xp=np):

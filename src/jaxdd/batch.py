@@ -150,6 +150,7 @@ def prepare(devices: list[Device]) -> dict:
                 t["s"].setdefault(k, np.zeros_like(t["s"]["hm"]))
             t["s"].setdefault("gauge", np.zeros(()))
             t["s"].setdefault("gauge_on", np.zeros(()))
+            t["s"].setdefault("free", np.zeros(2))
     with_traps = [t["s"]["ti"] for t in trees if "ti" in t["s"]]
     if with_traps:  # the others with none: zero on every edge
         for t in trees:
@@ -901,6 +902,9 @@ def _observed(d, s, ion, y, logs, Vint, g_frac, B):
     n, p = jnp.exp(full[1:-1, 1]), jnp.exp(full[1:-1, 2])
     vol = _volumes(s, d["L"])
     k = d["rec"]["kd"][1:-1]
+    if "kln" in s or "br_on" in s:  # the rate in the field
+        V = full[:, 0]
+        k = _point_rates(V[:-2], V[1:-1], V[2:], s)[0]
     rad = jnp.sum(vol * k * n * p)
     rad0 = jnp.sum(vol * k * d["rec"]["ni2"][1:-1])
     gen = g_frac * jnp.sum(vol * d["G"][1:-1])

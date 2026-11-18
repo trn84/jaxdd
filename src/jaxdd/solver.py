@@ -295,7 +295,8 @@ def _free_stencils(dev: Device, s: dict, xp=np) -> dict:
         fs_n, fs_p = _put(xp, fs_n, row, S[k]), _put(xp, fs_p, row, S[k + 1])
         fs_k = _put(xp, fs_k, row, 1.0 / vol)
     out.update(fs_n=fs_n, fs_p=fs_p, fs_k=fs_k, fs_ni=dev.ni[1:-1],
-               gauge=xp.zeros(()), gauge_on=xp.asarray(float(all(dev.free))))  # fmt: skip
+               gauge=xp.zeros(()), gauge_on=xp.asarray(float(all(dev.free))),
+               free=xp.asarray([float(f) for f in dev.free]))  # fmt: skip
     return out
 
 
@@ -813,6 +814,8 @@ def _assemble(full, s, Vt, g_frac, la, lc, B=bernoulli):
         J_left = jax.jacfwd(lambda y: ends(y, full[-2])[0])(full[1])
         J_right = jax.jacfwd(lambda y: ends(full[1], y)[1])(full[-2])
         full = _with_contacts(full, s, Vt, B)
+    if "free" in s:  # a free end's boundary point is its neighbour (`_free_ends`)
+        full = _free_ends(full, s)
     V, ln_n, ln_p = full[:, 0], full[:, 1], full[:, 2]
     n, p = jnp.exp(ln_n), jnp.exp(ln_p)
     # Per edge e = 0 … NP, between points e and e + 1.
@@ -934,6 +937,10 @@ def _assemble(full, s, Vt, g_frac, la, lc, B=bernoulli):
         jnp.stack([-Q * d_anion * s["sP"], zm, zm], -1),
         jnp.stack([Q * d_cation * s["sP"], zm, zm], -1),
     ], -1)  # fmt: skip
+    if "free" in s:  # the boundary point its neighbour: its columns are the neighbour's
+        fl, fr = s["free"][0] > 0, s["free"][1] > 0
+        Bb = Bb.at[0].add(jnp.where(fl, A[0], 0.0)).at[-1].add(jnp.where(fr, C[-1], 0.0))
+        A, C = A.at[0].set(jnp.where(fl, 0.0, A[0])), C.at[-1].set(jnp.where(fr, 0.0, C[-1]))
     if "gauge_on" in s:  # both ends free: the gauge in place of the last hole row (`_gauged`)
         F, A, Bb, C, U = _gauged(full[1:-1], s, Vt, F, A, Bb, C, U)
     return F, A, Bb, C, U
@@ -1259,6 +1266,16 @@ def _newton_step(y, logs, bounds, s, ion, Vt, g_frac, bernoulli_name="exact"):
     return new, logs + d_logs, size
 
 
+def _free_ends(full, s):
+    """`full` (NP + 2 × 3) with a free end's boundary point at its neighbour's state (`s["free"]`,
+    left and right): nothing flows over the end's interval, so the solution is flat across it.
+    The rates in the field (Braun's generation, Langevin's in a field-dependent mobility) then see
+    no field over that interval, as there is none beyond the surface; nothing else reads the
+    boundary point at a free end (`_free_stencils`)."""
+    full = full.at[0].set(jnp.where(s["free"][0] > 0, full[1], full[0]))
+    return full.at[-1].set(jnp.where(s["free"][1] > 0, full[-2], full[-1]))
+
+
 def _gauged(y, s, Vt, F, A, B, C, U):
     """Both ends free: the potential is fixed nowhere, so `V + c` solves the equations wherever
     `V` does, and the Jacobian is singular. Its rows are dependent in one way: with no flux over
@@ -1300,7 +1317,7 @@ def _poisson_row(left, mid, right, s, Vt, ref_left, ref_mid, ref_right, la, lc):
 def _on_points(s):
     """The stencils on the interior points: without the interface traps' edges, the
     contacts' surface recombination and the gauge of two free ends."""
-    return {k: v for k, v in s.items() if k not in ("ti", "ct", "gauge", "gauge_on")}
+    return {k: v for k, v in s.items() if k not in ("ti", "ct", "gauge", "gauge_on", "free")}
 
 
 _P_AXES = (0, 0, 0, 0, None, 0, 0, 0, 0, 0)
@@ -1607,6 +1624,8 @@ def solve_state(dev: Device, Vint: float = 0.0, g_frac: float | None = None,
     i = slice(1, -1)
     vol = _volumes(s, dev.L)
     k = np.asarray(dev.k_direct)[i]
+    if dev.langevin_field is not None or dev.braun is not None:  # the rate in the field
+        k = np.asarray(_point_rates(V[:-2], V[1:-1], V[2:], s)[0])
     rad = np.sum(vol * k * n[i] * p[i])
     rad0 = np.sum(vol * k * ni2[i])
     gen = g_frac * np.sum(vol * np.asarray(dev.G)[i])

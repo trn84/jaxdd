@@ -10,8 +10,9 @@ of SimSS 5.36's steady state, with ions free or frozen after a pre-bias, and the
 ZimT 5.36, on CPU and GPU, differentiable in the input's parameters. Against SimSS 5.36 it agrees
 to 1e-6 of the current scale with SimSS's own Bernoulli approximation; where the two differ by
 more, it has so far been SimSS's error, documented in [`docs/differences.md`](docs/differences.md).
-On one A100 about 2750 J-V curves per second, on a 16-core desktop CPU about 640: 84× and 20×
-SimSS on all cores of that desktop.
+On one A100 about 2750 J-V curves per second, on two 5400 (a batch is split across every GPU
+the process sees), on a 16-core desktop CPU about 640: 84×, 166× and 20× SimSS on all cores of
+that desktop.
 
 **How it works and how to use it:** the handbook in [`docs/`](docs/README.md) (overview,
 tutorial, model, solver with flowcharts, batching, hardware, validation).
@@ -77,6 +78,7 @@ The same devices for every solver (`benchmarks/run.py`: the three committed SimS
 | jaxdd | AMD Ryzen 9 5950X 16-Core Processor, 32 processes | 639 | 20 |
 | jaxdd | GeForce RTX 4070 Ti SUPER, batch 16384, FP64 at 1/64 of FP32 | 1,048 | 32 |
 | jaxdd | A100-SXM4-40GB, batch 16384, FP64 at 1/2 of FP32 | 2,748 | 84 |
+| jaxdd | 2× A100-SXM4-40GB, batch 16384 per GPU, FP64 at 1/2 of FP32 | 5,435 | 166 |
 <!-- benchmark:end -->
 
 **Measure a machine** (each part runs where the machine has it, the same devices for every

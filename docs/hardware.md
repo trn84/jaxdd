@@ -54,7 +54,7 @@ the GPUs, `solve_batch(..., devices=[...])` too. The batch is then the whole: 32
 is 16384 on each. Not split where the batch or the voltages are traced (inside `jax.jit`,
 `jax.jvp`, `jax.vmap`), nor in `jaxdd.transient`. On two A100-SXM4-40GB (`STEPS=gpus benchmarks/apptainer.sh`,
 2026-11-15) the benchmark runs at 5500 curves/s with 16384 devices per GPU, 2.01× the 2739 of one
-GPU, and at 4767 with 8192 per GPU; the grid study's small batches gain less (1.24× at 1024
+GPU, and at 4767 with 8192 per GPU (`benchmarks/run.py`, 2026-11-18: 5435 against 2748, 1.98×); the grid study's small batches gain less (1.24× at 1024
 devices per GPU and 800 points, 1.45× at 512 and 1600), a GPU being busy only with thousands.
 
 **Transients** (`validation/transient_bench.py 16384 4096`, `STEPS=transient

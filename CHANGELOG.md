@@ -17,7 +17,9 @@ the API, and says so here.
   `batch.solve_states` the same for a batch, free ends beside contacted devices, differentiable
   in `device_tree`'s parameters; both with mobile ions and their profiles (`anion`,
   `cation`), and with the rates in the field (Braun's generation, Langevin's in a
-  field-dependent mobility). Transients are refused at a free end for now ([docs/model.md](docs/model.md#free-surfaces-jaxdds-w_l-or-w_r--free)).
+  field-dependent mobility), and in time (`solve_transient`, e.g. a photoluminescence decay).
+  A device with a free end discretises Poisson's equation in flux form and counts its mobile
+  ions over the control volumes, so that it keeps its charge exactly ([docs/model.md](docs/model.md#free-surfaces-jaxdds-w_l-or-w_r--free)).
 
 ## [0.2.0] – 2026-11-15
 

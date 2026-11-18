@@ -7,19 +7,7 @@ handbook or the commit message, not here.
 
 ## 1 Next
 
-0.2.0 is released (CHANGELOG.md).
-
-### 1.1 Free surfaces in time
-
-A free end (`W_L` or `W_R` = `free`, [docs/model.md](docs/model.md#free-surfaces-jaxdds-w_l-or-w_r--free))
-is solved in the steady state, one device or a batch, with every module of the steady state.
-`solve_transient` refuses it: a transient photoluminescence decay (TRPL) is measured on the same
-partial stacks. In time the gauge row's argument fails (the carriers' rates differ while traps
-fill), so with both ends free the potential's gauge needs another row, and the film's charge is
-then fixed by its conservation in time.
-
-**Done when** `solve_transient` takes a free end, with a test against an analytic decay (a
-uniform film: `dn/dt = −k·n²` or `−n/τ`) and a refined time step, and the refusal is gone.
+0.2.0 is released (CHANGELOG.md). Nothing is next until one of the items below is taken up.
 
 ## 2 Waiting
 

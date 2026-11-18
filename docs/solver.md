@@ -423,14 +423,36 @@ the end point change (`solver._free_stencils`): its interval's mobilities 0, its
 without the boundary's potential, its control volume to the surface, and the surface's SRH in its
 rate (`_surface_srh`). The system keeps its unknowns and its block-tridiagonal form.
 
+A device with a free end has no SimSS to match, and two of its discretisations are chosen so
+that it keeps its charge exactly. Poisson's equation is in flux form, each interval's `ε` its
+left point's. SIMsalabim's form is not conservative at a jump of `ε`, and it left a free stack's
+charge 5e-6 of its scale off; in flux form the charge is 0 to round-off. The mobile ions are
+counted over the points' control volumes (`_ion_number`), as Poisson's equation counts their
+charge, and not over the region's intervals (SIMsalabim's `Rescale_Ion_Density`, whose count
+differs at the region's ends): a time step moves ions between the control volumes, so the number
+it keeps is theirs.
+
 With **both ends free** the Jacobian is singular. The potential's constant shift is a null
-vector, and the rows are dependent in one way: with no flux over either end, the electrons' rows,
-each divided by its weight `L·h_{i−1}·h_i`, sum to `∫(G − R)`, and so do the holes' (in the steady
-state each carrier recombines at the same rate). So the last point's hole row follows from the
-other rows. It is replaced by the gauge `V[NP] = 0` (`_gauged`, at the end of `_assemble`),
-which is a row of that point alone, so the sweep is unchanged. In a batch the replacement is
-masked per device (`gauge_on`), and the implicit derivatives take the same rows, because they
-come from `_assemble` too.
+vector, and the rows are dependent in one way, so one row of the last point is replaced by the
+gauge `V[NP] = 0` (`_gauged`, at the end of `_assemble`). That is a row of that point alone, so
+the sweep is unchanged. Which row it replaces (`_gauge_row`):
+
+- **In the steady state** the dependency is between the carriers. With no flux over either end,
+  the electrons' rows, each divided by its weight `L·h_{i−1}·h_i`, sum to `∫(G − R)`, and so do
+  the holes' (each carrier recombines at the same rate). A continuity row follows from the
+  others: the one of the majority carrier at the last point, by its doping. The minority's
+  density there can lie below Newton's floor, and without a row of its own nothing would pin it.
+- **Over a time step** the two sums differ by the change of the film's charge, so Poisson's
+  rows join the dependency, and Poisson's last row is replaced. It follows from the others as
+  the field at the far end being 0, because the continuity rows keep the charge. A continuity
+  row replaced there would take Poisson's round-off times the weight `Δt` gives it, and Poisson's
+  terms reach 1e7 (in its rows' scale) on the graded grid's small intervals. On a stack with
+  mobile ions and charged traps the electron density at the last point then jittered by 1e-3
+  in its logarithm and the late steps of a decay never converged. With Poisson's row replaced,
+  every step of a decay converges in 2–7 Newton steps, from 1 ps to 10 ms.
+
+In a batch the replacement is masked per device (`gauge_on`), and the implicit derivatives take
+the same rows, because they come from `_assemble` too.
 
 The rates in the field read the boundary point. So at a free end `_assemble` sets the boundary
 point to its neighbour's state (`_free_ends`) and adds the boundary's columns to the neighbour's,

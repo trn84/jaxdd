@@ -270,10 +270,18 @@ def _free_stencils(dev: Device, s: dict, xp=np) -> dict:
     the end's interval (its mobilities 0, Poisson without the boundary's potential), the end
     point's control volume reaches to the surface, `h_0 + h_1/2` instead of `(h_0 + h_1)/2`,
     and its surface recombines by SRH (`_recombination`'s `fs_*`); with both ends free the
-    gauge (`gauge_on` 1, `_gauged`). In NumPy or `jax.numpy` (`xp`, as `_stencils`)."""
+    gauge (`gauge_on` 1, `_gauged`). Poisson's equation in flux form everywhere, each interval's
+    `ε` its left point's: conservative, so the film's charge is exactly that of its ends'
+    fields (SIMsalabim's form is not at a jump of `ε`; a free device has no SimSS to match).
+    In NumPy or `jax.numpy` (`xp`, as `_stencils`)."""
     h, L, eps = dev.h, dev.L, dev.eps
     NP = len(dev.x) - 2
-    out = {k: s[k] for k in ("fac_l", "fac_m", "fac_u", "fac", "mun_m", "mun_p", "mup_m", "mup_p")}
+    out = {k: s[k] for k in ("fac", "mun_m", "mun_p", "mup_m", "mup_p")}
+    i = np.arange(1, NP + 1)
+    width = h[i] + h[i - 1]
+    out["fac_l"] = 2 * eps[i - 1] / (h[i - 1] * width * L**2)
+    out["fac_u"] = 2 * eps[i] / (h[i] * width * L**2)
+    out["fac_m"] = -(out["fac_l"] + out["fac_u"])
     S = dev.free_S
     zero = xp.zeros(NP)
     fs_n, fs_p, fs_k = zero, zero, zero
@@ -296,6 +304,7 @@ def _free_stencils(dev: Device, s: dict, xp=np) -> dict:
         fs_k = _put(xp, fs_k, row, 1.0 / vol)
     out.update(fs_n=fs_n, fs_p=fs_p, fs_k=fs_k, fs_ni=dev.ni[1:-1],
                gauge=xp.zeros(()), gauge_on=xp.asarray(float(all(dev.free))),
+               gauge_col=xp.where(dev.N_D[NP] > dev.N_A[NP], 1.0, 2.0),
                free=xp.asarray([float(f) for f in dev.free]))  # fmt: skip
     return out
 
@@ -556,6 +565,8 @@ def _bulk_rates(n, p, s):
     Rn = jnp.where(traps, s["Nt"] * Cn * (nl - (nl + s["nt0"]) * mean), 0.0)
     Rp = jnp.where(traps, s["Nt"] * Cp * ((pl + s["pt0"]) * mean - s["pt0"]), 0.0)
     direct = s["kd"] * (n * p - s["ni2"])
+    if "fs_k" in s:  # a free end's surface: its states follow at once, the same for both
+        direct = direct + _surface_srh(n, p, s)
     return direct + _summed(s["Nt"], Rn, n), direct + _summed(s["Nt"], Rp, n)
 
 
@@ -997,6 +1008,20 @@ def _free_potential(V_full, ion):
     return V_full.at[-1].set(jnp.where(ion["free"][1] > 0, V_full[-2], V_full[-1]))
 
 
+def _ion_number(dens, masks, ion):
+    """Each slot's number of ions (per area) from its densities `dens` on all points (K × NP + 2):
+    trapezoidal over its region's intervals, as SIMsalabim's `Rescale_Ion_Density`; with a free
+    end (`ion["by_volume"]` 1) over its points' control volumes (`ion["vol"]`), as Poisson's
+    equation counts their charge. A film with no contact must keep its charge, and a time step
+    moves ions between the points' volumes, so over a step it keeps theirs, not the
+    trapezoid's (docs/solver.md, "Free surfaces")."""
+    pair = masks[:, 1:] * masks[:, :-1]
+    trapezoid = jnp.sum(0.5 * (dens[:, 1:] + dens[:, :-1]) * pair * ion["hL"], axis=1)
+    if "vol" not in ion:
+        return trapezoid
+    return jnp.where(ion["by_volume"] > 0, jnp.sum(dens * masks * ion["vol"], axis=1), trapezoid)
+
+
 def _ion_constraints(V_full, logs, ion):
     """Each slot's number of ions over its total, less 1 (trapezoidal over its region, as
     SIMsalabim's `Rescale_Ion_Density`); 0 for a slot without ions. A free end's interval at its
@@ -1006,8 +1031,7 @@ def _ion_constraints(V_full, logs, ion):
     z = logs[:, None] + sign[:, None] * V_full / ion["Vt"]
     inv = _slot_inv(ion)
     dens = masks * (jnp.exp(z) if inv is None else occupancy(z, inv)[0])
-    pair = masks[:, 1:] * masks[:, :-1]
-    number = jnp.sum(0.5 * (dens[:, 1:] + dens[:, :-1]) * pair * ion["hL"], axis=1)
+    number = _ion_number(dens, masks, ion)
     return jnp.where(totals > 0, number / jnp.where(totals > 0, totals, 1.0) - 1.0, 0.0)
 
 
@@ -1022,7 +1046,7 @@ def _ion_full(full, ion, Vt, B, dti):
     `Solve_Neg_Ions`, `Solve_Pos_Ions`, `B`'s ratio), Boltzmann's in the steady state; 0 (a
     density of 1, masked) elsewhere."""
     ma, mc = _ion_membership(ion)
-    V = full[:, 0]
+    V = _free_potential(full[:, 0], ion)  # a free end: its neighbour's ions
     x0, xN = (V[1] - V[0]) / Vt, (V[-1] - V[-2]) / Vt
 
     def ratio(x):  # ln(B(x)/B(−x)), −x for the exact B
@@ -1044,8 +1068,7 @@ def _ion_constraints_time(full, logs, ion):
     n = full.shape[0]
     dens = masks * jnp.concatenate([jnp.broadcast_to(jnp.exp(full[:, 3]), (ka, n)),
                                     jnp.broadcast_to(jnp.exp(full[:, 4]), (kc, n))])  # fmt: skip
-    pair = masks[:, 1:] * masks[:, :-1]
-    number = jnp.sum(0.5 * (dens[:, 1:] + dens[:, :-1]) * pair * ion["hL"], axis=1)
+    number = _ion_number(dens, masks, ion)
     del logs
     return jnp.where(totals > 0, number / jnp.where(totals > 0, totals, 1.0) - 1.0, 0.0)
 
@@ -1078,6 +1101,9 @@ def _assemble_ions(full, s, Vt, g_frac, logs, ion, B=bernoulli):
     A5, B5, C5 = grow(A3), grow(B3), grow(C3)
     # Poisson's: the ions' densities do not follow V here, they are unknowns of their own.
     B5 = B5.at[:, 0, 0].add(Q * (a_m + c_m) / Vt * s["sP"])
+    if "gauge_on" in s:  # Poisson's last row the gauge (`_gauged`): as `_assemble` left it
+        gauged = (s["gauge_on"] > 0) & (_gauge_row(s) == 0)
+        B5 = B5.at[-1, 0, 0].set(jnp.where(gauged, B3[-1, 0, 0], B5[-1, 0, 0]))
     B5 = B5.at[:, 0, 3].set(U3[:, 0, 0]).at[:, 0, 4].set(U3[:, 0, 1])
     F5 = jnp.concatenate([F3, jnp.zeros((NP, 2))], -1)
     K = logs.shape[0]
@@ -1276,21 +1302,39 @@ def _free_ends(full, s):
     return full.at[-1].set(jnp.where(s["free"][1] > 0, full[-2], full[-1]))
 
 
+def _gauge_row(s):
+    """Which of the last point's rows `_gauged` trades for the gauge: in the steady state the
+    continuity row of the majority carrier there (`s["gauge_col"]`, 1 electrons, 2 holes), over
+    a time step Poisson's (0)."""
+    if "tr" not in s:
+        return s["gauge_col"]
+    return jnp.where(s["tr"]["dti"][-1] > 0, 0.0, s["gauge_col"])
+
+
 def _gauged(y, s, Vt, F, A, B, C, U):
     """Both ends free: the potential is fixed nowhere, so `V + c` solves the equations wherever
-    `V` does, and the Jacobian is singular. Its rows are dependent in one way: with no flux over
-    either end, the electrons' rows summed (each over its weight `L·h_{i−1}·h_i`) are `∫(G − R)`,
-    and so are the holes' (the steady state: each carrier recombines at the same rate). The last
-    point's hole row follows from the others and is traded for the gauge `V[NP] = s["gauge"]`,
-    which keeps the system block tridiagonal (docs/solver.md, "Free surfaces"). Where
-    `s["gauge_on"]` is 0 (a batch's device with a contact) the system as it is."""
-    on = s["gauge_on"] > 0
+    `V` does, and the Jacobian is singular. Its rows are dependent in one way, and one row of the
+    last point is traded for the gauge `V[NP] = s["gauge"]` (`_gauge_row`), a row of that point
+    alone, so the system stays block tridiagonal (docs/solver.md, "Free surfaces").
+
+    In the steady state, with no flux over either end, the electrons' rows summed (each over its
+    weight `L·h_{i−1}·h_i`) are the holes' (each carrier recombines at the same rate): a
+    continuity row follows from the others, that of the majority carrier, whose density its
+    neighbour's flux determines well. Over a time step the two sums differ by the change of the
+    film's charge, which Poisson's rows (in flux form) hold at 0: Poisson's last row follows from
+    the others, the field at the far end 0 from the charge kept. Traded there, a continuity
+    row would take Poisson's round-off (its terms reach 1e7 on the graded grid's small
+    intervals) times the weight `Δt` gives it, and its density would never settle.
+    Where `s["gauge_on"]` is 0 (a batch's device with a contact) the system as it is."""
     row = jnp.zeros(3).at[0].set(1.0 / Vt)
-    F = F.at[-1, 2].set(jnp.where(on, (y[-1, 0] - s["gauge"]) / Vt, F[-1, 2]))
-    A = A.at[-1, 2].set(jnp.where(on, 0.0, A[-1, 2]))
-    B = B.at[-1, 2].set(jnp.where(on, row, B[-1, 2]))
-    C = C.at[-1, 2].set(jnp.where(on, 0.0, C[-1, 2]))
-    U = U.at[-1, 2].set(jnp.where(on, 0.0, U[-1, 2]))
+    traded = _gauge_row(s)
+    for c in (0, 1, 2):
+        on = (s["gauge_on"] > 0) & (traded == c)
+        F = F.at[-1, c].set(jnp.where(on, (y[-1, 0] - s["gauge"]) / Vt, F[-1, c]))
+        A = A.at[-1, c].set(jnp.where(on, 0.0, A[-1, c]))
+        B = B.at[-1, c].set(jnp.where(on, row, B[-1, c]))
+        C = C.at[-1, c].set(jnp.where(on, 0.0, C[-1, c]))
+        U = U.at[-1, c].set(jnp.where(on, 0.0, U[-1, c]))
     return F, A, B, C, U
 
 
@@ -1317,7 +1361,8 @@ def _poisson_row(left, mid, right, s, Vt, ref_left, ref_mid, ref_right, la, lc):
 def _on_points(s):
     """The stencils on the interior points: without the interface traps' edges, the
     contacts' surface recombination and the gauge of two free ends."""
-    return {k: v for k, v in s.items() if k not in ("ti", "ct", "gauge", "gauge_on", "free")}
+    return {k: v for k, v in s.items()
+            if k not in ("ti", "ct", "gauge", "gauge_on", "gauge_col", "free")}  # fmt: skip
 
 
 _P_AXES = (0, 0, 0, 0, None, 0, 0, 0, 0, 0)
@@ -1337,10 +1382,9 @@ def _ion_logs(V_full, ion):
     puts fewer bounded ions into the region than it should, so it starts below)."""
     V_full = _free_potential(V_full, ion)
     masks, totals, sign = _slots(ion)
-    pair = masks[:, 1:] * masks[:, :-1]
 
     def number(dens):
-        return jnp.sum(0.5 * (dens[:, 1:] + dens[:, :-1]) * pair * ion["hL"], axis=1)
+        return _ion_number(dens, masks, ion)
 
     has = totals > 0
     total = jnp.where(has, totals, 1.0)
@@ -1545,6 +1589,10 @@ def _ion_setup(dev: Device) -> dict:
     out = {"Vt": dev.Vt, "hL": dev.h[:-1] * dev.L, "a_slots": a_slots, "a_totals": a_totals,
            "c_slots": c_slots, "c_totals": c_totals,
            "free": np.array([float(f) for f in dev.free])}  # fmt: skip
+    if any(dev.free):  # the ions counted over the control volumes (`_ion_number`)
+        s = _stencils(dev, xp)
+        out["vol"] = xp.concatenate([xp.zeros(1), _volumes(s, dev.L), xp.zeros(1)])
+        out["by_volume"] = xp.asarray(1.0)
     if _has_sites(dev):
         out["a_inv"] = _inverse_sites(dev.anion_max, len(dev.x), xp)
         out["c_inv"] = _inverse_sites(dev.cation_max, len(dev.x), xp)

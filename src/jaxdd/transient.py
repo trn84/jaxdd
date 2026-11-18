@@ -407,8 +407,6 @@ def solve_transient(batch, tvg: TVG | list[TVG], tol=1e-10, max_iter=200, bernou
     oc = np.stack([t.oc for t in tvgs])
     V = jnp.asarray(np.where(oc, 0.0, np.stack([t.Vext for t in tvgs])))
     traced = _traced(batch)
-    if "fs_k" in batch["s"]:  # a free end: the gauge row holds only in the steady state
-        raise NotImplementedError("a free end (W_L or W_R = free) in time: not yet (PLAN.md 1.1)")
     if traced and (ions is None or vint is None):
         raise ValueError("a traced batch needs `ions` and `vint` given")
     if ions is None:

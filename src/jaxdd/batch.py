@@ -40,6 +40,7 @@ from jaxdd.solver import (
     _bulk_rates,
     _contact_branch,
     _field_mobilities,
+    _free_ends,
     _held,
     _interface_points,
     _ion_constraints,
@@ -150,6 +151,9 @@ def prepare(devices: list[Device]) -> dict:
                 t["s"].setdefault(k, np.zeros_like(t["s"]["hm"]))
             t["s"].setdefault("gauge", np.zeros(()))
             t["s"].setdefault("gauge_on", np.zeros(()))
+            t["s"].setdefault("gauge_col", np.full((), 2.0))
+            t["ion"].setdefault("vol", np.zeros(len(t["x"])))
+            t["ion"].setdefault("by_volume", np.zeros(()))
             t["s"].setdefault("free", np.zeros(2))
     with_traps = [t["s"]["ti"] for t in trees if "ti" in t["s"]]
     if with_traps:  # the others with none: zero on every edge
@@ -293,6 +297,8 @@ def _current_parts(d, full, g_frac, B=bernoulli):
     with mobile ions) and `JD`; and on the points what the output's columns take: the densities,
     the generation and each carrier's direct, bulk and interface recombination."""
     full = _with_contacts(full, d["s"], d["Vt"], B)
+    if "free" in d["s"]:  # a free end's boundary point is its neighbour (`solver._free_ends`)
+        full = full.at[:, :3].set(_free_ends(full[:, :3], d["s"]))
     V, n, p = full[:, 0], jnp.exp(full[:, 1]), jnp.exp(full[:, 2])
     Vt, x, h, L = d["Vt"], d["x"], d["h"], d["L"]
     NP = x.shape[0] - 2
@@ -508,8 +514,11 @@ def _vint_row(y, Vint, target, d, g_frac, B):
     """The internal voltage's row, where it is an unknown (ZimT's `SimType` 2–4): with
     `target = (oc, Vext)`, the external current `Jext = Jint + Vint/R_shunt` at the open circuit
     (`oc` 1), over the device's current scale; else `Vext = Vint + Jext·R_series` (ZimT's
-    `Residual_Current_Voltage`), in V_T, which with `R_series = 0` is `Vint = Vext`."""
+    `Residual_Current_Voltage`), in V_T, which with `R_series = 0` is `Vint = Vext`. With a free
+    end the latter (`Vext` 0 at the open circuit): its current is 0 at every voltage."""
     oc, Vext = target
+    if "free" in d:  # a free end: no current whatever the voltage, which only moves the gauge
+        oc = jnp.where(jnp.any(d["free"] > 0), 0.0, oc)
     J_ext = _current(d, _full(_bounds(d, Vint), y), g_frac, B) + d["G_shunt"] * Vint
     return jnp.where(oc > 0, J_ext / d["J_scale"],
                      (Vint + d["R_series"] * J_ext - Vext) / d["Vt"])  # fmt: skip

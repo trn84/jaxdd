@@ -14,7 +14,7 @@ from jaxdd.constants import EPS_0, Q
 from jaxdd.device import build_device, device_parameters
 from jaxdd.simss_input import TVG, read_setup, setup_from_texts, simss_voltages
 from jaxdd.solver import solve_jv, solve_state
-from jaxdd.transient import solve_transient
+from jaxdd.transient import solve_transient, tj_columns
 
 CASE = Path(__file__).parent / "data" / "none_light"
 SETUP = (CASE / "simulation_setup.txt").read_text()
@@ -260,8 +260,74 @@ def test_the_implied_voc_is_differentiable_in_the_surface() -> None:
     assert grad == pytest.approx(fd, rel=1e-5)
 
 
-def test_a_free_end_in_time_is_refused() -> None:
-    tvg = TVG(t=np.array([0.0]), Vext=np.array([0.0]), oc=np.array([False]),
-              G_frac=np.array([1.0]), track=np.array([0]), dti=np.array([0.0]))  # fmt: skip
-    with pytest.raises(NotImplementedError, match="free end"):
-        solve_transient(prepare([stack([{}])]), tvg)
+def _tvg(times, G, V=None, oc=None):
+    """Time steps `(t, G_frac)` at `Vext` = `V` (0) or the open circuit (`oc`)."""
+    t = np.asarray(times, dtype=float)
+    return TVG(t=t, Vext=np.zeros_like(t) if V is None else np.asarray(V, dtype=float),
+               oc=np.zeros(len(t), bool) if oc is None else np.asarray(oc),
+               G_frac=np.asarray(G, dtype=float), track=np.zeros(len(t), int),
+               dti=np.concatenate([[0.0], 1 / np.diff(t)]))  # fmt: skip
+
+
+def _decay(steps, dt):
+    """The light on at t = 0 (the steady state), then off for `steps` steps of `dt`."""
+    return _tvg(np.arange(steps + 1) * dt, np.r_[1.0, np.zeros(steps)])
+
+
+def test_a_free_film_decays_as_implicit_euler() -> None:
+    """A uniform film with both ends free, direct recombination alone, the light switched off:
+    each step of implicit Euler of `dn/dt = −k·(n² − n_i²)` in closed form, to 1e-9 (the
+    density from the QFLS column); no current."""
+    d = stack([{"N_t_bulk": 0}])
+    dt, k, G = 1e-7, 4.7281398e-17, 1.5e28
+    r = solve_transient(prepare([d]), _decay(30, dt))
+    assert r.converged.all() and (r.J == 0).all()
+    ni = d.ni[1]
+    n = [np.sqrt(G / k + ni**2)]
+    for _ in range(30):
+        a = dt * k
+        n.append((-1 + np.sqrt(1 + 4 * a * (n[-1] + a * ni**2))) / (2 * a))
+    QFLS = tj_columns(r, 0)["QFLSL1"]
+    np.testing.assert_allclose(ni * np.exp(QFLS / (2 * d.Vt)), n, rtol=1e-9)
+
+
+def test_a_free_stack_in_time() -> None:
+    """HTL/absorber with charged traps and mobile ions/ETL, both ends free, through a decay: every
+    step converged, its first the steady state of `solve_state`, and the splitting at the end
+    converging at first order in the time step (implicit Euler)."""
+    layers = [HTL, {**IONS, "bulkTrapType": -1, "N_t_bulk": "1e22"}, ETL]
+    d = stack(layers, S=(10, 10, 10, 10))
+    ends = []
+    for k in (10, 20, 40):  # 40 steps each (one program), the splitting at 2e-7 s, step k
+        r = solve_transient(prepare([d]), _decay(40, 2e-7 / k))
+        assert r.converged.all() and (r.J == 0).all()
+        ends.append(tj_columns(r, 0)["QFLSL2"][k])
+    steady = solve_state(d)
+    absorber = (steady.x[1:] > 20e-9) & (steady.x[:-1] < 520e-9)
+    first = tj_columns(r, 0)["QFLSL2"][0]
+    w = np.diff(steady.x) * absorber
+    assert first == pytest.approx(np.sum(w * 0.5 * (steady.qfls[1:] + steady.qfls[:-1])) / w.sum(),
+                                  abs=1e-3)  # fmt: skip
+    ratio = (ends[0] - ends[1]) / (ends[1] - ends[2])
+    assert 1.6 < ratio < 2.4  # first order: each halving of the step halves the change
+
+
+def test_one_free_end_in_time_does_not_feel_the_voltage() -> None:
+    """A film on one contact: a voltage step at the contact (or its open circuit) only moves the
+    potential's gauge, so the splitting is that at 0 V, and no current flows; in a batch with a
+    cell at its open circuit (the internal voltage an unknown) the cell is as alone."""
+    d = stack([HTL, {}], W_L=5.0, S=(-1, -1, 100, 100))
+    times = np.arange(11) * 1e-8
+    G = np.r_[1.0, np.zeros(10)]
+    at_zero = solve_transient(prepare([d]), _tvg(times, G))
+    stepped = solve_transient(prepare([d]), _tvg(times, G, V=np.r_[0.0, np.full(10, 0.5)]))
+    q0, q1 = (tj_columns(r, 0)["QFLSL2"] for r in (at_zero, stepped))
+    assert at_zero.converged.all() and stepped.converged.all() and (stepped.J == 0).all()
+    np.testing.assert_allclose(q1, q0, atol=1e-9)
+    cell = build_device(read_setup(CASE / "simulation_setup.txt"))
+    oc = np.ones(len(times), bool)
+    mixed = solve_transient(prepare([d, cell]), [_tvg(times, G, oc=oc)] * 2)
+    alone = solve_transient(prepare([cell]), _tvg(times, G, oc=oc))
+    assert mixed.converged.all()
+    np.testing.assert_allclose(tj_columns(mixed, 0)["QFLSL2"], q0, atol=1e-9)
+    np.testing.assert_allclose(mixed.V_int[1], alone.V_int[0], atol=1e-9)

@@ -294,7 +294,10 @@ point 1, left end free:  ε₁·(V₂ − V₁)/(L·h₁) = q·(n₁ − p₁ + 
 ```
 
 The boundary point then holds its neighbour's state (the solution is flat across the dead
-interval), which is what `solve_state` returns there.
+interval), which is what `solve_state` returns there. In a device with a free end Poisson's
+equation is in flux form at every point (each interval's `ε` its left point's), and its mobile
+ions are counted over the control volumes: both keep the film's charge exactly, where
+SIMsalabim's forms do not ([solver.md](solver.md#free-surfaces)).
 
 **Surface recombination.** The end's `S_n_L`, `S_p_L` (or `S_n_R`, `S_p_R`) are the surface's SRH
 velocities (m/s, ≥ 0; a negative, SIMsalabim's "infinite", is refused at a free end), a level at
@@ -338,7 +341,13 @@ state (`solver._free_ends`), so the end point's field is `(V₂ − V₁)/(x₂ 
 interval, as there is none beyond the surface, averaged with the field after it. The implied
 `V_oc` and the PLQY take the direct rate in the field where it follows the field.
 
-Not yet at a free end (refused by name): transients ([PLAN.md](../PLAN.md) 1.1).
+**In time** (`solve_transient`) a free end is what it is in the steady state, at every step:
+no flux over it, no field beyond it. The total current (the carriers', the ions' and the
+displacement current) is then 0 everywhere. With one contact, its voltage only moves the
+potential's gauge, and an open circuit is taken as the voltage 0. The surface's states follow
+at once (no occupation of their own over a step). A transient photoluminescence decay is a
+`tVGFile` with the light on at `t = 0` and off after it; the splitting is the `QFLS` column of
+each layer (`tj_columns`).
 
 ## Ions (`Init_Ionic_Region`, `Calc_Ion_Distribution_Steady_State`)
 

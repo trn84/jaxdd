@@ -473,6 +473,59 @@ Why the gain is small here, and what the error is:
   0.7 % of the points are above 2.5e-2): 512 points give 7.2e-2 at 9⁴ and 3.7e-2 at 17⁴ where
   4096 give 1.0e-1 to 1.3e-1 and 4.8e-2 to 5.0e-2.
 
+## TRPL without electrodes
+
+Time-resolved photoluminescence of perovskite films and half-stacks without electrodes, jaxdd
+with free ends ([model.md](model.md#free-surfaces-jaxdds-w_l-or-w_r--free)) against SIMsalabim,
+which needs an electrode at either end, and against the measurements of Kober-Czerny et al.
+(2025) ([`validation/data/koberczerny2025`](../validation/data/koberczerny2025/README.md)): a
+600 nm FAPbI3 film on glass, glass/SnO2/FAPbI3 and glass/FAPbI3/Spiro-OMeTAD, TCSPC at 398 nm.
+The perovskite is as the authors found it; the transport layers take typical literature
+values, assumed; the pulse is a 10 ps generation step with the profile `exp(−αz)`, the PL
+`∫k_rad·n·p dz` averaged over the 2 ns bins as the measurement (`validation/trpl_common.py`).
+
+**The boundary decides the curve** (`trpl_halfstacks.py`). Electrodes in place of a free end,
+with SIMsalabim's conditions solved right (jaxdd, not ZimT 5.36's), under the choices they force;
+PL at 10 and 100 ns after the pulse, lit through the glass:
+
+| | SnO2, 10 ns | SnO2, 100 ns | Spiro, 10 ns | Spiro, 100 ns |
+|---|---|---|---|---|
+| free ends | 0.177 | 0.076 | 0.236 | 0.050 |
+| electrodes, outer work function 4.1 / 5.2 eV, S 0.1 m/s | < 1e-4 | < 1e-4 | 0.235 | 0.031 |
+| electrodes, outer work function 4.8 / 4.6 eV | < 1e-4 | < 1e-4 | 0.235 | 0.042 |
+| electrodes 'sfb', ohmic | < 1e-4 | < 1e-4 | 0.011 | 1e-4 |
+| electrodes 'sfb', S 0.1 m/s, +0.3 V | 3e-4 | < 1e-4 | 0.195 | 1e-4 |
+
+Two electrodes on the SnO2 stack impose a built-in voltage of about 1.2 V across it, which
+separates the carriers and quenches the PL within nanoseconds; a film without electrodes has no
+such field. SIMsalabim's equations reproduce the free stack (to 5.1e-5 and 5.6e-4 in the
+logarithm) only with electrodes at the free stack's own dark Fermi level (which takes a solve
+with free ends), blocking, 0 V at `t = 0` and the open circuit after it, and without
+recombination at the outer surfaces, which an electrode cannot do in pairs.
+
+**ZimT 5.36 itself** (`trpl_zimt.py`, Docker): see [differences.md](differences.md) §7. A
+decay with an exact answer, which jaxdd meets to 1.2e-5, ZimT misses by 80 % at 73 ns through
+its leaking blocking contacts; the half-stacks' best case it does not finish.
+
+**The measurements** (`trpl_fit.py`). The SnO2 half-stack's three decays with free ends, seven
+parameters: 0.088 decades rms by a hand-written Levenberg–Marquardt, 0.171 by `trpl_fit.py`'s
+`least_squares` from the same start (two minima). The SnO2/FAPbI3 interface's SRV comes out at
+13 cm/s, the authors' 9 (4–17) cm/s. The perovskite's mobility does not: about 0.01 cm²/Vs,
+where the authors find 0.4–2. That is the fit making up for the traps. A layer's trap levels
+share one pair of capture coefficients (SIMsalabim's, and so jaxdd's), so the authors' shallow
+electron trap (capture 1.3e6 /s, emission 7.5e5 /s) becomes a recombination centre (`C_p·p` ≈
+1e8 /s): with the authors' parameters jaxdd decays four times too fast at 1 µs, and the fit
+drives `C_p/C_n` to 1e-6. The Spiro half-stack contradicts the small mobility: its quench (0.08
+at 10 ns) takes the carriers to the interface within nanoseconds; with the authors' 0.41
+cm²/Vs and 1e4 cm/s at the interface it is met to 0.25 decades unfitted, with 0.01 cm²/Vs not
+below 0.88. What follows is in [PLAN.md](../PLAN.md).
+
+**Speed** (`trpl_timing.py`, the film's transient with electrodes, 142 steps; RTX 4070 Ti SUPER
+against the Ryzen 9 5950X's cores): jaxdd 0.18 s for one, 32 ms each in a batch of 28 (one
+iteration of a fit), after compilation; ZimT 8.9 s for one run, 2.4 s each with four at once.
+ZimT's time is its Gummel iterations' and depends on the case: on the film with the fitted
+parameters at the open circuit one run took 98 s (7.5 s each with 16 at once), jaxdd 0.24 s.
+
 ## The tests
 
 The tests compare with SimSS's and ZimT's runs on their grid (`grid="simss"`, a wrapper of
@@ -559,6 +612,10 @@ as arguments. SimSS itself is built by [`simss/`](../simss/README.md).
 | `validation/sample_measured.py [SAMPLE] [--move de\|stretch] [--walkers W] [--steps S] [--sigma F] [--out FILE] [--from-multistart]` | the fit's posterior by an ensemble sampler over the batch; the chain to an `.npz`; around the best of `fit_measured.py --starts N` |
 | `validation/axes.py [tol] [chunk] [test_points] [max_size]` | a table of a perovskite cell over four axes: refined axes against even ones, the error at random points |
 | `validation/fit.py CASE_DIR [--start S] [--fix NAME …] [--noise σ]` | a fit by gradients to the case's SimSS curve, from a perturbed start; what the curve determines (singular values) |
+| `validation/trpl_halfstacks.py` | TRPL of two half-stacks without electrodes: free ends against SIMsalabim's electrodes and their best case ([above](#trpl-without-electrodes)) |
+| `validation/trpl_zimt.py [--cap S] [--workdir DIR]` | ZimT 5.36 on a decay with an exact answer and on the half-stacks' best case (Docker, each run stopped after `S` seconds) |
+| `validation/trpl_fit.py` | the SnO2 half-stack's measured decays fitted with free ends |
+| `validation/trpl_timing.py [--batches N …] [--parallel P]` | the same transient's wall time in jaxdd and in ZimT |
 
 ## Running SimSS for a comparison
 

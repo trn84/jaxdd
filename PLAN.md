@@ -7,7 +7,32 @@ handbook or the commit message, not here.
 
 ## 1 Next
 
-0.2.0 is released (CHANGELOG.md). Nothing is next until one of the items below is taken up.
+0.2.0 is released (CHANGELOG.md).
+
+### 1.1 Trap levels with their own capture coefficients
+
+A trap file's levels share their layer's `C_n_bulk`, `C_p_bulk` (SIMsalabim's). A shallow
+electron trap, which captures electrons and gives them back but hardly takes holes, cannot be
+had beside a deep recombination level: it becomes a recombination centre itself. Fitting the
+TRPL of Kober-Czerny et al. (2025) the model made up for it with a mobility 40–200 times below
+theirs, which their Spiro half-stack contradicts ([docs/validation.md](docs/validation.md#trpl-without-electrodes)).
+`C_n`, `C_p` per level, as optional columns of `bulkTrapFile` (and `intTrapFile`), the layer's
+values where they are missing.
+
+**Done when** the steady state, the batch and transients take them, a trap file without the
+columns gives the same curves to the bit, and a test pins a level's own coefficients (one
+level with `C_p` = 0 does not recombine).
+
+### 1.2 The TRPL data jointly, then their posterior
+
+With 1.1: the film's four decays and both half-stacks' together, one perovskite (bulk, traps,
+mobility) for all three, each transport layer its own; from many starts at once (the batch).
+Then the posterior by sampling (`validation/sample_measured.py`'s ensemble sampler over the
+batch), to see what the decays determine: the mobility against the interfaces' SRV, the two
+surfaces of the film.
+
+**Done when** one parameter set meets all seven decays within the noise or the misfit is
+named, and the posterior's medians and spreads stand beside the authors'.
 
 ## 2 Waiting
 

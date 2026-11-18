@@ -171,6 +171,17 @@ SimSS reports 43.6 A/m² at 1.05 V, which jaxdd reproduces to 2e-9 with that bra
 110.0 A/m² with the branch that holds. One voltage later both agree again; the gap depends on
 the voltage step.
 
+**In time (ZimT).** The same switch, from the step before, makes a blocking contact (`S` = 0)
+leak after a laser pulse: where it takes the injected branch the contact's density is `n_eq`,
+an ohmic contact. A uniform film between two such contacts at 'sfb', radiative recombination
+alone, 0 V (`validation/trpl_zimt.py`, 2026-11-18): no field, no current, so each implicit-Euler
+step is known in closed form. jaxdd is within 1.2e-5 of it; ZimT 5.36 reports every step
+converged, lets up to 5.6e5 A/m² through its blocking contacts and is 30 % low at 7 ns, 80 % at
+73 ns, all but empty at 10 µs. With electrodes chosen to mimic a half-stack without them
+(`trpl_halfstacks.py`'s best case) it stops at the first step of glass/SnO2/FAPbI3 ("EInvalidOp:
+Invalid floating point operation") and on glass/FAPbI3/Spiro lets up to 6.8e6 A/m² through and
+reaches 12 ns in 30 min ([validation.md](validation.md#trpl-without-electrodes)).
+
 **jaxdd.** The physical condition at all four ends, finite while the carrier is extracted
 (SimSS's manual) or in both directions (`surface="robin"`); during Newton each contact's branch
 is held and changed near convergence until it holds at the solution ([solver.md](solver.md)).

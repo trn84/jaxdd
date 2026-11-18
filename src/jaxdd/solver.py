@@ -189,6 +189,9 @@ class StateResult:
     #: photon leaves (no reabsorption, no outcoupling loss); NaN in the dark.
     plqy: float
     J: float  # A/m², as `solve_jv`; 0 with a free end
+    #: m⁻³, the ions at each point, mobile and fixed (the boundary points their neighbours')
+    anion: np.ndarray
+    cation: np.ndarray
     converged: bool
     iterations: int
 
@@ -977,9 +980,21 @@ def _held(ion):
     return jnp.where(_slots(ion)[1] > 0, 0.0, 1.0)
 
 
+def _free_potential(V_full, ion):
+    """`V_full` with a free end's boundary point at its neighbour's potential: nothing flows over
+    the end's interval, so the solution is flat across it, and so are the ions in it (the
+    bound's own value is only a placeholder there, `solver._free_stencils`)."""
+    if "free" not in ion:
+        return V_full
+    V_full = V_full.at[0].set(jnp.where(ion["free"][0] > 0, V_full[1], V_full[0]))
+    return V_full.at[-1].set(jnp.where(ion["free"][1] > 0, V_full[-2], V_full[-1]))
+
+
 def _ion_constraints(V_full, logs, ion):
     """Each slot's number of ions over its total, less 1 (trapezoidal over its region, as
-    SIMsalabim's `Rescale_Ion_Density`); 0 for a slot without ions."""
+    SIMsalabim's `Rescale_Ion_Density`); 0 for a slot without ions. A free end's interval at its
+    neighbour's potential (`_free_potential`)."""
+    V_full = _free_potential(V_full, ion)
     masks, totals, sign = _slots(ion)
     z = logs[:, None] + sign[:, None] * V_full / ion["Vt"]
     inv = _slot_inv(ion)
@@ -1303,6 +1318,7 @@ def _ion_logs(V_full, ion):
     Boltzmann's in closed form; for ions bounded by their sites (`occupancy`) from there by
     Newton on the logarithm of their number, which rises with the normalisation (Boltzmann's
     puts fewer bounded ions into the region than it should, so it starts below)."""
+    V_full = _free_potential(V_full, ion)
     masks, totals, sign = _slots(ion)
     pair = masks[:, 1:] * masks[:, :-1]
 
@@ -1510,7 +1526,8 @@ def _ion_setup(dev: Device) -> dict:
     c_slots, c_totals = slots(dev.cation_mask, dev.cation_total, dev.cation_slots,
                               dev.cation_totals)  # fmt: skip
     out = {"Vt": dev.Vt, "hL": dev.h[:-1] * dev.L, "a_slots": a_slots, "a_totals": a_totals,
-           "c_slots": c_slots, "c_totals": c_totals}  # fmt: skip
+           "c_slots": c_slots, "c_totals": c_totals,
+           "free": np.array([float(f) for f in dev.free])}  # fmt: skip
     if _has_sites(dev):
         out["a_inv"] = _inverse_sites(dev.anion_max, len(dev.x), xp)
         out["c_inv"] = _inverse_sites(dev.cation_max, len(dev.x), xp)
@@ -1562,7 +1579,7 @@ def solve_jv(dev: Device, voltages: np.ndarray, g_frac: float | None = None,
     """
     g_frac = dev.G_frac if g_frac is None else g_frac
     J, conv, its = [], [], []
-    for Vint, full, ok, it in _scan(dev, voltages, g_frac, tol, max_iter, bernoulli_name):
+    for Vint, full, ok, it, _ in _scan(dev, voltages, g_frac, tol, max_iter, bernoulli_name):
         V_, n_, p_ = full[:, 0], np.exp(full[:, 1]), np.exp(full[:, 2])
         J.append(
             _current(dev, V_, n_, p_, g_frac, BERNOULLI[bernoulli_name])
@@ -1582,7 +1599,7 @@ def solve_state(dev: Device, Vint: float = 0.0, g_frac: float | None = None,
     only moves the potential's gauge, with two it is not used (docs/model.md, "Free surfaces").
     """
     g_frac = dev.G_frac if g_frac is None else g_frac
-    (_, full, ok, it), = _scan(dev, np.array([Vint], dtype=float), g_frac, tol, max_iter,
+    (_, full, ok, it, ions), = _scan(dev, np.array([Vint], dtype=float), g_frac, tol, max_iter,
                               bernoulli_name)  # fmt: skip
     V, n, p = full[:, 0], np.exp(full[:, 1]), np.exp(full[:, 2])
     ni2 = dev.ni**2
@@ -1598,13 +1615,24 @@ def solve_state(dev: Device, Vint: float = 0.0, g_frac: float | None = None,
         implied_voc=float(dev.Vt * np.log(rad / rad0)) if rad0 > 0 else float("nan"),
         plqy=float((rad - rad0) / gen) if gen > 0 else float("nan"),
         J=_current(dev, V, n, p, g_frac, BERNOULLI[bernoulli_name]), converged=bool(ok),
+        anion=np.asarray(ions[0]), cation=np.asarray(ions[1]),
         iterations=int(it),
     )  # fmt: skip
 
 
+def _ions_on_grid(y, logs, s, ion, Vt):
+    """The ions (anions, cations; m⁻³) of the interior solution `y` with `logs`, mobile and
+    fixed (`s` after any freezing), on all `NP + 2` points, the boundary points their
+    neighbours'."""
+    la, lc = _point_logs(logs, ion)
+    anion, cation = _ion_densities(y[:, 0], la, lc, s, Vt)
+    return jnp.pad(anion, 1, mode="edge"), jnp.pad(cation, 1, mode="edge")
+
+
 def _scan(dev: Device, voltages, g_frac, tol, max_iter, bernoulli_name):
     """`solve_jv`'s sequence of solves: yields each voltage's `(Vint, full, converged,
-    iterations)`, `full` the solution on all `NP + 2` points (`_with_contacts`, `_mirrored`)."""
+    iterations, ions)`, `full` the solution on all `NP + 2` points (`_with_contacts`,
+    `_mirrored`), `ions` `_ions_on_grid`'s."""
     s = jax.tree_util.tree_map(jnp.asarray, _stencils(dev))
     ion = {k: jnp.asarray(v) if isinstance(v, np.ndarray) else v
            for k, v in _ion_setup(dev).items()}  # fmt: skip
@@ -1696,4 +1724,4 @@ def _scan(dev: Device, voltages, g_frac, tol, max_iter, bernoulli_name):
         # voltage, not the rest of the scan.
         if ok and np.isfinite(full).all() and np.isfinite(np.asarray(logs_new)).all():
             y, logs = y_new, logs_new
-        yield Vint, full, ok, it
+        yield Vint, full, ok, it, _ions_on_grid(y_new, logs_new, s, ion, dev.Vt)

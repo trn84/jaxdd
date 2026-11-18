@@ -492,14 +492,10 @@ def _check_free(setup: Setup, st: Structure) -> None:
             if on and float(setup.raw.get(k, "-1")) < 0:
                 problems.append(f"{k} < 0 at a free end: its surface's recombination velocity "
                                 "(m/s, ≥ 0) is needed")  # fmt: skip
-    if st.anion_mobile.any() or st.cation_mobile.any():
-        problems.append("mobile ions with a free end")
     if st.field_dep_g is not None and st.field_dep_g.any():
         problems.append("field-dependent generation (fieldDepG) with a free end")
     if st.mob_dep is not None and st.mob_dep.any() and st.langevin.any():
         problems.append("Langevin recombination in a field-dependent mobility with a free end")
-    if st.pre_cond:
-        problems.append("preCond with a free end")
     if problems:
         raise NotImplementedError("outside what jaxdd solves:\n  " + "\n  ".join(problems))
 

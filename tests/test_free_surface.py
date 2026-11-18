@@ -24,6 +24,11 @@ HTL = {"L": "20e-9", "E_c": 2.5, "E_v": 5.4, "N_A": "1e23", "mu_n": "1e-4", "mu_
        "layerGen": 0, "G_ehp": 0, "N_t_bulk": 0, "k_direct": "1e-18", "eps_r": 3}  # fmt: skip
 
 
+def _integral(f, x):
+    """The trapezoidal rule (NumPy 1.26, the oldest supported, has no `np.trapezoid`)."""
+    return np.sum(0.5 * (f[1:] + f[:-1]) * np.diff(x))
+
+
 def _set(text, key, value):
     new, k = re.subn(rf"^{key}\s*=\s*\S+", f"{key} = {value}", text, flags=re.M)
     assert k == 1, key
@@ -132,13 +137,46 @@ def test_the_free_surface_is_not_a_blocking_contact() -> None:
     assert min(abs(np.array(blocking) - free)) > 1e-3
 
 
+#: A perovskite's ions: mobile anions over immobile cations, 1e18 cm⁻³ each.
+IONS = {"N_anion": "1e24", "N_cation": "1e24", "mu_anion": "1e-12", "mu_cation": 0,
+        "ionsMayEnter": 1}  # fmt: skip
+
+
+def test_mobile_ions_at_a_free_end() -> None:
+    """HTL/absorber with mobile ions/ETL, both ends free: the ions all in their layer, the film
+    neutral with them, the field at either end small; the same with the ions settled at a
+    pre-bias and frozen (no voltage moves anything here), in a batch, and converged in the
+    grid. With one contact, independent of the voltage as without ions."""
+    d = stack([HTL, IONS, ETL], S=(10, 10, 10, 10))
+    r = solve_state(d)
+    assert r.converged
+    absorber = (r.x > 20e-9) & (r.x < 520e-9)
+    count = _integral(np.where(absorber, r.anion, 0.0), r.x)
+    assert count == pytest.approx(1e24 * 500e-9, rel=1e-4)
+    assert np.ptp(r.anion[absorber]) > 0.1 * 1e24  # the ions moved
+    N_D = np.where(r.x > 520e-9, 1e23, 0.0)
+    N_A = np.where(r.x < 20e-9, 1e23, 0.0)
+    rho = r.p - r.n + N_D - N_A + r.cation - r.anion
+    assert abs(_integral(rho, r.x)) < 1e-4 * _integral(np.abs(rho), r.x)
+    E = np.diff(r.V) / np.diff(r.x)
+    assert max(abs(E[1]), abs(E[-2])) < 1e-4 * np.max(np.abs(E))
+    frozen = solve_state(stack([HTL, IONS, ETL], S=(10, 10, 10, 10), preCond=1, fixIons=1))
+    assert frozen.implied_voc == pytest.approx(r.implied_voc, abs=1e-9)
+    batch = solve_states(prepare([d]))
+    assert float(batch["implied_voc"][0, 0]) == pytest.approx(r.implied_voc, abs=1e-8)
+    np.testing.assert_allclose(np.asarray(batch["anion"][0, 0]), r.anion, rtol=1e-7)
+    fine = solve_state(stack([HTL, IONS, ETL], S=(10, 10, 10, 10), NP=1600))
+    assert fine.implied_voc == pytest.approx(r.implied_voc, abs=1e-5)
+    one = [solve_state(stack([HTL, IONS], W_L=5.0, S=(-1, -1, 10, 10)), Vint=V) for V in (0, 0.5)]
+    np.testing.assert_allclose(one[1].n, one[0].n, rtol=1e-8)
+    np.testing.assert_allclose(one[1].anion, one[0].anion, rtol=1e-8)
+
+
 @pytest.mark.parametrize(
     ("layer", "S", "what"),
     [
         ({}, (-1, -1, 0, 0), "S_n_L < 0 at a free end"),
-        ({"N_anion": "1e22", "N_cation": "1e22", "mu_anion": "1e-12", "mu_cation": "1e-12",
-          "ionsMayEnter": 1},
-         (0, 0, 0, 0), "mobile ions"),
+        ({"fieldDepG": 1}, (0, 0, 0, 0), "field-dependent generation"),
     ],
 )  # fmt: skip
 def test_what_a_free_end_does_not_yet_solve_is_refused(layer, S, what) -> None:

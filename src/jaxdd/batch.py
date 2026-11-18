@@ -48,6 +48,7 @@ from jaxdd.solver import (
     _ion_full,
     _ion_logs,
     _ion_setup,
+    _ions_on_grid,
     _on_points,
     _point_logs,
     _point_rates,
@@ -872,7 +873,7 @@ def _solve_one(d, voltages, B, tol, max_iter, start_iter, strict, states=False):
             carry,
         )
         if states:
-            return carry, (J, ok, it, *_observed(d, s, y_new, Vint, g_frac, B))
+            return carry, (J, ok, it, *_observed(d, s, ion, y_new, logs_new, Vint, g_frac, B))
         return carry, (J, ok, it)
 
     # Outwards from the pre-bias (docs/solver.md): up from the first voltage at or above it,
@@ -888,11 +889,11 @@ def _solve_one(d, voltages, B, tol, max_iter, start_iter, strict, states=False):
     return (J, ok & pre_ok, its, *rest)
 
 
-def _observed(d, s, y, Vint, g_frac, B):
+def _observed(d, s, ion, y, logs, Vint, g_frac, B):
     """A solution `y`'s state on all `NP + 2` points (`(V, ln n, ln p)`: the contacts' densities
     of finite surface recombination from their neighbours, a free end's boundary point its
-    neighbour's) and, as `solver.solve_state`, its implied `V_oc` and PLQY of direct
-    recombination."""
+    neighbour's), as `solver.solve_state` its implied `V_oc` and PLQY of direct
+    recombination, and its ions (`solver._ions_on_grid`, NP + 2 × 2)."""
     full = _with_contacts(_full(_bounds(d, Vint), y), s, d["Vt"], B)
     if "free" in d:
         full = full.at[0].set(jnp.where(d["free"][0] > 0, full[1], full[0]))
@@ -906,7 +907,7 @@ def _observed(d, s, y, Vint, g_frac, B):
     implied_voc = jnp.where(rad0 > 0, d["Vt"] * jnp.log(rad / jnp.where(rad0 > 0, rad0, 1.0)),
                             jnp.nan)  # fmt: skip
     plqy = jnp.where(gen > 0, (rad - rad0) / jnp.where(gen > 0, gen, 1.0), jnp.nan)
-    return full, implied_voc, plqy
+    return full, implied_voc, plqy, jnp.stack(_ions_on_grid(y, logs, s, ion, d["Vt"]), -1)
 
 
 @functools.partial(
@@ -1045,7 +1046,8 @@ def solve_states(batch, voltages=0.0, tol=1e-10, max_iter=60, first_max_iter=6,
                  bernoulli_name="exact", strict=False, devices=None):  # fmt: skip
     """The steady states of a batch (`prepare`) at `voltages` (one or several, internal) and
     what photoluminescence measures of them, as `solver.solve_state` per device: a dict of
-    `V`, `n`, `p`, `qfls` (batch × voltages × NP + 2; `V` in its gauge), `implied_voc`, `plqy`,
+    `V`, `n`, `p`, `qfls`, `anion`, `cation` (batch × voltages × NP + 2; `V` in its gauge),
+    `implied_voc`, `plqy`,
     `J`, `converged`, `iterations` (batch × voltages). Solved as `solve_batch` (its arguments
     too), each device's voltages one after another; with a free end the voltage only moves the
     potential's gauge (one contact) or is not used (none), so one voltage is what such a batch
@@ -1054,14 +1056,14 @@ def solve_states(batch, voltages=0.0, tol=1e-10, max_iter=60, first_max_iter=6,
     voltages = jnp.atleast_1d(jnp.asarray(voltages, dtype=float))
     mesh = None if _traced(batch, voltages) else _mesh(devices)
     with _quiet():
-        J, ok, its, full, voc, plqy = _passes(
+        J, ok, its, full, voc, plqy, ions = _passes(
             batch, voltages, tol, max_iter, first_max_iter, bernoulli_name, strict, mesh, True
         )
     n, p = jnp.exp(full[..., 1]), jnp.exp(full[..., 2])
     ni2 = batch["rec"]["ni2"][:, None, :]
     return {"V": full[..., 0], "n": n, "p": p, "qfls": batch["Vt"][:, None, None]
             * jnp.log(n * p / ni2), "implied_voc": voc, "plqy": plqy, "J": J, "converged": ok,
-            "iterations": its}  # fmt: skip
+            "iterations": its, "anion": ions[..., 0], "cation": ions[..., 1]}  # fmt: skip
 
 
 def _passes(batch, voltages, tol, max_iter, first_max_iter, bernoulli_name, strict, mesh=None,

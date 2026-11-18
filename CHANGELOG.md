@@ -15,8 +15,8 @@ the API, and says so here.
   both (a film on glass, neutral as a whole). `solve_state` gives one steady state with its
   quasi-Fermi level splitting, the implied `V_oc` and the PLQY of direct recombination;
   `batch.solve_states` the same for a batch, free ends beside contacted devices, differentiable
-  in `device_tree`'s parameters. Mobile ions, field-dependent generation and transients are
-  refused at a free end for now ([docs/model.md](docs/model.md#free-surfaces-jaxdds-w_l-or-w_r--free)).
+  in `device_tree`'s parameters; both with mobile ions and their profiles (`anion`,
+  `cation`). Field-dependent generation and transients are refused at a free end for now ([docs/model.md](docs/model.md#free-surfaces-jaxdds-w_l-or-w_r--free)).
 
 ## [0.2.0] – 2026-11-15
 

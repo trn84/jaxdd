@@ -13,13 +13,12 @@ handbook or the commit message, not here.
 
 A free end (`W_L` or `W_R` = `free`, [docs/model.md](docs/model.md#free-surfaces-jaxdds-w_l-or-w_r--free))
 is solved in the steady state, one device (`solve_state`) or a batch (`solve_states`).
-Photoluminescence is measured on partial stacks of perovskite films, so what such films hold has
-to work at a free end too. Refused at a free end until then:
+Photoluminescence is measured on partial stacks of perovskite films, mobile ions and all (they
+work at a free end); refused there until done:
 
-1. Mobile ions: the ions' constraint over the dead interval, a free end's ion flux 0.
-2. Field-dependent generation and Langevin in a field-dependent mobility: the field at the end
+1. Field-dependent generation and Langevin in a field-dependent mobility: the field at the end
    point one-sided.
-3. `solve_transient` (a transient photoluminescence decay): the gauge row holds only in the
+2. `solve_transient` (a transient photoluminescence decay): the gauge row holds only in the
    steady state, so in time with both ends free it is the total charge's conservation instead.
 
 **Done when** each is in, with a test against an analytic case or a refined grid, and the

@@ -75,6 +75,7 @@ r.qfls          # eV per point, V_T·ln(n·p/n_i²)
 r.implied_voc   # V, the splitting direct recombination's emission sees
 r.plqy          # ∫k·(n·p − n_i²) / ∫G: all direct recombination radiative, every photon out
 r.n, r.p, r.V   # the profiles (V in its gauge: only differences mean something)
+r.anion, r.cation  # the ions, mobile and fixed
 ```
 
 With one contact, the voltage given only shifts the potential; with none it is not used.

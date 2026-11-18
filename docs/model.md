@@ -323,9 +323,17 @@ the PLQY where all direct recombination is radiative and every photon leaves the
 reabsorption nor outcoupling is modelled).
 
 A batch takes free ends beside contacted devices: `solve_states` gives the same per device,
-differentiable in `device_tree`'s parameters; `solve_batch`'s current is 0 for them. Not yet at
-a free end (refused by name): mobile ions, field-dependent generation, Langevin recombination in
-a field-dependent mobility, `preCond` and transients ([PLAN.md](../PLAN.md) 1.1).
+differentiable in `device_tree`'s parameters; `solve_batch`'s current is 0 for them.
+
+**Mobile ions** reach a free end as they reach a contact: none leaves its region, and in the
+steady state they follow the potential. Over the end's dead interval the potential is flat, so
+the ions' count (`_ion_constraints`, trapezoidal) takes the end point's potential at the boundary
+point too (`_free_potential`), and the ions there are the end point's, as the carriers are.
+A pre-bias (`preCond`, `fixIons`) changes nothing at a free end, where no voltage moves the
+state. `solve_state` and `solve_states` return the ions (`anion`, `cation`, mobile and fixed).
+
+Not yet at a free end (refused by name): field-dependent generation, Langevin recombination in a
+field-dependent mobility, and transients ([PLAN.md](../PLAN.md) 1.1).
 
 ## Ions (`Init_Ionic_Region`, `Calc_Ion_Distribution_Steady_State`)
 

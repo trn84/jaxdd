@@ -76,13 +76,23 @@ def entries_of(reports: list[dict], label: str | None) -> list[tuple[str, dict, 
     return out + sorted(gpus, key=lambda e: e[2]["runs_per_s"])
 
 
-def describe(kind: str, report: dict, row: dict) -> tuple[str, str]:
-    """`(solver, hardware and setting)` of an entry."""
+def _short_cpu(name: str) -> str:
+    """A CPU's model without its vendor's words: "AMD Ryzen 9 5950X 16-Core Processor" is
+    "Ryzen 9 5950X"."""
+    name = re.sub(r"\((R|TM)\)|\bCPU\b|@.*$|\b\d+-Core Processor\b|\bProcessor\b", "", name)
+    name = re.sub(r"^(AMD|Intel)\s+", "", name.strip())
+    return " ".join(name.split())
+
+
+def describe(kind: str, report: dict, row: dict, short: bool = False) -> tuple[str, str]:
+    """`(solver, hardware and setting)` of an entry; `short` for the figure: the CPU's model
+    alone and no FP64 rate (both in the table)."""
     if kind != "gpu":
-        return NAMES[kind], f"{report['machine']['cpu']}, {row['procs']} processes"
+        cpu = report["machine"]["cpu"]
+        return NAMES[kind], f"{_short_cpu(cpu) if short else cpu}, {row['procs']} processes"
     name = row["gpu"].removeprefix("NVIDIA ")
     ratio = next((v for k, v in FP64_RATIO.items() if k in name), None)
-    fp64 = f", FP64 at {ratio} of FP32" if ratio else ""
+    fp64 = f", FP64 at {ratio} of FP32" if ratio and not short else ""
     count = row.get("gpus", 1)  # results before the count was recorded: one GPU
     if count > 1:
         return NAMES[kind], f"{count}× {name}, batch {row['batch'] // count} per GPU{fp64}"
@@ -120,9 +130,10 @@ def figure(entries: list[tuple[str, dict, dict]], theme: str, path: Path) -> Non
     ax.xaxis.set_minor_formatter(NullFormatter())
     ax.set_ylim(-0.6, len(entries) - 0.25)
     ax.set_yticks(range(len(entries)))
-    ax.set_yticklabels(["\n".join(describe(k, r, row)) for k, r, row in entries], color=t["ink"])
-    for tick in ax.get_yticklabels():
-        tick.set_linespacing(1.3)
+    # One line each: an SVG places each line of a label by matplotlib's font metrics, which the
+    # browser's font does not keep, so two lines end ragged; one line is aligned by the browser.
+    labels = [" on ".join(describe(k, r, row, short=True)) for k, r, row in entries]
+    ax.set_yticklabels(labels, color=t["ink"])
     ax.tick_params(axis="y", length=0)
     ax.tick_params(axis="x", colors=t["muted"], labelcolor=t["ink2"])
     ax.xaxis.grid(True, which="major", color=t["grid"], linewidth=0.8)

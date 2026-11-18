@@ -138,6 +138,11 @@ def prepare(devices: list[Device]) -> dict:
     sizes = {len(d.x) for d in devices}
     if len(sizes) != 1:
         raise ValueError(f"a batch needs one grid size, got NP + 2 in {sorted(sizes)}")
+    if any(any(d.free) for d in devices):
+        raise NotImplementedError(
+            "a free end (W_L or W_R = free) in a batch: not yet, "
+            "solver.solve_state solves one device (PLAN.md 1.1)"
+        )
     trees = [_device_tree(d) for d in devices]
     with_traps = [t["s"]["ti"] for t in trees if "ti" in t["s"]]
     if with_traps:  # the others with none: zero on every edge

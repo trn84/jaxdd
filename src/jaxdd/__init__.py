@@ -23,7 +23,7 @@ from jaxdd.simss_input import (
     setup_from_texts,
     simss_voltages,
 )
-from jaxdd.solver import JVResult, solve_jv
+from jaxdd.solver import JVResult, StateResult, solve_jv, solve_state
 from jaxdd.transient import TransientResult, solve_transient, tj_columns
 
 try:
@@ -37,6 +37,7 @@ __all__ = [
     "JVResult",
     "Layer",
     "Setup",
+    "StateResult",
     "Structure",
     "TransientResult",
     "__version__",
@@ -53,6 +54,7 @@ __all__ = [
     "simss_voltages",
     "solve_batch",
     "solve_jv",
+    "solve_state",
     "solve_transient",
     "tj_columns",
 ]

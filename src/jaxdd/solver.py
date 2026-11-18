@@ -37,7 +37,7 @@ from jaxdd.device import Device
 
 jax.config.update("jax_enable_x64", True)
 
-__all__ = ["JVResult", "bernoulli", "solve_jv"]
+__all__ = ["JVResult", "StateResult", "bernoulli", "solve_jv", "solve_state"]
 
 #: A Newton step below this (V_T, relative densities) that no longer falls is round-off: the
 #: solution, three orders below SIMsalabim's own `tolDens` of 1e-5.
@@ -171,6 +171,28 @@ class JVResult:
     V_ext: np.ndarray | None = None  # V + J·R_series
 
 
+@dataclass(frozen=True)
+class StateResult:
+    """One steady state (`solve_state`) on the device's `NP + 2` points, and what
+    photoluminescence measures of it."""
+
+    x: np.ndarray  # m
+    V: np.ndarray  # the potential, V (in its gauge: only differences mean something)
+    n: np.ndarray  # m⁻³
+    p: np.ndarray  # m⁻³
+    qfls: np.ndarray  # eV, the quasi-Fermi level splitting `V_T·ln(n·p/n_i²)` at each point
+    #: V, `V_T·ln(∫k·n·p / ∫k·n_i²)` with `k` the direct (radiative) rate: the splitting that
+    #: direct recombination's emission sees, which photoluminescence measures.
+    implied_voc: float
+    #: The share of the generated pairs that recombine directly, `∫k·(n·p − n_i²) / ∫G`: the
+    #: photoluminescence quantum yield if all direct recombination is radiative and every
+    #: photon leaves (no reabsorption, no outcoupling loss); NaN in the dark.
+    plqy: float
+    J: float  # A/m², as `solve_jv`; 0 with a free end
+    converged: bool
+    iterations: int
+
+
 def _or_zero(a, n, xp=np):
     """`a`, or zeros of length `n` where a device has none."""
     return xp.zeros(n) if a is None else a
@@ -225,6 +247,8 @@ def _stencils(dev: Device, xp=np) -> dict[str, jnp.ndarray]:
         out["ti"] = dict(dev.interface)
     if dev.surface is not None:  # finite surface recombination at a contact (`Device.surface`)
         out["ct"] = dict(dev.surface)
+    if any(dev.free):  # an end without an electrode (`Device.free`)
+        out.update(_free_stencils(dev, out))
     if dev.mob_field is not None:  # the field-dependent mobility's `k` on each point's intervals
         kn, kp = dev.mob_field
         out.update(fn_m=kn[i - 1], fn_p=kn[i], fp_m=kp[i - 1], fp_p=kp[i])
@@ -235,6 +259,38 @@ def _stencils(dev: Device, xp=np) -> dict[str, jnp.ndarray]:
         out.update({f"br_{k}": v[i] for k, v in dev.braun.items() if k != "romberg"})
         if dev.braun["romberg"]:  # SimSS's integration: the key's presence is the switch
             out["br_romberg"] = xp.zeros(NP)
+    return out
+
+
+def _free_stencils(dev: Device, s: dict) -> dict:
+    """The stencils changed at a free end (docs/model.md, "Free surfaces"): nothing flows over
+    the end's interval (its mobilities 0, Poisson without the boundary's potential), the end
+    point's control volume reaches to the surface, `h_0 + h_1/2` instead of `(h_0 + h_1)/2`,
+    and its surface recombines by SRH (`_recombination`'s `fs_*`). NumPy only: a batch refuses
+    free ends (PLAN.md 1.1)."""
+    h, L, eps = np.asarray(dev.h), dev.L, np.asarray(dev.eps)
+    NP = len(dev.x) - 2
+    out = {k: np.array(s[k], dtype=float) for k in
+           ("fac_l", "fac_m", "fac_u", "fac", "mun_m", "mun_p", "mup_m", "mup_p")}  # fmt: skip
+    S = np.asarray(dev.free_S, dtype=float)
+    fs_n, fs_p, fs_k = np.zeros(NP), np.zeros(NP), np.zeros(NP)
+    if dev.free[0]:  # point 1 (row 0): its volume [x_0, x_1 + h_1/2]
+        vol = L * (h[0] + 0.5 * h[1])
+        out["fac_u"][0] = eps[1] / (h[1] * L * vol)
+        out["fac_m"][0], out["fac_l"][0] = -out["fac_u"][0], 0.0
+        out["fac"][0] = L * h[0] * h[1] * vol
+        out["mun_m"][0] = out["mup_m"][0] = 0.0
+        fs_n[0], fs_p[0], fs_k[0] = S[0], S[1], 1.0 / vol
+    if dev.free[1]:  # point NP (row NP − 1): its volume [x_NP − h_{NP−1}/2, x_{NP+1}]
+        vol = L * (h[NP] + 0.5 * h[NP - 1])
+        out["fac_l"][-1] = eps[NP - 1] / (h[NP - 1] * L * vol)
+        out["fac_m"][-1], out["fac_u"][-1] = -out["fac_l"][-1], 0.0
+        out["fac"][-1] = L * h[NP - 1] * h[NP] * vol
+        out["mun_p"][-1] = out["mup_p"][-1] = 0.0
+        fs_n[-1], fs_p[-1], fs_k[-1] = S[2], S[3], 1.0 / vol
+    out.update(fs_n=fs_n, fs_p=fs_p, fs_k=fs_k, fs_ni=np.asarray(dev.ni)[1:-1])
+    if all(dev.free):  # no potential fixed anywhere: the gauge (`_gauged`)
+        out["gauge"] = np.zeros(())
     return out
 
 
@@ -512,7 +568,20 @@ def _recombination(n, p, s):
     nl, pl, Cn, Cp = _per_level(s["Nt"], n, p, s["Cn"], s["Cp"])
     srh = s["Nt"] * Cn * Cp * (nl * pl - s["nt0"] * s["pt0"])
     srh = srh / jnp.where(s["Nt"] > 0, Cn * (nl + s["nt0"]) + Cp * (pl + s["pt0"]), 1.0)
-    return s["kd"] * (n * p - s["ni2"]) + _summed(s["Nt"], jnp.where(s["Nt"] > 0, srh, 0.0), n)
+    R = s["kd"] * (n * p - s["ni2"]) + _summed(s["Nt"], jnp.where(s["Nt"] > 0, srh, 0.0), n)
+    if "fs_k" in s:  # a free end's surface: SRH per area over the end point's volume
+        R = R + _surface_srh(n, p, s)
+    return R
+
+
+def _surface_srh(n, p, s):
+    """A free surface's SRH recombination (m⁻³ s⁻¹ over the end point's control volume),
+    `S_n·S_p·(n·p − n_i²) / (S_n·(n + n_i) + S_p·(p + n_i))` per area, a mid-gap level; 0 at
+    every other point and where both velocities are 0."""
+    Sn, Sp, ni = s["fs_n"], s["fs_p"], s["fs_ni"]
+    num = Sn * Sp
+    den = Sn * (n + ni) + Sp * (p + ni)
+    return s["fs_k"] * num * (n * p - ni**2) / jnp.where(num > 0, den, 1.0)
 
 
 def _trap_charge(n, p, s):
@@ -1127,6 +1196,8 @@ def _newton_step(y, logs, bounds, s, ion, Vt, g_frac, bernoulli_name="exact"):
     la, lc = _point_logs(logs, ion)
     full = jnp.concatenate([bounds[0][None], y, bounds[1][None]])
     F, A, B, C, U = _assemble(full, s, Vt, g_frac, la, lc, BERNOULLI[bernoulli_name])
+    if "gauge" in s:
+        F, A, B, C, U = _gauged(y, s, Vt, F, A, B, C, U)
     U = _slot_columns(U, ion)
 
     def constraints(V_interior, logs_):
@@ -1162,6 +1233,21 @@ def _newton_step(y, logs, bounds, s, ion, Vt, g_frac, bernoulli_name="exact"):
     return new, logs + d_logs, size
 
 
+def _gauged(y, s, Vt, F, A, B, C, U):
+    """Both ends free: the potential is fixed nowhere, so `V + c` solves the equations wherever
+    `V` does, and the Jacobian is singular. Its rows are dependent in one way: with no flux over
+    either end, the electrons' rows summed (each over its weight `L·h_{i−1}·h_i`) are `∫(G − R)`,
+    and so are the holes' (the steady state: each carrier recombines at the same rate). The last
+    point's hole row follows from the others and is traded for the gauge `V[NP] = s["gauge"]`,
+    which keeps the system block tridiagonal (docs/solver.md, "Free surfaces")."""
+    F = F.at[-1, 2].set((y[-1, 0] - s["gauge"]) / Vt)
+    A = A.at[-1, 2].set(0.0)
+    B = B.at[-1, 2].set(jnp.array([1.0 / Vt, 0.0, 0.0]))
+    C = C.at[-1, 2].set(0.0)
+    U = U.at[-1, 2].set(0.0)
+    return F, A, B, C, U
+
+
 def _poisson_row(left, mid, right, s, Vt, ref_left, ref_mid, ref_right, la, lc):
     """Poisson's residual with the quasi-Fermi levels held: `n ∝ exp(V/V_T)`, `p ∝ exp(−V/V_T)`
     from the reference state, as SIMsalabim's `Solve_Poisson` moves them."""
@@ -1183,9 +1269,9 @@ def _poisson_row(left, mid, right, s, Vt, ref_left, ref_mid, ref_right, la, lc):
 
 
 def _on_points(s):
-    """The stencils on the interior points: without the interface traps' edges and the
-    contacts' surface recombination."""
-    return {k: v for k, v in s.items() if k not in ("ti", "ct")}
+    """The stencils on the interior points: without the interface traps' edges, the
+    contacts' surface recombination and the gauge of two free ends."""
+    return {k: v for k, v in s.items() if k not in ("ti", "ct", "gauge")}
 
 
 _P_AXES = (0, 0, 0, 0, None, 0, 0, 0, 0, 0)
@@ -1252,7 +1338,10 @@ def _poisson_step(y, bounds, s, ion, Vt):
 
 def _current(dev: Device, V, n, p, g_frac, B=bernoulli) -> float:
     """SIMsalabim's `Calc_Curr_Int` for both carriers, or `Calc_Curr_Diff` with
-    `dev.curr_diff` (Bernoulli function `B`), averaged as `Calc_All_Currents`."""
+    `dev.curr_diff` (Bernoulli function `B`), averaged as `Calc_All_Currents`. With a free end
+    0: in the steady state the current is the same everywhere, and nothing flows over that end."""
+    if any(dev.free):
+        return 0.0
     Vt, x, h, L = dev.Vt, dev.x, dev.h, dev.L
     NP = len(x) - 2
     s_all = {key: np.zeros(NP + 2) for key in ("kd", "ni2", "Nt", "Cn", "Cp", "nt0", "pt0")}
@@ -1307,8 +1396,11 @@ def _current(dev: Device, V, n, p, g_frac, B=bernoulli) -> float:
     return -dev.left_elec * float(np.sum(h[: NP + 1] * total) / np.sum(h[: NP + 1]))
 
 
-def _initial(dev: Device, Vint: float):
-    """SIMsalabim's `Init_Pot_Dens_Ions_Traps`: linear potential, linear Fermi level."""
+def _initial(dev: Device, Vint: float, g_frac: float | None = None):
+    """SIMsalabim's `Init_Pot_Dens_Ions_Traps`: linear potential, linear Fermi level. With a
+    free end (`_initial_free`) a flat potential instead."""
+    if any(dev.free):
+        return _initial_free(dev, Vint, dev.G_frac if g_frac is None else g_frac)
     x, L = dev.x, dev.L
     e = dev.left_elec  # −1: the left electrode the cathode, 1 the anode
     V = dev.V0 + 0.5 * e * Vint + x * (dev.VL - dev.V0 - e * Vint) / L
@@ -1316,6 +1408,68 @@ def _initial(dev: Device, Vint: float):
     n = dev.N_c * np.exp(-(EF - dev.E_c) / dev.Vt)
     p = dev.ni**2 / n
     return np.stack([V, np.log(n), np.log(p)], -1)
+
+
+def _initial_free(dev: Device, Vint: float, g_frac: float):
+    """The start with a free end: with one contact its potential and Fermi level everywhere
+    (equilibrium with it, but for the charge); with none (`_balanced`) the potential 0, the
+    gauge (`_gauged`), and each point neutral at one quasi-Fermi level splitting, the one at
+    which the device recombines what it generates. That start matters: without a contact only
+    recombination fixes how many carriers there are, so far from it Newton's system is
+    conditioned beyond what the block sweep resolves (docs/solver.md, "Free surfaces")."""
+    e = dev.left_elec
+    if all(dev.free):
+        n, p = _balanced(dev, g_frac)
+        return np.stack([np.zeros_like(dev.x), np.log(n), np.log(p)], -1)
+    else:
+        V_c, W = ((dev.VL - 0.5 * e * Vint, dev.W_R) if dev.free[0]
+                  else (dev.V0 + 0.5 * e * Vint, dev.W_L))  # fmt: skip
+        V = np.full_like(dev.x, V_c)
+        n = dev.N_c * np.exp(-(W - dev.E_c) / dev.Vt)
+    p = dev.ni**2 / n
+    return np.stack([V, np.log(n), np.log(p)], -1)
+
+
+def _neutral(dev: Device, mu):
+    """Each point's densities neutral by its doping at the splitting `mu` (V):
+    `n·p = n_i²·e^(mu/V_T)`, `n − p = N_D − N_A`, the smaller from the product (no
+    cancellation)."""
+    D = dev.N_D - dev.N_A
+    root = np.sqrt(D**2 + 4 * dev.ni**2 * np.exp(mu / dev.Vt))
+    big = 0.5 * (np.abs(D) + root)
+    small = dev.ni**2 * np.exp(mu / dev.Vt) / big
+    return np.where(D >= 0, big, small), np.where(D >= 0, small, big)
+
+
+def _balanced(dev: Device, g_frac: float):
+    """`_neutral` at the splitting where the device's recombination (bulk and surfaces, over the
+    control volumes) equals its generation, by bisection; equilibrium in the dark."""
+    s = _stencils(dev)
+    vol = s["fac"] / (dev.L * s["hm"] * s["hp"])
+    gen = g_frac * np.sum(vol * np.asarray(dev.G)[1:-1])
+    if not gen > 0:
+        return _neutral(dev, 0.0)
+
+    def excess(mu):
+        n, p = _neutral(dev, mu)
+        return np.sum(vol * np.asarray(_recombination(n[1:-1], p[1:-1], s))) - gen
+
+    lo, hi = 0.0, float(np.max(dev.E_v - dev.E_c))
+    for _ in range(60):
+        mid = 0.5 * (lo + hi)
+        lo, hi = (mid, hi) if excess(mid) < 0 else (lo, mid)
+    return _neutral(dev, 0.5 * (lo + hi))
+
+
+def _mirrored(dev: Device, full):
+    """`full` (NP + 2 × 3) with each free end's boundary point its neighbour's state: nothing
+    flows over the end's interval, so the solution is flat across it."""
+    full = np.array(full)
+    if dev.free[0]:
+        full[0] = full[1]
+    if dev.free[1]:
+        full[-1] = full[-2]
+    return full
 
 
 def _ion_setup(dev: Device) -> dict:
@@ -1383,11 +1537,56 @@ def solve_jv(dev: Device, voltages: np.ndarray, g_frac: float | None = None,
     they are then held for the scan (SIMsalabim's sequence, `fixIons` as patched in `simss/`).
     """
     g_frac = dev.G_frac if g_frac is None else g_frac
+    J, conv, its = [], [], []
+    for Vint, full, ok, it in _scan(dev, voltages, g_frac, tol, max_iter, bernoulli_name):
+        V_, n_, p_ = full[:, 0], np.exp(full[:, 1]), np.exp(full[:, 2])
+        J.append(
+            _current(dev, V_, n_, p_, g_frac, BERNOULLI[bernoulli_name])
+            + (float(Vint) / dev.R_shunt if dev.R_shunt > 0 else 0.0)
+        )
+        conv.append(ok)
+        its.append(it)
+    V, J = np.asarray(voltages, dtype=float), np.array(J)
+    return JVResult(V, J, np.array(conv), np.array(its), V + J * dev.R_series)
+
+
+def solve_state(dev: Device, Vint: float = 0.0, g_frac: float | None = None,
+                tol: float = 1e-10, max_iter: int = 200,
+                bernoulli_name: str = "exact") -> StateResult:  # fmt: skip
+    """The steady state at the internal voltage `Vint`: its profiles, the quasi-Fermi level
+    splitting and what photoluminescence measures (`StateResult`). With one free end `Vint`
+    only moves the potential's gauge, with two it is not used (docs/model.md, "Free surfaces").
+    """
+    g_frac = dev.G_frac if g_frac is None else g_frac
+    (_, full, ok, it), = _scan(dev, np.array([Vint], dtype=float), g_frac, tol, max_iter,
+                              bernoulli_name)  # fmt: skip
+    V, n, p = full[:, 0], np.exp(full[:, 1]), np.exp(full[:, 2])
+    ni2 = dev.ni**2
+    s = _stencils(dev)
+    i = slice(1, -1)
+    # Each interior point's control volume (m), the free ends' reaching to the surface.
+    vol = s["fac"] / (dev.L * s["hm"] * s["hp"])
+    k = np.asarray(dev.k_direct)[i]
+    rad = np.sum(vol * k * n[i] * p[i])
+    rad0 = np.sum(vol * k * ni2[i])
+    gen = g_frac * np.sum(vol * np.asarray(dev.G)[i])
+    return StateResult(
+        x=np.asarray(dev.x), V=V, n=n, p=p, qfls=dev.Vt * np.log(n * p / ni2),
+        implied_voc=float(dev.Vt * np.log(rad / rad0)) if rad0 > 0 else float("nan"),
+        plqy=float((rad - rad0) / gen) if gen > 0 else float("nan"),
+        J=_current(dev, V, n, p, g_frac, BERNOULLI[bernoulli_name]), converged=bool(ok),
+        iterations=int(it),
+    )  # fmt: skip
+
+
+def _scan(dev: Device, voltages, g_frac, tol, max_iter, bernoulli_name):
+    """`solve_jv`'s sequence of solves: yields each voltage's `(Vint, full, converged,
+    iterations)`, `full` the solution on all `NP + 2` points (`_with_contacts`, `_mirrored`)."""
     s = jax.tree_util.tree_map(jnp.asarray, _stencils(dev))
     ion = {k: jnp.asarray(v) if isinstance(v, np.ndarray) else v
            for k, v in _ion_setup(dev).items()}  # fmt: skip
     first = dev.V_pre if dev.pre_cond else float(voltages[0])
-    y_full = _initial(dev, first)
+    y_full = _initial(dev, first, g_frac)
     y = jnp.asarray(y_full[1:-1])
     logs = _ion_logs(jnp.asarray(y_full[:, 0]), ion)
 
@@ -1464,23 +1663,14 @@ def solve_jv(dev: Device, voltages: np.ndarray, g_frac: float | None = None,
         if dev.fix_ions:
             s, ion = _freeze(s, ion, y, logs, None, dev.Vt)
 
-    J, conv, its = [], [], []
     for Vint in voltages:
         y_new, logs_new, ok, it = settle(y, logs, s, ion, float(Vint))
         bounds = bounds_at(float(Vint))
-        full = np.asarray(_with_contacts(
+        full = _mirrored(dev, _with_contacts(
             jnp.concatenate([bounds[0][None], jnp.asarray(y_new), bounds[1][None]]), s, dev.Vt,
             BERNOULLI[bernoulli_name]))  # fmt: skip
         # Each voltage starts from the last converged solution: a failed one costs that
         # voltage, not the rest of the scan.
         if ok and np.isfinite(full).all() and np.isfinite(np.asarray(logs_new)).all():
             y, logs = y_new, logs_new
-        V_, n_, p_ = full[:, 0], np.exp(full[:, 1]), np.exp(full[:, 2])
-        J.append(
-            _current(dev, V_, n_, p_, g_frac, BERNOULLI[bernoulli_name])
-            + (float(Vint) / dev.R_shunt if dev.R_shunt > 0 else 0.0)
-        )
-        conv.append(ok)
-        its.append(it)
-    V, J = np.asarray(voltages, dtype=float), np.array(J)
-    return JVResult(V, J, np.array(conv), np.array(its), V + J * dev.R_series)
+        yield Vint, full, ok, it

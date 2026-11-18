@@ -59,6 +59,28 @@ converge raises `RuntimeError`.
 `solve_jv` is the reference implementation: a Python loop over voltages and Newton steps, easy
 to step through, about 20 curves per second on one CPU core. For many devices use the batch.
 
+## A film without contacts: photoluminescence
+
+`W_L = free` or `W_R = free` (either, or both) ends the device at a surface instead of an
+electrode ([model.md](model.md#free-surfaces-jaxdds-w_l-or-w_r--free)). That end's `S_n_*`, `S_p_*` are
+the surface's recombination velocities (m/s, ≥ 0). `solve_state` gives one steady state and
+what photoluminescence measures of it:
+
+```python
+from jaxdd import build_device, read_setup, solve_state
+
+dev = build_device(read_setup("glass_absorber_etl/simulation_setup.txt"))  # W_L = W_R = free
+r = solve_state(dev)              # the light of the device's G_frac; g_frac= to change it
+r.qfls          # eV per point, V_T·ln(n·p/n_i²)
+r.implied_voc   # V, the splitting direct recombination's emission sees
+r.plqy          # ∫k·(n·p − n_i²) / ∫G: all direct recombination radiative, every photon out
+r.n, r.p, r.V   # the profiles (V in its gauge: only differences mean something)
+```
+
+With one contact, the voltage given only shifts the potential; with none it is not used.
+`solve_state` works for any device, contacts at both ends too. A batch does not take a free end
+yet.
+
 ## Many devices
 
 ```python

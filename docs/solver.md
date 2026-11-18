@@ -416,6 +416,30 @@ starts anew (`solve_jv` and the batch's `_newton_loop`). A voltage is converged 
 contact's branch holds at its solution. On `surface_light` every voltage converges in at most 18
 steps. Devices without a finite `S` have no contact state and skip all of it, to the bit.
 
+### Free surfaces
+
+At a free end ([model.md](model.md#free-surfaces-jaxdds-w_l-or-w_r--free)) only the stencils of
+the end point change (`solver._free_stencils`): its interval's mobilities 0, its Poisson row
+without the boundary's potential, its control volume to the surface, and the surface's SRH in its
+rate (`_surface_srh`). The system keeps its unknowns and its block-tridiagonal form.
+
+With **both ends free** the Jacobian is singular. The potential's constant shift is a null
+vector, and the rows are dependent in one way: with no flux over either end, the electrons' rows,
+each divided by its weight `L·h_{i−1}·h_i`, sum to `∫(G − R)`, and so do the holes' (in the steady
+state each carrier recombines at the same rate). So the last point's hole row follows from the
+other rows. It is replaced by the gauge `V[NP] = 0` (`_gauged`), which is a row of that point
+alone, so the sweep is unchanged.
+
+Without a contact, only recombination fixes how many carriers there are. Far from the solution,
+that mode's restoring force (`k·n·p`, `S·n`) is tiny against the diffusion terms. A uniform film
+at 10¹³ m⁻³ under 1.5e28 m⁻³ s⁻¹ gives a condition number of 10²⁷, and the block sweep, which
+does not pivot, then got the step's sign wrong: Newton cycled between two densities. So a film
+with both ends free starts where it recombines what it generates (`_balanced`): each point
+neutral by its doping at one splitting, found by bisection so that the device's recombination
+over the control volumes equals its generation (equilibrium in the dark). From there, Newton
+needs 14–18 steps on a charged three-layer stack. With one free end the contact fixes the
+densities, and the start is the contact's potential and Fermi level everywhere.
+
 ## When is a voltage converged?
 
 The step size is the largest of `|ΔV|/V_T`, `|Δ ln n|` and `|Δ ln p|` (each weighted by

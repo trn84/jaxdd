@@ -7,7 +7,24 @@ handbook or the commit message, not here.
 
 ## 1 Next
 
-0.2.0 is released (CHANGELOG.md). Nothing is next until one of the items below is taken up.
+0.2.0 is released (CHANGELOG.md).
+
+### 1.1 Free surfaces: the rest
+
+A free end (`W_L` or `W_R` = `free`, [docs/model.md](docs/model.md#free-surfaces-jaxdds-w_l-or-w_r--free))
+is solved in the steady state of one device (`solve_state`). Photoluminescence is measured on
+partial stacks of perovskite films, so what such films hold has to work at a free end too, and
+fits need the batch. Refused at a free end until then:
+
+1. `solve_batch`: the free stencils, the gauge row and the balanced start in `batch.py`.
+2. Mobile ions: the ions' constraint over the dead interval, a free end's ion flux 0.
+3. Field-dependent generation and Langevin in a field-dependent mobility: the field at the end
+   point one-sided.
+4. `solve_transient` (a transient photoluminescence decay): the gauge row holds only in the
+   steady state, so in time with both ends free it is the total charge's conservation instead.
+
+**Done when** each is in, with a test against the steady state of `solve_state` (batch), an
+analytic case or a refined grid, and the refusals are gone.
 
 ## 2 Waiting
 

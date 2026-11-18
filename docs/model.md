@@ -274,6 +274,58 @@ The shunt sits at the internal voltage, as in SimSS 5.36. `solve_batch` returns 
 voltages it was given, which are internal; `batch.external_voltages` gives `V_ext`. Without series
 resistance the two voltages are one.
 
+## Free surfaces (jaxdd's, `W_L` or `W_R` = `free`)
+
+SIMsalabim fixes the potential at both ends: every device lies between two electrodes. A film
+measured by photoluminescence often has one or none: an absorber on glass, glass/absorber/transport
+layer, a contact with a half stack on it. jaxdd lets either end, or both, be a **free surface**:
+`W_L = free` or `W_R = free` in the setup. SimSS refuses such an input, so it is no reference here
+(tests/test_free_surface.py: analytic cases and the device's invariances).
+
+At a free end nothing flows: no electrons, no holes, no displacement field beyond it (the film is
+neutral as a whole, and outside it there is no charge). In the discretisation the end's interval
+carries no transport, its mobilities 0 and Poisson's stencil without the boundary's potential,
+and the end point's control volume reaches to the surface, `h_0 + h_1/2` (or `h_NP + h_{NP−1}/2`)
+instead of half of each interval:
+
+```
+point 1, left end free:  ε₁·(V₂ − V₁)/(L·h₁) = q·(n₁ − p₁ + N_A − N_D)·vol₁,   vol₁ = L·(h₀ + h₁/2)
+                         F_n(edge 0) = F_p(edge 0) = 0
+```
+
+The boundary point then holds its neighbour's state (the solution is flat across the dead
+interval), which is what `solve_state` returns there.
+
+**Surface recombination.** The end's `S_n_L`, `S_p_L` (or `S_n_R`, `S_p_R`) are the surface's SRH
+velocities (m/s, ≥ 0; a negative, SIMsalabim's "infinite", is refused at a free end), a level at
+mid-gap:
+
+```
+R_s = S_n·S_p·(n·p − n_i²) / (S_n·(n + n_i) + S_p·(p + n_i))      m⁻² s⁻¹
+```
+
+It enters the end point's continuity equations as a recombination over its control volume,
+`R_s/vol`, the same for both carriers.
+
+**The gauge.** With one free end the other is a contact: the potential is fixed there, and the
+applied voltage only shifts the potential as a whole (no current flows in the steady state, so
+`J = 0`). With both ends free the potential is fixed nowhere: `V + c` solves the equations
+wherever `V` does, and the film's charge is fixed only by Poisson's equation with no field at
+either end. The solver fixes `V = 0` at the last point ([solver.md](solver.md#free-surfaces)).
+The applied voltage and a free end's work function (taken as `sfb`'s) change nothing but that
+gauge.
+
+**What photoluminescence sees** (`solve_state`, `StateResult`): the splitting
+`QFLS(x) = V_T·ln(n·p/n_i²)` at each point; the implied open-circuit voltage
+`V_T·ln(∫k·n·p dx / ∫k·n_i² dx)`, the splitting that direct (radiative) recombination's emission
+sees; and the share of the generated pairs that recombine directly, `∫k·(n·p − n_i²) dx / ∫G dx`,
+the PLQY where all direct recombination is radiative and every photon leaves the film (neither
+reabsorption nor outcoupling is modelled).
+
+Not yet at a free end (refused by name): mobile ions, field-dependent generation, Langevin
+recombination in a field-dependent mobility, `preCond`, a batch (`solve_batch`) and so transients
+([PLAN.md](../PLAN.md) 1.1).
+
 ## Ions (`Init_Ionic_Region`, `Calc_Ion_Distribution_Steady_State`)
 
 Anions and cations each have a density `N` and a mobility in a layer. Three cases:

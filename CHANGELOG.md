@@ -7,6 +7,16 @@ the API, and says so here.
 
 ## [Unreleased]
 
+### Added
+
+- **Free surfaces** (jaxdd's; SIMsalabim fixes the potential at both ends). `W_L = free` or
+  `W_R = free` ends the device without an electrode: no current and no field beyond it, the
+  surface recombining by SRH at that end's `S_n`, `S_p`. One end free (a film on a contact) or
+  both (a film on glass, neutral as a whole). `solve_state` gives one steady state with its
+  quasi-Fermi level splitting, the implied `V_oc` and the PLQY of direct recombination. One
+  device at a time; mobile ions, field-dependent generation and batches are refused at a free
+  end for now ([docs/model.md](docs/model.md#free-surfaces-jaxdds-w_l-or-w_r--free)).
+
 ## [0.2.0] – 2026-11-15
 
 Tables with refined axes, ions bounded by their sites, the current in time as the equations

@@ -347,6 +347,13 @@ class Device:
     # steric limit), infinite (or None) for SIMsalabim's Boltzmann.
     anion_max: np.ndarray | None = None
     cation_max: np.ndarray | None = None
+    # Free ends (`W_L`, `W_R` = 'free'; jaxdd's, not SIMsalabim's): (left, right), True where the
+    # device ends without an electrode, at a surface (docs/model.md, "Free surfaces"). Its
+    # `V0` or `VL`, `n_left`, … then only fill the boundary point; nothing flows over the end's
+    # interval. `free_S` (m/s, ≥ 0) the surfaces' SRH recombination velocities in `S` order
+    # (`SURFACE_PARAMETERS`), 0 at a contact. None without a free end.
+    free: tuple[bool, bool] = (False, False)
+    free_S: np.ndarray | None = None
 
 
 @dataclass(frozen=True)
@@ -379,6 +386,7 @@ class Structure:
     #: "robin" (`SURFACE_MODELS`).
     surface: str | None = None
     sfb: tuple[bool, bool] = (False, False)  # `W_L`, `W_R` = 'sfb': from the adjacent layer
+    free: tuple[bool, bool] = (False, False)  # `W_L`, `W_R` = 'free': no electrode (`Device.free`)
     langevin: np.ndarray = None  # per layer: `useLangevin`, `k_direct` from the mobilities
     langevin_mobility: str = "layer"  # `LANGEVIN_MOBILITIES`
     mob_dep: np.ndarray = None  # per layer × (electrons, holes): `mobnDep`, `mobpDep` = 1
@@ -467,6 +475,35 @@ def _level_table(layers, files, single_E, read, kind):
     return E_tab, N_tab
 
 
+def _free_ends(setup: Setup) -> tuple[bool, bool]:
+    """(left, right): True where the work function is 'free', an end without an electrode."""
+    return tuple(setup.raw[k].strip().lower() == "free" for k in ("W_L", "W_R"))
+
+
+def _check_free(setup: Setup, st: Structure) -> None:
+    """A free end's surface recombination velocities are its surface's SRH (≥ 0; SIMsalabim's
+    negative 'infinite' means nothing there), and what is not yet solved at a free
+    end is refused by name (PLAN.md 1.1)."""
+    if not any(st.free):
+        return
+    problems = []
+    for side, on in zip(("L", "R"), st.free, strict=True):
+        for k in (f"S_n_{side}", f"S_p_{side}"):
+            if on and float(setup.raw.get(k, "-1")) < 0:
+                problems.append(f"{k} < 0 at a free end: its surface's recombination velocity "
+                                "(m/s, ≥ 0) is needed")  # fmt: skip
+    if st.anion_mobile.any() or st.cation_mobile.any():
+        problems.append("mobile ions with a free end")
+    if st.field_dep_g is not None and st.field_dep_g.any():
+        problems.append("field-dependent generation (fieldDepG) with a free end")
+    if st.mob_dep is not None and st.mob_dep.any() and st.langevin.any():
+        problems.append("Langevin recombination in a field-dependent mobility with a free end")
+    if st.pre_cond:
+        problems.append("preCond with a free end")
+    if problems:
+        raise NotImplementedError("outside what jaxdd solves:\n  " + "\n  ".join(problems))
+
+
 def _sfb(N_A, N_D, E_c, E_v, N_c, Vt, xp=np):
     """SIMsalabim's `ObtainWorkFunction` for 'sfb' (semi-flat band): the adjacent layer's
     equilibrium Fermi level from its net doping, mid-gap where there is none."""
@@ -533,6 +570,7 @@ def device_parameters(
             index[first : last + 1] = k
         return index
 
+    free = _free_ends(setup)
     bulk_file = flags(lambda ly: _named(ly, "bulkTrapFile"))
     int_file = np.array([_named(ly, "intTrapFile") for ly in layers[:-1]] + [False])
 
@@ -550,9 +588,13 @@ def device_parameters(
         int_trap_type=np.array([int(float(ly.raw.get("intTrapType", "0"))) for ly in layers]),
         bulk_trap_type=np.array([int(float(ly.raw.get("bulkTrapType", "0"))) for ly in layers]),
         bulk_trap_file=bulk_file, int_trap_file=int_file,
-        surface=surface if any(float(setup.raw.get(k, "-1")) >= 0 for k in SURFACE_PARAMETERS)
-        else None,
-        sfb=tuple(setup.raw[k].strip().lower() == "sfb" for k in ("W_L", "W_R")),
+        surface=surface if any(float(setup.raw.get(k, "-1")) >= 0
+                               for k, f in zip(SURFACE_PARAMETERS, free * 2, strict=True)
+                               if not f) else None,
+        # A free end's work function only sets the potential's gauge: the adjacent layer's
+        # Fermi level, as 'sfb'.
+        sfb=tuple(setup.raw[k].strip().lower() in ("sfb", "free") for k in ("W_L", "W_R")),
+        free=free,
         langevin=flags(lambda ly: int(float(ly.raw.get("useLangevin", "0"))) == 1),
         langevin_mobility=langevin,
         mob_dep=np.array([[int(float(ly.raw.get(k, "0"))) for k in ("mobnDep", "mobpDep")]
@@ -563,6 +605,7 @@ def device_parameters(
         left_elec=setup.i("leftElec"),
         curr_diff=int(float(setup.raw.get("currDiffInt", "2"))) == 1,
     )  # fmt: skip
+    _check_free(setup, structure)
     # SIMsalabim's checks: each work function within its layer's gap.
     for k, ly, sfb in (("W_L", layers[0], structure.sfb[0]), ("W_R", layers[-1], structure.sfb[1])):
         if not sfb and not ly.f("E_c") <= setup.f(k) <= ly.f("E_v"):
@@ -850,7 +893,13 @@ def device_arrays(structure: Structure, p: dict, xp=np) -> Device:
         mu_n, mu_p = interleaved("mu_n", "nu_int_n"), interleaved("mu_p", "nu_int_p")
         a_L, a_R = Vt / (total * h[0]), Vt / (total * h[NP])
         surface = {
-            "S": xp.stack([xp.asarray(p.get(k, -1.0), dtype=float) for k in SURFACE_PARAMETERS]),
+            # A free end's velocities are its surface's (`Device.free_S`), not a contact's.
+            "S": xp.stack(
+                [
+                    xp.asarray(-1.0 if f else p.get(k, -1.0), dtype=float)
+                    for k, f in zip(SURFACE_PARAMETERS, st.free * 2, strict=True)
+                ]
+            ),
             "a": xp.stack([a_L * mu_n[0], a_L * mu_p[0], a_R * mu_n[NP], a_R * mu_p[NP]]),
             "both": xp.asarray(1.0 if st.surface == "robin" else 0.0),
         }
@@ -907,6 +956,10 @@ def device_arrays(structure: Structure, p: dict, xp=np) -> Device:
         mu_anion=p["mu_anion"][lid], mu_cation=p["mu_cation"][lid],
         anion_max=p["N_max_anion"][lid] if st.ion_sites else None,
         cation_max=p["N_max_cation"][lid] if st.ion_sites else None,
+        free=st.free,
+        free_S=xp.stack([xp.where(f, xp.asarray(p[k], dtype=float), 0.0)
+                         for k, f in zip(SURFACE_PARAMETERS, st.free * 2, strict=True)])
+        if any(st.free) else None,
     )  # fmt: skip
 
 

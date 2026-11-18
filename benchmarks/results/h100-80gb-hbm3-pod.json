@@ -1,0 +1,68 @@
+{
+ "label": "H100 80GB HBM3 pod",
+ "date": "2026-11-18",
+ "machine": {
+  "cpu": "Intel(R) Xeon(R) Platinum 8480C",
+  "logical_cores": 224,
+  "memory_gb": 2164.2,
+  "os": "Linux-6.8.0-149-generic-x86_64-with-glibc2.39",
+  "gpu": "NVIDIA H100 80GB HBM3"
+ },
+ "versions": {
+  "jaxdd": "fb4ff578693b",
+  "jax": "0.12.1",
+  "python": "3.12.15"
+ },
+ "workload": {
+  "cases": "validation/bench.py CASES, random traps, ions and doping",
+  "seed": 20261107,
+  "voltages": 61,
+  "run": "one J-V curve"
+ },
+ "results": [
+  {
+   "solver": "jaxdd",
+   "device": "gpu",
+   "gpu": "NVIDIA H100 80GB HBM3",
+   "gpus": 1,
+   "batch": 4096,
+   "runs": 8192,
+   "seconds": 1.693144652992487,
+   "runs_per_s": 4838.3343889261605,
+   "first_batch_s": 5.413310062998789,
+   "converged": 1.0,
+   "steps_needed": 2.760806224385246,
+   "steps_paid": 3.3442622950819674,
+   "lockstep": 1.2113353938220133
+  },
+  {
+   "solver": "jaxdd",
+   "device": "gpu",
+   "gpu": "NVIDIA H100 80GB HBM3",
+   "gpus": 1,
+   "batch": 16384,
+   "runs": 32768,
+   "seconds": 5.809012748999521,
+   "runs_per_s": 5640.889668497214,
+   "first_batch_s": 6.966303899011109,
+   "converged": 1.0,
+   "steps_needed": 2.760806224385246,
+   "steps_paid": 3.3442622950819674,
+   "lockstep": 1.2113353938220133
+  },
+  {
+   "solver": "jaxdd",
+   "device": "cpu",
+   "procs": 24,
+   "batch": 2,
+   "runs": 768,
+   "seconds": 0.7071381080022547,
+   "runs_per_s": 1086.0679000452783,
+   "per_process_runs_per_s": 49.820880912709775,
+   "converged": 1.0,
+   "steps_needed": 2.7568306010928962,
+   "steps_paid": 3.278688524590164,
+   "lockstep": 1.1892963330029733
+  }
+ ]
+}

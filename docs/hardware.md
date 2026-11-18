@@ -6,6 +6,7 @@ benchmark devices of `validation/bench.py`; the README's figure has every machin
 
 | Machine | jaxdd | SimSS 5.36 on all cores of the same machine |
 |---|---|---|
+| H100 80GB HBM3 (SXM), batch 16384 | ~5600 | — |
 | A100-SXM4-40GB, batch 16384 | ~2750 | — |
 | RTX 4070 Ti SUPER, batch 16384 | ~1050 | — |
 | Ryzen 9 5950X (16 cores), CPU | ~640 | ~33 |
@@ -91,7 +92,9 @@ excludes the first call excludes one compilation. `jaxdd.batch._solve_batch._cac
 counts the compiled programs: it must not grow between the calls that are timed.
 
 **Data-centre cards only, for speed.** jaxdd needs FP64. The A100 and H100 run it at half their
-FP32 rate; consumer cards (GeForce, RTX) at 1/64. A RTX 4070 Ti SUPER reaches about 1050
+FP32 rate; consumer cards (GeForce, RTX) at 1/64. An H100 80GB HBM3 (a RunPod pod,
+2026-11-18) runs at 5640 curves/s at batch 16384 and 4840 at 4096, 2.05× an A100: its memory
+bandwidth (3.35 against 1.56 TB/s) and its FP64 (34 against 9.7 TFLOPS) both larger. A RTX 4070 Ti SUPER reaches about 1050
 curves/s, little more than a 16-core desktop CPU (640) and well under half an A100. It is fine
 for development and for checking that everything runs on a GPU.
 

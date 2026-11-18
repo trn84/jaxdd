@@ -78,8 +78,19 @@ r.n, r.p, r.V   # the profiles (V in its gauge: only differences mean something)
 ```
 
 With one contact, the voltage given only shifts the potential; with none it is not used.
-`solve_state` works for any device, contacts at both ends too. A batch does not take a free end
-yet.
+`solve_state` works for any device, contacts at both ends too.
+
+For many films, `solve_states` does the same for a batch, beside contacted devices if you like.
+It is differentiable in the parameters of `device_tree`'s devices, so a fit to measured PLQY or
+implied `V_oc` takes its gradient as a J-V fit does:
+
+```python
+from jaxdd import prepare, solve_states
+
+r = solve_states(prepare([dev_a, dev_b]))      # one voltage, 0 V: all a free film needs
+r["implied_voc"][:, 0], r["plqy"][:, 0]        # per device
+r["qfls"][:, 0]                                # batch × NP + 2, eV
+```
 
 ## Many devices
 

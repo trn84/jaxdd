@@ -11,7 +11,8 @@ every interior point, the ion masks and totals, the grid, the boundary values, t
 and generation arrays, the pre-bias settings as numbers. Then it stacks every leaf of every
 device along a new first axis. The result is one pytree whose leaves are `batch × …` arrays.
 Everything about a device may differ between lanes except the shapes: the number of grid points
-`NP` is the same for all.
+`NP` is the same for all. A key that only some devices need (interface traps, finite surface
+recombination, a free end, …) is given to the others as zeros that do nothing.
 
 ## One function, vectorised
 

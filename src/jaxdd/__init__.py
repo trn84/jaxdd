@@ -10,7 +10,7 @@ Importing jaxdd switches JAX to 64-bit floats (`jax_enable_x64`), which the solv
 
 from importlib.metadata import PackageNotFoundError, version
 
-from jaxdd.batch import device_tree, external_voltages, prepare, solve_batch
+from jaxdd.batch import device_tree, external_voltages, prepare, solve_batch, solve_states
 from jaxdd.device import Device, Structure, build_device, device_parameters
 from jaxdd.fit import least_squares_many
 from jaxdd.simss_input import (
@@ -55,6 +55,7 @@ __all__ = [
     "solve_batch",
     "solve_jv",
     "solve_state",
+    "solve_states",
     "solve_transient",
     "tj_columns",
 ]

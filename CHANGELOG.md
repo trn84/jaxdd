@@ -13,9 +13,10 @@ the API, and says so here.
   `W_R = free` ends the device without an electrode: no current and no field beyond it, the
   surface recombining by SRH at that end's `S_n`, `S_p`. One end free (a film on a contact) or
   both (a film on glass, neutral as a whole). `solve_state` gives one steady state with its
-  quasi-Fermi level splitting, the implied `V_oc` and the PLQY of direct recombination. One
-  device at a time; mobile ions, field-dependent generation and batches are refused at a free
-  end for now ([docs/model.md](docs/model.md#free-surfaces-jaxdds-w_l-or-w_r--free)).
+  quasi-Fermi level splitting, the implied `V_oc` and the PLQY of direct recombination;
+  `batch.solve_states` the same for a batch, free ends beside contacted devices, differentiable
+  in `device_tree`'s parameters. Mobile ions, field-dependent generation and transients are
+  refused at a free end for now ([docs/model.md](docs/model.md#free-surfaces-jaxdds-w_l-or-w_r--free)).
 
 ## [0.2.0] – 2026-11-15
 

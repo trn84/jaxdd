@@ -248,7 +248,7 @@ def _stencils(dev: Device, xp=np) -> dict[str, jnp.ndarray]:
     if dev.surface is not None:  # finite surface recombination at a contact (`Device.surface`)
         out["ct"] = dict(dev.surface)
     if any(dev.free):  # an end without an electrode (`Device.free`)
-        out.update(_free_stencils(dev, out))
+        out.update(_free_stencils(dev, out, xp))
     if dev.mob_field is not None:  # the field-dependent mobility's `k` on each point's intervals
         kn, kp = dev.mob_field
         out.update(fn_m=kn[i - 1], fn_p=kn[i], fp_m=kp[i - 1], fp_p=kp[i])
@@ -262,36 +262,47 @@ def _stencils(dev: Device, xp=np) -> dict[str, jnp.ndarray]:
     return out
 
 
-def _free_stencils(dev: Device, s: dict) -> dict:
+def _free_stencils(dev: Device, s: dict, xp=np) -> dict:
     """The stencils changed at a free end (docs/model.md, "Free surfaces"): nothing flows over
     the end's interval (its mobilities 0, Poisson without the boundary's potential), the end
     point's control volume reaches to the surface, `h_0 + h_1/2` instead of `(h_0 + h_1)/2`,
-    and its surface recombines by SRH (`_recombination`'s `fs_*`). NumPy only: a batch refuses
-    free ends (PLAN.md 1.1)."""
-    h, L, eps = np.asarray(dev.h), dev.L, np.asarray(dev.eps)
+    and its surface recombines by SRH (`_recombination`'s `fs_*`); with both ends free the
+    gauge (`gauge_on` 1, `_gauged`). In NumPy or `jax.numpy` (`xp`, as `_stencils`)."""
+    h, L, eps = dev.h, dev.L, dev.eps
     NP = len(dev.x) - 2
-    out = {k: np.array(s[k], dtype=float) for k in
-           ("fac_l", "fac_m", "fac_u", "fac", "mun_m", "mun_p", "mup_m", "mup_p")}  # fmt: skip
-    S = np.asarray(dev.free_S, dtype=float)
-    fs_n, fs_p, fs_k = np.zeros(NP), np.zeros(NP), np.zeros(NP)
-    if dev.free[0]:  # point 1 (row 0): its volume [x_0, x_1 + h_1/2]
-        vol = L * (h[0] + 0.5 * h[1])
-        out["fac_u"][0] = eps[1] / (h[1] * L * vol)
-        out["fac_m"][0], out["fac_l"][0] = -out["fac_u"][0], 0.0
-        out["fac"][0] = L * h[0] * h[1] * vol
-        out["mun_m"][0] = out["mup_m"][0] = 0.0
-        fs_n[0], fs_p[0], fs_k[0] = S[0], S[1], 1.0 / vol
-    if dev.free[1]:  # point NP (row NP − 1): its volume [x_NP − h_{NP−1}/2, x_{NP+1}]
-        vol = L * (h[NP] + 0.5 * h[NP - 1])
-        out["fac_l"][-1] = eps[NP - 1] / (h[NP - 1] * L * vol)
-        out["fac_m"][-1], out["fac_u"][-1] = -out["fac_l"][-1], 0.0
-        out["fac"][-1] = L * h[NP - 1] * h[NP] * vol
-        out["mun_p"][-1] = out["mup_p"][-1] = 0.0
-        fs_n[-1], fs_p[-1], fs_k[-1] = S[2], S[3], 1.0 / vol
-    out.update(fs_n=fs_n, fs_p=fs_p, fs_k=fs_k, fs_ni=np.asarray(dev.ni)[1:-1])
-    if all(dev.free):  # no potential fixed anywhere: the gauge (`_gauged`)
-        out["gauge"] = np.zeros(())
+    out = {k: s[k] for k in ("fac_l", "fac_m", "fac_u", "fac", "mun_m", "mun_p", "mup_m", "mup_p")}
+    S = dev.free_S
+    zero = xp.zeros(NP)
+    fs_n, fs_p, fs_k = zero, zero, zero
+    ends = ((dev.free[0], 0, 1, h[0], h[1], 0), (dev.free[1], NP - 1, NP - 1, h[NP], h[NP - 1], 2))
+    for on, row, nb, h_end, h_in, k in ends:
+        if not on:
+            continue
+        # Point 1 ([x_0, x_1 + h_1/2]) or NP ([x_NP − h_{NP−1}/2, x_{NP+1}]): the flux to its
+        # inner neighbour over the interval between them (`eps[nb]`, the interval's).
+        vol = L * (h_end + 0.5 * h_in)
+        c = eps[nb] / (h_in * L * vol)
+        inner, outer = ("fac_u", "fac_l") if row == 0 else ("fac_l", "fac_u")
+        out[inner] = _put(xp, out[inner], row, c)
+        out[outer] = _put(xp, out[outer], row, 0.0)
+        out["fac_m"] = _put(xp, out["fac_m"], row, -c)
+        out["fac"] = _put(xp, out["fac"], row, L * h_end * h_in * vol)
+        for m in ("mun_m", "mup_m") if row == 0 else ("mun_p", "mup_p"):
+            out[m] = _put(xp, out[m], row, 0.0)
+        fs_n, fs_p = _put(xp, fs_n, row, S[k]), _put(xp, fs_p, row, S[k + 1])
+        fs_k = _put(xp, fs_k, row, 1.0 / vol)
+    out.update(fs_n=fs_n, fs_p=fs_p, fs_k=fs_k, fs_ni=dev.ni[1:-1],
+               gauge=xp.zeros(()), gauge_on=xp.asarray(float(all(dev.free))))  # fmt: skip
     return out
+
+
+def _put(xp, a, idx, value):
+    """`a` with `a[idx] = value`, in NumPy (a copy) or JAX."""
+    if xp is np:
+        a = np.array(a, dtype=float)
+        a[idx] = value
+        return a
+    return a.at[idx].set(value)
 
 
 #: Braun's distance distributions (`thermLengDist` 2–5) in `u = r/a`, each normalised on
@@ -920,6 +931,8 @@ def _assemble(full, s, Vt, g_frac, la, lc, B=bernoulli):
         jnp.stack([-Q * d_anion * s["sP"], zm, zm], -1),
         jnp.stack([Q * d_cation * s["sP"], zm, zm], -1),
     ], -1)  # fmt: skip
+    if "gauge_on" in s:  # both ends free: the gauge in place of the last hole row (`_gauged`)
+        F, A, Bb, C, U = _gauged(full[1:-1], s, Vt, F, A, Bb, C, U)
     return F, A, Bb, C, U
 
 
@@ -1196,8 +1209,6 @@ def _newton_step(y, logs, bounds, s, ion, Vt, g_frac, bernoulli_name="exact"):
     la, lc = _point_logs(logs, ion)
     full = jnp.concatenate([bounds[0][None], y, bounds[1][None]])
     F, A, B, C, U = _assemble(full, s, Vt, g_frac, la, lc, BERNOULLI[bernoulli_name])
-    if "gauge" in s:
-        F, A, B, C, U = _gauged(y, s, Vt, F, A, B, C, U)
     U = _slot_columns(U, ion)
 
     def constraints(V_interior, logs_):
@@ -1239,12 +1250,15 @@ def _gauged(y, s, Vt, F, A, B, C, U):
     either end, the electrons' rows summed (each over its weight `L·h_{i−1}·h_i`) are `∫(G − R)`,
     and so are the holes' (the steady state: each carrier recombines at the same rate). The last
     point's hole row follows from the others and is traded for the gauge `V[NP] = s["gauge"]`,
-    which keeps the system block tridiagonal (docs/solver.md, "Free surfaces")."""
-    F = F.at[-1, 2].set((y[-1, 0] - s["gauge"]) / Vt)
-    A = A.at[-1, 2].set(0.0)
-    B = B.at[-1, 2].set(jnp.array([1.0 / Vt, 0.0, 0.0]))
-    C = C.at[-1, 2].set(0.0)
-    U = U.at[-1, 2].set(0.0)
+    which keeps the system block tridiagonal (docs/solver.md, "Free surfaces"). Where
+    `s["gauge_on"]` is 0 (a batch's device with a contact) the system as it is."""
+    on = s["gauge_on"] > 0
+    row = jnp.zeros(3).at[0].set(1.0 / Vt)
+    F = F.at[-1, 2].set(jnp.where(on, (y[-1, 0] - s["gauge"]) / Vt, F[-1, 2]))
+    A = A.at[-1, 2].set(jnp.where(on, 0.0, A[-1, 2]))
+    B = B.at[-1, 2].set(jnp.where(on, row, B[-1, 2]))
+    C = C.at[-1, 2].set(jnp.where(on, 0.0, C[-1, 2]))
+    U = U.at[-1, 2].set(jnp.where(on, 0.0, U[-1, 2]))
     return F, A, B, C, U
 
 
@@ -1271,7 +1285,7 @@ def _poisson_row(left, mid, right, s, Vt, ref_left, ref_mid, ref_right, la, lc):
 def _on_points(s):
     """The stencils on the interior points: without the interface traps' edges, the
     contacts' surface recombination and the gauge of two free ends."""
-    return {k: v for k, v in s.items() if k not in ("ti", "ct", "gauge")}
+    return {k: v for k, v in s.items() if k not in ("ti", "ct", "gauge", "gauge_on")}
 
 
 _P_AXES = (0, 0, 0, 0, None, 0, 0, 0, 0, 0)
@@ -1419,8 +1433,12 @@ def _initial_free(dev: Device, Vint: float, g_frac: float):
     conditioned beyond what the block sweep resolves (docs/solver.md, "Free surfaces")."""
     e = dev.left_elec
     if all(dev.free):
-        n, p = _balanced(dev, g_frac)
-        return np.stack([np.zeros_like(dev.x), np.log(n), np.log(p)], -1)
+        s = _stencils(dev)
+        ln_n, ln_p = (np.asarray(a) for a in _balanced_logs(
+            s["dop"], dev.ni[1:-1], dev.N_c[1:-1], dev.Vt, g_frac * dev.G[1:-1], s,
+            _volumes(s, dev.L)))  # fmt: skip
+        ln_n, ln_p = np.pad(ln_n, 1, mode="edge"), np.pad(ln_p, 1, mode="edge")
+        return np.stack([np.zeros_like(dev.x), ln_n, ln_p], -1)
     else:
         V_c, W = ((dev.VL - 0.5 * e * Vint, dev.W_R) if dev.free[0]
                   else (dev.V0 + 0.5 * e * Vint, dev.W_L))  # fmt: skip
@@ -1430,35 +1448,41 @@ def _initial_free(dev: Device, Vint: float, g_frac: float):
     return np.stack([V, np.log(n), np.log(p)], -1)
 
 
-def _neutral(dev: Device, mu):
-    """Each point's densities neutral by its doping at the splitting `mu` (V):
-    `n·p = n_i²·e^(mu/V_T)`, `n − p = N_D − N_A`, the smaller from the product (no
-    cancellation)."""
-    D = dev.N_D - dev.N_A
-    root = np.sqrt(D**2 + 4 * dev.ni**2 * np.exp(mu / dev.Vt))
-    big = 0.5 * (np.abs(D) + root)
-    small = dev.ni**2 * np.exp(mu / dev.Vt) / big
-    return np.where(D >= 0, big, small), np.where(D >= 0, small, big)
+def _balanced_logs(dop, ni, N_c, Vt, gen, s, vol):
+    """`ln n`, `ln p` at the interior points, each neutral by its doping (`dop = N_A − N_D`) at
+    one splitting `mu`, `n·p = n_i²·e^(mu/V_T)`, the one at which the device's recombination
+    (bulk and surfaces, `_recombination` over the control volumes `vol`) equals its generation
+    `gen` (the rate at each point): by bisection between 0 and the widest gap; equilibrium in
+    the dark. In JAX (`batch._initial` too)."""
+    D = -dop
+    ln_ni2 = 2 * jnp.log(ni)
 
-
-def _balanced(dev: Device, g_frac: float):
-    """`_neutral` at the splitting where the device's recombination (bulk and surfaces, over the
-    control volumes) equals its generation, by bisection; equilibrium in the dark."""
-    s = _stencils(dev)
-    vol = s["fac"] / (dev.L * s["hm"] * s["hp"])
-    gen = g_frac * np.sum(vol * np.asarray(dev.G)[1:-1])
-    if not gen > 0:
-        return _neutral(dev, 0.0)
+    def logs(mu):
+        # The majority from the quadratic, the minority from the product (no cancellation).
+        root = jnp.sqrt(D**2 + 4 * jnp.exp(ln_ni2 + mu / Vt))
+        ln_big = jnp.log(0.5 * (jnp.abs(D) + root))
+        ln_small = ln_ni2 + mu / Vt - ln_big
+        return jnp.where(D >= 0, ln_big, ln_small), jnp.where(D >= 0, ln_small, ln_big)
 
     def excess(mu):
-        n, p = _neutral(dev, mu)
-        return np.sum(vol * np.asarray(_recombination(n[1:-1], p[1:-1], s))) - gen
+        ln_n, ln_p = logs(mu)
+        return jnp.sum(vol * (_recombination(jnp.exp(ln_n), jnp.exp(ln_p), s) - gen))
 
-    lo, hi = 0.0, float(np.max(dev.E_v - dev.E_c))
-    for _ in range(60):
+    def halve(_, bounds):
+        lo, hi = bounds
         mid = 0.5 * (lo + hi)
-        lo, hi = (mid, hi) if excess(mid) < 0 else (lo, mid)
-    return _neutral(dev, 0.5 * (lo + hi))
+        low = excess(mid) < 0
+        return jnp.where(low, mid, lo), jnp.where(low, hi, mid)
+
+    hi = jnp.max(2 * jnp.log(N_c) - ln_ni2) * Vt  # the widest gap: no splitting beyond it
+    lo, hi = jax.lax.fori_loop(0, 60, halve, (jnp.zeros(()), hi))
+    lit = jnp.sum(vol * gen) > 0
+    return logs(jnp.where(lit, 0.5 * (lo + hi), 0.0))
+
+
+def _volumes(s, L):
+    """Each interior point's control volume (m), a free end's reaching to its surface."""
+    return s["fac"] / (L * s["hm"] * s["hp"])
 
 
 def _mirrored(dev: Device, full):
@@ -1564,8 +1588,7 @@ def solve_state(dev: Device, Vint: float = 0.0, g_frac: float | None = None,
     ni2 = dev.ni**2
     s = _stencils(dev)
     i = slice(1, -1)
-    # Each interior point's control volume (m), the free ends' reaching to the surface.
-    vol = s["fac"] / (dev.L * s["hm"] * s["hp"])
+    vol = _volumes(s, dev.L)
     k = np.asarray(dev.k_direct)[i]
     rad = np.sum(vol * k * n[i] * p[i])
     rad0 = np.sum(vol * k * ni2[i])

@@ -5,13 +5,15 @@ invariances."""
 import re
 from pathlib import Path
 
+import jax
 import numpy as np
 import pytest
 
-from jaxdd.batch import prepare
-from jaxdd.device import build_device
-from jaxdd.simss_input import setup_from_texts
+from jaxdd.batch import device_tree, prepare, solve_batch, solve_states
+from jaxdd.device import build_device, device_parameters
+from jaxdd.simss_input import TVG, read_setup, setup_from_texts, simss_voltages
 from jaxdd.solver import solve_jv, solve_state
+from jaxdd.transient import solve_transient
 
 CASE = Path(__file__).parent / "data" / "none_light"
 SETUP = (CASE / "simulation_setup.txt").read_text()
@@ -30,6 +32,11 @@ def _set(text, key, value):
 
 def stack(layers, W_L="free", W_R="free", S=(0, 0, 0, 0), NP=400, **setup):
     """A device of `layers` (each the absorber of `none_light` with the given changes)."""
+    return build_device(stack_setup(layers, W_L, W_R, S, NP, **setup))
+
+
+def stack_setup(layers, W_L="free", W_R="free", S=(0, 0, 0, 0), NP=400, **setup):
+    """`stack`'s input."""
     s = SETUP
     for k in ("l1", "l2", "l3"):
         s = re.sub(rf"^{k} = .*\n", "", s, flags=re.M)
@@ -45,7 +52,7 @@ def stack(layers, W_L="free", W_R="free", S=(0, 0, 0, 0), NP=400, **setup):
         for k, v in changes.items():
             text = _set(text, k, v)
         files[f"L{i + 1}.txt"] = text
-    return build_device(setup_from_texts(files))
+    return setup_from_texts(files)
 
 
 def test_a_film_without_contacts_holds_what_it_generates() -> None:
@@ -139,6 +146,52 @@ def test_what_a_free_end_does_not_yet_solve_is_refused(layer, S, what) -> None:
         stack([layer], S=S)
 
 
-def test_a_batch_refuses_a_free_end() -> None:
+def test_a_batch_with_free_ends_is_each_devices_own_solve() -> None:
+    """A batch of a film without contacts, a charged free stack, a film on one contact and a
+    cell between two (`none_light`): each device's state, implied V_oc and PLQY those of
+    `solve_state` (the densities where Newton weighs them, above its floor: docs/solver.md), the
+    cell's J-V curve that of a batch without the others."""
+    cell = build_device(read_setup(CASE / "simulation_setup.txt"))
+    devices = [stack([{}]), stack([HTL, {}, ETL], S=(10, 10, 10, 10)),
+               stack([HTL, {}], W_L=5.0, S=(-1, -1, 100, 100)), cell]  # fmt: skip
+    r = solve_states(prepare(devices))
+    assert np.asarray(r["converged"]).all()
+    for i, d in enumerate(devices):
+        ref = solve_state(d)
+        assert float(r["implied_voc"][i, 0]) == pytest.approx(ref.implied_voc, abs=1e-8)
+        assert float(r["plqy"][i, 0]) == pytest.approx(ref.plqy, rel=1e-7)
+        floor = 1e-12 * np.max(d.N_c)
+        for got, want in ((r["n"][i, 0], ref.n), (r["p"][i, 0], ref.p)):
+            weighed = want > floor
+            np.testing.assert_allclose(np.asarray(got)[weighed], want[weighed], rtol=1e-7)
+    assert (np.asarray(r["J"][:3]) == 0).all()
+    V = simss_voltages(read_setup(CASE / "simulation_setup.txt"))[::6]
+    J, ok, _ = solve_batch(prepare(devices), V)
+    J_alone, _, _ = solve_batch(prepare([cell]), V)
+    assert np.asarray(ok).all() and (np.asarray(J[:3]) == 0).all()
+    np.testing.assert_allclose(np.asarray(J[3]), np.asarray(J_alone[0]), rtol=1e-9, atol=1e-9)
+
+
+def test_the_implied_voc_is_differentiable_in_the_surface() -> None:
+    """`device_tree`'s absorber/ETL film: the implied V_oc's derivative in the absorber's
+    surface recombination velocity (the implicit function, `batch._converged_jvp`) is its
+    central difference."""
+    structure, params = device_parameters(stack_setup([{}, ETL], S=(10, 10, 10, 10)))
+
+    def voc(log_S):
+        p = dict(params, S_n_L=10.0**log_S, S_p_L=10.0**log_S)
+        batch = jax.tree_util.tree_map(lambda a: a[None], device_tree(structure, p))
+        return solve_states(batch, first_max_iter=None)["implied_voc"][0, 0]
+
+    grad = float(jax.jvp(voc, (1.0,), (1.0,))[1])  # forward mode: one parameter
+    h = 1e-3
+    fd = (float(voc(1.0 + h)) - float(voc(1.0 - h))) / (2 * h)
+    assert grad < 0
+    assert grad == pytest.approx(fd, rel=1e-5)
+
+
+def test_a_free_end_in_time_is_refused() -> None:
+    tvg = TVG(t=np.array([0.0]), Vext=np.array([0.0]), oc=np.array([False]),
+              G_frac=np.array([1.0]), track=np.array([0]), dti=np.array([0.0]))  # fmt: skip
     with pytest.raises(NotImplementedError, match="free end"):
-        prepare([stack([{}])])
+        solve_transient(prepare([stack([{}])]), tvg)

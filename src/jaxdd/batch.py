@@ -36,6 +36,7 @@ from jaxdd.solver import (
     STEP_CAPS,
     _assemble,
     _assemble_ions,
+    _balanced_logs,
     _bulk_rates,
     _contact_branch,
     _field_mobilities,
@@ -57,6 +58,7 @@ from jaxdd.solver import (
     _slots,
     _stencils,
     _unbounded,
+    _volumes,
     _with_contacts,
     bernoulli,
     density_steps,
@@ -64,7 +66,7 @@ from jaxdd.solver import (
 )
 from jaxdd.sweep import block_sweep
 
-__all__ = ["device_tree", "external_voltages", "prepare", "solve_batch"]
+__all__ = ["device_tree", "external_voltages", "prepare", "solve_batch", "solve_states"]
 
 #: The current settled: unchanged to this share of its scale (the generation's current plus
 #: its own size) over `STALL_STEPS` Newton steps; SimSS's own errJ is larger.
@@ -104,6 +106,8 @@ def _device_tree(dev: Device, xp=np) -> dict:
         "left_elec": float(dev.left_elec),
         "G_shunt": xp.where(dev.R_shunt > 0, 1 / xp.where(dev.R_shunt > 0, dev.R_shunt, 1), 0.0),
         "pre_cond": float(dev.pre_cond), "V_pre": dev.V_pre, "fix_ions": float(dev.fix_ions),
+        # (left, right): 1 where the device ends at a free surface (`Device.free`)
+        "free": np.array([float(f) for f in dev.free]),
     }  # fmt: skip
     if dev.curr_diff:  # `currDiffInt = 1`; without the key the integral form alone
         tree["curr_diff"] = 1.0
@@ -138,12 +142,13 @@ def prepare(devices: list[Device]) -> dict:
     sizes = {len(d.x) for d in devices}
     if len(sizes) != 1:
         raise ValueError(f"a batch needs one grid size, got NP + 2 in {sorted(sizes)}")
-    if any(any(d.free) for d in devices):
-        raise NotImplementedError(
-            "a free end (W_L or W_R = free) in a batch: not yet, "
-            "solver.solve_state solves one device (PLAN.md 1.1)"
-        )
     trees = [_device_tree(d) for d in devices]
+    if any("fs_k" in t["s"] for t in trees):  # a free end (`solver._free_stencils`); the others
+        for t in trees:  # none: no surface, no gauge
+            for k in ("fs_n", "fs_p", "fs_k", "fs_ni"):
+                t["s"].setdefault(k, np.zeros_like(t["s"]["hm"]))
+            t["s"].setdefault("gauge", np.zeros(()))
+            t["s"].setdefault("gauge_on", np.zeros(()))
     with_traps = [t["s"]["ti"] for t in trees if "ti" in t["s"]]
     if with_traps:  # the others with none: zero on every edge
         for t in trees:
@@ -241,14 +246,29 @@ def _caps(Vt, width):
 
 
 def _initial(d, Vint):
-    """SIMsalabim's `Init_Pot_Dens_Ions_Traps`: linear potential, linear Fermi level."""
+    """SIMsalabim's `Init_Pot_Dens_Ions_Traps`: linear potential, linear Fermi level. With a
+    free end `solver._initial_free`'s start: with one contact its potential and Fermi level
+    everywhere, with none the potential 0 and the balanced densities (`_balanced_logs`)."""
     x = d["x"]
     e = d["left_elec"]  # −1: the left electrode the cathode, 1 the anode
     V = d["V0"] + 0.5 * e * Vint + x * (d["VL"] - d["V0"] - e * Vint) / d["L"]
     EF = d["W_L"] - x * (d["W_L"] - d["W_R"]) / d["L"]
     ln_n = jnp.log(d["N_c"]) - (EF - d["E_c"]) / d["Vt"]
     ln_p = 2 * jnp.log(d["ni"]) - ln_n
-    return jnp.stack([V, ln_n, ln_p], -1)
+    linear = jnp.stack([V, ln_n, ln_p], -1)
+    if "fs_k" not in d["s"]:
+        return linear
+    left, right = d["free"][0] > 0, d["free"][1] > 0
+    V_c = jnp.where(left, d["VL"] - 0.5 * e * Vint, d["V0"] + 0.5 * e * Vint)
+    W = jnp.where(left, d["W_R"], d["W_L"])
+    ln_n = jnp.log(d["N_c"]) - (W - d["E_c"]) / d["Vt"]
+    flat = jnp.stack([jnp.full_like(x, V_c), ln_n, 2 * jnp.log(d["ni"]) - ln_n], -1)
+    s = d["s"]
+    ln_n, ln_p = _balanced_logs(s["dop"], d["ni"][1:-1], d["N_c"][1:-1], d["Vt"],
+                                d["g_frac"] * d["G"][1:-1], s, _volumes(s, d["L"]))  # fmt: skip
+    edge = functools.partial(jnp.pad, pad_width=1, mode="edge")
+    balanced = jnp.stack([jnp.zeros_like(x), edge(ln_n), edge(ln_p)], -1)
+    return jnp.where(left & right, balanced, jnp.where(left | right, flat, linear))
 
 
 def _current(d, full, g_frac, B=bernoulli):
@@ -260,7 +280,9 @@ def _current(d, full, g_frac, B=bernoulli):
     displacement current (`Calc_Displacement_Curr`). Its parts: `_current_parts`."""
     parts, _ = _current_parts(d, full, g_frac, B)
     hh = d["h"][: d["x"].shape[0] - 1]
-    return jnp.sum(hh * sum(parts.values())) / jnp.sum(hh)
+    J = jnp.sum(hh * sum(parts.values())) / jnp.sum(hh)
+    # A free end: in the steady state no current anywhere (`solver._current`).
+    return jnp.where(jnp.any(d["free"] > 0), 0.0, J) if "free" in d else J
 
 
 def _current_parts(d, full, g_frac, B=bernoulli):
@@ -730,6 +752,8 @@ def _newton_loop(y, logs, d, s, ion, Vint, g_frac, B, tol, max_iter, strict, vin
         quadratic = (it > 1) & (size < QUADRATIC_TOL) & (size < QUADRATIC_RATIO * prev)
         if strict:  # only the step below `tol`, or the round-off floor
             return (size < tol) | stalled
+        if "free" in d:  # with a free end the current is 0 whatever the state: no stop
+            settled = settled & ~jnp.any(d["free"] > 0)
         if vint:
             return (size < tol) | stalled | quadratic
         return (size < tol) | stalled | settled | quadratic
@@ -777,11 +801,13 @@ def _freeze(s, ion, y, logs, Vt, flag):
     return s, ion
 
 
-def _solve_one(d, voltages, B, tol, max_iter, start_iter, strict):
+def _solve_one(d, voltages, B, tol, max_iter, start_iter, strict, states=False):
     """One device's J-V curve: the pre-bias stage, then the scan outwards from it. `voltages`
     ascending; `max_iter` caps Newton per voltage of the scan, `start_iter` Poisson and Newton
     at the pre-bias (the final pass's cap in both passes: a first pass changes no device's
-    start, and a low first cap does not fail the pre-bias, which a batch pays once)."""
+    start, and a low first cap does not fail the pre-bias, which a batch pays once). With
+    `states` each voltage's state and what photoluminescence measures of it too
+    (`_observed`)."""
     s, ion, Vt, g_frac = d["s"], d["ion"], d["Vt"], d["g_frac"]
     first = jnp.where(d["pre_cond"] > 0, d["V_pre"], voltages[0])
     # The start: no derivatives (`_newton_solve` has them, of its converged solution; reverse
@@ -845,6 +871,8 @@ def _solve_one(d, voltages, B, tol, max_iter, start_iter, strict):
             jax.lax.stop_gradient((y_new, logs_new, y, logs, Vint, V_last)),
             carry,
         )
+        if states:
+            return carry, (J, ok, it, *_observed(d, s, y_new, Vint, g_frac, B))
         return carry, (J, ok, it)
 
     # Outwards from the pre-bias (docs/solver.md): up from the first voltage at or above it,
@@ -855,25 +883,47 @@ def _solve_one(d, voltages, B, tol, max_iter, start_iter, strict):
     j = jnp.arange(n)
     order = jnp.where(j < n - below, below + j, n - 1 - j)
     start = jax.lax.stop_gradient((y, logs, y, logs, first, first))
-    _, (J, ok, its) = jax.lax.scan(scan, start, (voltages[order], j == n - below))
-    J, ok, its = (jnp.zeros_like(a).at[order].set(a) for a in (J, ok, its))
-    return J, ok & pre_ok, its
+    _, out = jax.lax.scan(scan, start, (voltages[order], j == n - below))
+    J, ok, its, *rest = (jnp.zeros_like(a).at[order].set(a) for a in out)
+    return (J, ok & pre_ok, its, *rest)
 
 
-@functools.partial(jax.jit, static_argnames=("bernoulli_name", "max_iter", "start_iter", "strict"))
-def _solve_batch(batch, voltages, tol, max_iter, start_iter, bernoulli_name, strict):
+def _observed(d, s, y, Vint, g_frac, B):
+    """A solution `y`'s state on all `NP + 2` points (`(V, ln n, ln p)`: the contacts' densities
+    of finite surface recombination from their neighbours, a free end's boundary point its
+    neighbour's) and, as `solver.solve_state`, its implied `V_oc` and PLQY of direct
+    recombination."""
+    full = _with_contacts(_full(_bounds(d, Vint), y), s, d["Vt"], B)
+    if "free" in d:
+        full = full.at[0].set(jnp.where(d["free"][0] > 0, full[1], full[0]))
+        full = full.at[-1].set(jnp.where(d["free"][1] > 0, full[-2], full[-1]))
+    n, p = jnp.exp(full[1:-1, 1]), jnp.exp(full[1:-1, 2])
+    vol = _volumes(s, d["L"])
+    k = d["rec"]["kd"][1:-1]
+    rad = jnp.sum(vol * k * n * p)
+    rad0 = jnp.sum(vol * k * d["rec"]["ni2"][1:-1])
+    gen = g_frac * jnp.sum(vol * d["G"][1:-1])
+    implied_voc = jnp.where(rad0 > 0, d["Vt"] * jnp.log(rad / jnp.where(rad0 > 0, rad0, 1.0)),
+                            jnp.nan)  # fmt: skip
+    plqy = jnp.where(gen > 0, (rad - rad0) / jnp.where(gen > 0, gen, 1.0), jnp.nan)
+    return full, implied_voc, plqy
+
+
+@functools.partial(
+    jax.jit, static_argnames=("bernoulli_name", "max_iter", "start_iter", "strict", "states")
+)
+def _solve_batch(batch, voltages, tol, max_iter, start_iter, bernoulli_name, strict, states=False):
     """One pass. `_solve_one` wants the voltages ascending: sorted here, inside the jit (they
-    may be traced), and the results put back in the caller's order."""
+    may be traced), and the results put back in the caller's order: `(J, ok, its)`, with
+    `states` followed by `_observed`'s per voltage."""
     B = BERNOULLI[bernoulli_name]
-    one = functools.partial(
-        _solve_one, B=B, tol=tol, max_iter=max_iter, start_iter=start_iter, strict=strict
-    )
+    one = functools.partial(_solve_one, B=B, tol=tol, max_iter=max_iter, start_iter=start_iter,
+                            strict=strict, states=states)  # fmt: skip
     order = jnp.argsort(voltages)
-    J, ok, its = jax.vmap(one, in_axes=(0, None))(batch, voltages[order])
-    back = jnp.argsort(order)
+    J, *rest = (a[:, jnp.argsort(order)]
+                for a in jax.vmap(one, in_axes=(0, None))(batch, voltages[order]))  # fmt: skip
     # The shunt, at the internal voltage as SimSS has it.
-    J = J[:, back] + batch["G_shunt"][:, None] * voltages[None, :]
-    return J, ok[:, back], its[:, back]
+    return (J + batch["G_shunt"][:, None] * voltages[None, :], *rest)
 
 
 def _shard_map(f, mesh, in_specs, out_specs):
@@ -887,15 +937,17 @@ def _shard_map(f, mesh, in_specs, out_specs):
 
 
 @functools.partial(
-    jax.jit, static_argnames=("bernoulli_name", "max_iter", "start_iter", "strict", "mesh")
+    jax.jit,
+    static_argnames=("bernoulli_name", "max_iter", "start_iter", "strict", "mesh", "states"),
 )
-def _solve_sharded(batch, voltages, tol, max_iter, start_iter, bernoulli_name, strict, mesh):
+def _solve_sharded(batch, voltages, tol, max_iter, start_iter, bernoulli_name, strict, mesh,
+                   states=False):  # fmt: skip
     """`_solve_batch` with the batch split along its first axis across `mesh`'s devices, each
     solving its share (no communication: the devices are independent)."""
     P = jax.sharding.PartitionSpec
 
     def local(b, v, tol):
-        return _solve_batch(b, v, tol, max_iter, start_iter, bernoulli_name, strict)
+        return _solve_batch(b, v, tol, max_iter, start_iter, bernoulli_name, strict, states)
 
     return _shard_map(local, mesh, (P("b"), P(), P()), P("b"))(batch, voltages, tol)
 
@@ -907,19 +959,21 @@ def _mesh(devices):
     return jax.sharding.Mesh(np.array(devices), ("b",)) if len(devices) > 1 else None
 
 
-def _run(batch, voltages, tol, max_iter, start_iter, bernoulli_name, strict, mesh):
+def _run(batch, voltages, tol, max_iter, start_iter, bernoulli_name, strict, mesh, states=False):
     """One pass on one device, or split across `mesh`: the batch padded to a whole number of
     devices per accelerator by repeating its last device, the padding dropped again, the results
     on one device."""
     if mesh is None:
-        return _solve_batch(batch, voltages, tol, max_iter, start_iter, bernoulli_name, strict)
+        return _solve_batch(batch, voltages, tol, max_iter, start_iter, bernoulli_name, strict,
+                            states)  # fmt: skip
     n = jax.tree_util.tree_leaves(batch)[0].shape[0]
     k = mesh.devices.size
     m = -(-n // k) * k
     if m > n:
         idx = np.concatenate([np.arange(n), np.full(m - n, n - 1)])
         batch = jax.tree_util.tree_map(lambda leaf: leaf[idx], batch)
-    out = _solve_sharded(batch, voltages, tol, max_iter, start_iter, bernoulli_name, strict, mesh)
+    out = _solve_sharded(batch, voltages, tol, max_iter, start_iter, bernoulli_name, strict, mesh,
+                         states)  # fmt: skip
     # The results through the host onto one device: what follows (the second pass's scatter,
     # the caller's sums) is then never an operation across the GPUs, which XLA would run with
     # collectives (NCCL); on a host with an old driver such a scatter hung both GPUs.
@@ -987,15 +1041,41 @@ def solve_batch(batch, voltages, tol=1e-10, max_iter=60, first_max_iter=6,
                        mesh)  # fmt: skip
 
 
-def _passes(batch, voltages, tol, max_iter, first_max_iter, bernoulli_name, strict, mesh=None):
-    """`solve_batch`'s one or two passes."""
+def solve_states(batch, voltages=0.0, tol=1e-10, max_iter=60, first_max_iter=6,
+                 bernoulli_name="exact", strict=False, devices=None):  # fmt: skip
+    """The steady states of a batch (`prepare`) at `voltages` (one or several, internal) and
+    what photoluminescence measures of them, as `solver.solve_state` per device: a dict of
+    `V`, `n`, `p`, `qfls` (batch × voltages × NP + 2; `V` in its gauge), `implied_voc`, `plqy`,
+    `J`, `converged`, `iterations` (batch × voltages). Solved as `solve_batch` (its arguments
+    too), each device's voltages one after another; with a free end the voltage only moves the
+    potential's gauge (one contact) or is not used (none), so one voltage is what such a batch
+    needs. Differentiable as `solve_batch`: `implied_voc` and `plqy` in the parameters of
+    `device_tree`'s devices."""
+    voltages = jnp.atleast_1d(jnp.asarray(voltages, dtype=float))
+    mesh = None if _traced(batch, voltages) else _mesh(devices)
+    with _quiet():
+        J, ok, its, full, voc, plqy = _passes(
+            batch, voltages, tol, max_iter, first_max_iter, bernoulli_name, strict, mesh, True
+        )
+    n, p = jnp.exp(full[..., 1]), jnp.exp(full[..., 2])
+    ni2 = batch["rec"]["ni2"][:, None, :]
+    return {"V": full[..., 0], "n": n, "p": p, "qfls": batch["Vt"][:, None, None]
+            * jnp.log(n * p / ni2), "implied_voc": voc, "plqy": plqy, "J": J, "converged": ok,
+            "iterations": its}  # fmt: skip
+
+
+def _passes(batch, voltages, tol, max_iter, first_max_iter, bernoulli_name, strict, mesh=None,
+            states=False):  # fmt: skip
+    """`solve_batch`'s one or two passes: `_solve_batch`'s outputs."""
+    run = functools.partial(_run, voltages=voltages, tol=tol, bernoulli_name=bernoulli_name,
+                            strict=strict, mesh=mesh, states=states)  # fmt: skip
     if first_max_iter is None or first_max_iter >= max_iter or _traced(batch, voltages):
-        return _run(batch, voltages, tol, max_iter, max_iter, bernoulli_name, strict, mesh)
-    J, ok, its = _run(batch, voltages, tol, first_max_iter, max_iter, bernoulli_name, strict, mesh)
-    idx, padded = _stragglers(ok)
+        return run(batch, max_iter=max_iter, start_iter=max_iter)
+    out = run(batch, max_iter=first_max_iter, start_iter=max_iter)
+    idx, padded = _stragglers(out[1])
     if idx.size == 0:
-        return J, ok, its
+        return out
     part = jax.tree_util.tree_map(lambda leaf: leaf[padded], batch)
-    J2, ok2, its2 = _run(part, voltages, tol, max_iter, max_iter, bernoulli_name, strict, mesh)
+    again = run(part, max_iter=max_iter, start_iter=max_iter)
     n = idx.size
-    return J.at[idx].set(J2[:n]), ok.at[idx].set(ok2[:n]), its.at[idx].set(its2[:n])
+    return tuple(a.at[idx].set(b[:n]) for a, b in zip(out, again, strict=True))

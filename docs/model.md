@@ -322,9 +322,10 @@ sees; and the share of the generated pairs that recombine directly, `∫k·(n·p
 the PLQY where all direct recombination is radiative and every photon leaves the film (neither
 reabsorption nor outcoupling is modelled).
 
-Not yet at a free end (refused by name): mobile ions, field-dependent generation, Langevin
-recombination in a field-dependent mobility, `preCond`, a batch (`solve_batch`) and so transients
-([PLAN.md](../PLAN.md) 1.1).
+A batch takes free ends beside contacted devices: `solve_states` gives the same per device,
+differentiable in `device_tree`'s parameters; `solve_batch`'s current is 0 for them. Not yet at
+a free end (refused by name): mobile ions, field-dependent generation, Langevin recombination in
+a field-dependent mobility, `preCond` and transients ([PLAN.md](../PLAN.md) 1.1).
 
 ## Ions (`Init_Ionic_Region`, `Calc_Ion_Distribution_Steady_State`)
 

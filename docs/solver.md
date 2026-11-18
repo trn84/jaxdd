@@ -427,8 +427,17 @@ With **both ends free** the Jacobian is singular. The potential's constant shift
 vector, and the rows are dependent in one way: with no flux over either end, the electrons' rows,
 each divided by its weight `L·h_{i−1}·h_i`, sum to `∫(G − R)`, and so do the holes' (in the steady
 state each carrier recombines at the same rate). So the last point's hole row follows from the
-other rows. It is replaced by the gauge `V[NP] = 0` (`_gauged`), which is a row of that point
-alone, so the sweep is unchanged.
+other rows. It is replaced by the gauge `V[NP] = 0` (`_gauged`, at the end of `_assemble`),
+which is a row of that point alone, so the sweep is unchanged. In a batch the replacement is
+masked per device (`gauge_on`), and the implicit derivatives take the same rows, because they
+come from `_assemble` too.
+
+In a batch two more rules apply to a device with a free end. Its current is 0 whatever the
+state, so "the current settled" ([below](#when-is-a-voltage-converged)) would stop Newton at its
+first small step. For such a device that rule is off: only the step's size and the round-off
+floor stop it. And its start is chosen by masks, `batch._initial`: the linear start, the contact's
+flat one or the balanced one (the bisection runs in a `fori_loop`, only in batches that hold a
+free end).
 
 Without a contact, only recombination fixes how many carriers there are. Far from the solution,
 that mode's restoring force (`k·n·p`, `S·n`) is tiny against the diffusion terms. A uniform film

@@ -12,8 +12,10 @@ SimSS and built from those same inputs for jaxdd.
 
 **What is measured**, each part only where the machine has it:
 
-* `gpu` — jaxdd on JAX's GPU, one process, at each `--gpu-batches` size; compilation and a
-  first batch excluded, then `--repeats` batches timed. The batch is `--gpu-unique` distinct
+* `gpu` — jaxdd on JAX's GPUs, one process, at each `--gpu-batches` size; compilation and a
+  first batch excluded, then `--repeats` batches timed. The batch is split across every GPU
+  the process sees (`solve_batch`), their number in the row (`gpus`); one GPU's rate with
+  `CUDA_VISIBLE_DEVICES=0`. The batch is `--gpu-unique` distinct
   devices tiled to its size (building a device is host time, ~25 ms, not the solver's).
 * `cpu` — jaxdd on the CPU the way it runs fastest there: one single-threaded process per core
   (`--cpu-procs`, default every logical core), each pinned to its core and solving
@@ -131,7 +133,8 @@ def measure_gpu(batches: list[int], unique: int, repeats: int) -> list[dict]:
         seconds = time.perf_counter() - start
         runs = size * repeats
         row = {"solver": "jaxdd", "device": "gpu", "gpu": jax.devices()[0].device_kind,
-               "batch": size, "runs": runs, "seconds": seconds, "runs_per_s": runs / seconds,
+               "gpus": jax.device_count(), "batch": size, "runs": runs, "seconds": seconds,
+               "runs_per_s": runs / seconds,
                "first_batch_s": first, "converged": float(np.asarray(ok).mean()),
                **_lockstep(np.asarray(its))}  # fmt: skip
         print(f"gpu batch {size}: {row['runs_per_s']:.1f} runs/s (lockstep x{row['lockstep']:.2f})")

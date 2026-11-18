@@ -83,7 +83,9 @@ def describe(kind: str, report: dict, row: dict) -> tuple[str, str]:
     name = row["gpu"].removeprefix("NVIDIA ")
     ratio = next((v for k, v in FP64_RATIO.items() if k in name), None)
     fp64 = f", FP64 at {ratio} of FP32" if ratio else ""
-    return NAMES[kind], f"{name}, batch {row['batch']}{fp64}"
+    count = row.get("gpus", 1)  # results before the count was recorded: one GPU
+    many = f"{count}× " if count > 1 else ""
+    return NAMES[kind], f"{many}{name}, batch {row['batch']}{fp64}"
 
 
 def _rate(value: float) -> str:

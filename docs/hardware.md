@@ -6,10 +6,15 @@ benchmark devices of `validation/bench.py`; the README's figure has every machin
 
 | Machine | jaxdd | SimSS 5.36 on all cores of the same machine |
 |---|---|---|
-| A100-SXM4-40GB, batch 16384 | ~2800 | — |
-| RTX 4070 Ti SUPER, batch 16384 | ~1060 | — |
-| Ryzen 9 5950X (16 cores), CPU | ~730 | ~46 |
+| A100-SXM4-40GB, batch 16384 | ~2750 | — |
+| RTX 4070 Ti SUPER, batch 16384 | ~1050 | — |
+| Ryzen 9 5950X (16 cores), CPU | ~640 | ~33 |
 | one CPU core | ~58 | ~0.5 (2 s per curve) |
+
+The desktop's rates depend on the machine's state as much as on the code: on 2026-11-12 the
+same 5950X ran SimSS at 46 and jaxdd at 730, on 2026-11-18 at 33 and 640 with the same SimSS
+image and the same benchmark code (the cores at 3.55 GHz under load, the power profile no
+matter). The factors in the README are those of one day's measurement, each solver's.
 
 ## CPU: one small process per core
 
@@ -37,8 +42,8 @@ taskset -c 0 python my_sweep.py --part 0 &      # one per core, each pinned
 
 Install the CUDA jaxlib (`pip install "jax[cuda12]"`); JAX then uses the GPU by default. Use
 large batches: the sweep along the grid is sequential, so a GPU is busy only when each step
-covers thousands of devices. On an A100-SXM4-40GB batch 16384 gives about 2800 curves/s
-(`benchmarks/run.py` and `validation/bench.py` alike), batch 4096 about 2140.
+covers thousands of devices. On an A100-SXM4-40GB batch 16384 gives about 2750 curves/s
+(`benchmarks/run.py` and `validation/bench.py` alike), batch 4096 about 2150.
 
 **Several GPUs in one process.** `solve_batch` splits a batch along its devices across every
 GPU the process sees (`shard_map`; the devices are independent, so the GPUs do not talk), each
@@ -86,8 +91,8 @@ excludes the first call excludes one compilation. `jaxdd.batch._solve_batch._cac
 counts the compiled programs: it must not grow between the calls that are timed.
 
 **Data-centre cards only, for speed.** jaxdd needs FP64. The A100 and H100 run it at half their
-FP32 rate; consumer cards (GeForce, RTX) at 1/64. A RTX 4070 Ti SUPER reaches about 1060
-curves/s, little more than a 16-core desktop CPU (730) and well under half an A100. It is fine
+FP32 rate; consumer cards (GeForce, RTX) at 1/64. A RTX 4070 Ti SUPER reaches about 1050
+curves/s, little more than a 16-core desktop CPU (640) and well under half an A100. It is fine
 for development and for checking that everything runs on a GPU.
 
 ### A cloud A100
@@ -155,7 +160,7 @@ ownCloud public folder link with upload rights, the host uploads the log and the
 every ten minutes and at the end, so a session that ends keeps what is done. The three samples
 at the default 128 walkers × 3000 steps took 4.2 h on an A100-SXM4-40GB.
 
-On an A100-SXM4-40GB it runs at 2800 curves/s in the container at batch 16384, all tests
+On an A100-SXM4-40GB it runs at 2750 curves/s in the container at batch 16384, all tests
 passing; a Newton step of 16384 devices there is 20 ms, 9 of it the assembly and 7 the block
 sweep's kernel.
 
@@ -166,7 +171,7 @@ called through the XLA FFI: one thread per device, the blocks assembled in regis
 sweep uses them instead of written to memory and read back, a mode beside the JAX solver (as
 `JAXDD_SWEEP`) with the JAX solver as its reference and fallback. Implicit differentiation
 would need no adjoint of it ([solver.md](solver.md)). From the A100's bandwidth it would run
-an estimated 10⁴–3·10⁴ curves/s, 4–10× today's 2800 (uncertain by 3×), and the devices would
+an estimated 10⁴–3·10⁴ curves/s, 4–10× today's 2750 (uncertain by 3×), and the devices would
 wait for each other per warp of 32 instead of per batch (on the 250 nm ion grid the batch pays
 4.59 Newton steps per voltage where 2.76 are needed).
 

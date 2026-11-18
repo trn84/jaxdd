@@ -105,8 +105,8 @@ None of these is planned work. Each says how much speed it needs.
 
 | | Curves/s | Per hour | 1024 curves |
 |---|---|---|---|
-| A100 (40 GB SXM4, batch 16 384) | ~2800 | 10 M | 0.37 s |
-| a 16-core desktop CPU | ~730 | 2.6 M | 1.4 s |
+| A100 (40 GB SXM4, batch 16 384) | ~2750 | 10 M | 0.37 s |
+| a 16-core desktop CPU | ~640 | 2.3 M | 1.6 s |
 | one CPU core | ~58 | 210 k | 18 s |
 | a neural surrogate, evaluated | ~10⁶ | — | ~1 ms |
 

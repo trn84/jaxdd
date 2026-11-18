@@ -107,8 +107,8 @@ What helps, cheapest first:
    default, for the large batches a GPU wants; the limit is 6 because an ordinary device takes
    2–4 steps at every voltage, sometimes 5.
 3. **Smaller batches.** The expected maximum over fewer lanes is lower. On an A100, batch 4096
-   runs at about three quarters of the rate of 16384 where the steps paid are the same (2143
-   against 2801 curves/s on the benchmark devices).
+   runs at about three quarters of the rate of 16384 where the steps paid are the same (2145
+   against 2748 curves/s on the benchmark devices).
 
 The `converged` flag is unaffected: a lane that reaches `max_iter` is flagged, whichever pass it
 was in.

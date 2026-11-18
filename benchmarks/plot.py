@@ -15,6 +15,7 @@ Writes `benchmarks/speedup-light.svg` and `-dark.svg` and the block between
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 from pathlib import Path
@@ -107,7 +108,8 @@ def figure(entries: list[tuple[str, dict, dict]], theme: str, path: Path) -> Non
     t = THEMES[theme]
     plt.rcParams.update({"font.family": "sans-serif",
                          "font.sans-serif": ["Segoe UI", "Helvetica", "Arial", "DejaVu Sans"],
-                         "font.size": 10, "svg.fonttype": "none"})  # fmt: skip
+                         "font.size": 10, "svg.fonttype": "none",
+                         "svg.hashsalt": "jaxdd"})  # the same SVG from the same data  # fmt: skip
     fig, ax = plt.subplots(figsize=(8.0, 0.7 + 0.75 * len(entries)), dpi=100)
     fig.patch.set_facecolor(t["surface"])
     ax.set_facecolor(t["surface"])
@@ -143,7 +145,7 @@ def figure(entries: list[tuple[str, dict, dict]], theme: str, path: Path) -> Non
     ax.spines["bottom"].set_color(t["axis"])
     ax.set_xlabel("J-V curves per second (61 voltages each), log scale", color=t["ink2"])
     fig.tight_layout()
-    fig.savefig(path, facecolor=t["surface"])
+    fig.savefig(path, facecolor=t["surface"], metadata={"Date": None})
     plt.close(fig)
 
 
@@ -157,9 +159,17 @@ def table(entries: list[tuple[str, dict, dict]]) -> str:
     return "\n".join(lines)
 
 
+def _versioned(name: str) -> str:
+    """`benchmarks/<name>?v=<its content's hash>`: a new figure a new URL, which no cache holds
+    (GitHub serves the README's images for five minutes from a cache, a browser longer)."""
+    digest = hashlib.sha256((ROOT / "benchmarks" / name).read_bytes()).hexdigest()[:10]
+    return f"benchmarks/{name}?v={digest}"
+
+
 def readme_block(entries: list[tuple[str, dict, dict]]) -> str:
-    picture = ('<picture>\n  <source media="(prefers-color-scheme: dark)" '
-               'srcset="benchmarks/speedup-dark.svg">\n  <img src="benchmarks/speedup-light.svg" '
+    dark, light = _versioned("speedup-dark.svg"), _versioned("speedup-light.svg")
+    picture = (f'<picture>\n  <source media="(prefers-color-scheme: dark)" srcset="{dark}">\n'
+               f'  <img src="{light}" '
                'alt="J-V curves per second: SimSS and jaxdd on CPU cores, jaxdd on GPUs">\n'
                "</picture>")  # fmt: skip
     ref = entries[0][1]

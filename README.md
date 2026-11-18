@@ -66,8 +66,8 @@ building devices in code, comparing with SimSS.
 
 <!-- benchmark:begin -->
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="benchmarks/speedup-dark.svg">
-  <img src="benchmarks/speedup-light.svg" alt="J-V curves per second: SimSS and jaxdd on CPU cores, jaxdd on GPUs">
+  <source media="(prefers-color-scheme: dark)" srcset="benchmarks/speedup-dark.svg?v=182664298d">
+  <img src="benchmarks/speedup-light.svg?v=c63c112bf1" alt="J-V curves per second: SimSS and jaxdd on CPU cores, jaxdd on GPUs">
 </picture>
 
 The same devices for every solver (`benchmarks/run.py`: the three committed SimSS cases, traps, ions and doping drawn at random), each measured with the current code. jaxdd computes in FP64: a data-centre GPU runs it at half its FP32 rate, a consumer card at 1/64, which is why a gaming GPU is barely faster than a desktop CPU here. jaxdd's curves agree with SimSS's to 1.5e-05 of the current scale on 48 of the devices. How to get the most out of each: [`docs/hardware.md`](docs/hardware.md).

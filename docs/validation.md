@@ -507,18 +507,61 @@ recombination at the outer surfaces, which an electrode cannot do in pairs.
 decay with an exact answer, which jaxdd meets to 1.2e-5, ZimT misses by 80 % at 73 ns through
 its leaking blocking contacts; the half-stacks' best case it does not finish.
 
-**The measurements** (`trpl_fit.py`). The SnO2 half-stack's three decays with free ends, seven
-parameters: 0.088 decades rms by a hand-written Levenberg–Marquardt, 0.171 by `trpl_fit.py`'s
-`least_squares` from the same start (two minima). The SnO2/FAPbI3 interface's SRV comes out at
-13 cm/s, the authors' 9 (4–17) cm/s. The perovskite's mobility does not: about 0.01 cm²/Vs,
-where the authors find 0.4–2. That is the fit making up for the traps. A layer's trap levels
-share one pair of capture coefficients (SIMsalabim's, and so jaxdd's), so the authors' shallow
-electron trap (capture 1.3e6 /s, emission 7.5e5 /s) becomes a recombination centre (`C_p·p` ≈
-1e8 /s): with the authors' parameters jaxdd decays four times too fast at 1 µs, and the fit
-drives `C_p/C_n` to 1e-6. The Spiro half-stack contradicts the small mobility: its quench (0.08
-at 10 ns) takes the carriers to the interface within nanoseconds; with the authors' 0.41
-cm²/Vs and 1e4 cm/s at the interface it is met to 0.25 decades unfitted, with 0.01 cm²/Vs not
-below 0.88. What follows is in [PLAN.md](../PLAN.md).
+**The measurements, one half-stack** (`trpl_fit.py`). The SnO2 half-stack's three decays with
+free ends, seven parameters, the trap levels sharing their layer's capture coefficients (as in
+SIMsalabim): 0.088 decades rms by a hand-written Levenberg–Marquardt, 0.171 by `trpl_fit.py`'s
+`least_squares` from the same start (two minima). The perovskite's mobility came out at about
+0.01 cm²/Vs, where the authors find 0.4–2: the fit making up for the traps. Sharing `C_p`, the
+authors' shallow electron trap (capture 1.3e6 /s, emission 7.5e5 /s) becomes a recombination
+centre (`C_p·p` ≈ 1e8 /s); with their parameters jaxdd decayed four times too fast at 1 µs. The
+Spiro half-stack contradicts the small mobility: its quench (0.08 at 10 ns) takes the carriers to
+the interface within nanoseconds; with 0.41 cm²/Vs it is met to 0.25 decades unfitted, with
+0.01 cm²/Vs not below 0.88. Hence each level's own capture coefficients
+([model.md](model.md#bulk-traps-init_trapping-calc_trap_filling_charge)): with the authors'
+parameters and the shallow level's `C_p` = 0, the film's PL at 1 µs is 0.060 (measured 0.078).
+
+**The measurements, together** (`trpl_joint.py`, 2026-11-19). All eight decays (the film's four,
+SnO2's three, Spiro's one), one perovskite (k_rad, mobility, photodoping, a deep level and a
+shallow one without hole capture, their capture coefficient, the shallow level's depth), one
+glass/perovskite and one perovskite/air surface for the samples that share them, each transport
+layer its own SRV, band edge and doping (Spiro its mobility), one transfer velocity; 17
+parameters, every end free. From the authors' values: 0.397 → 0.193 decades rms, every decay
+0.12–0.24; from three starts spread by ±0.5 decades 0.26, 0.26 and one that never left a start
+whose SnO2 decays did not converge. One iteration solves 144 transients in about 5 s.
+
+The misfit is systematic, and it has a name. Lit through the glass the model is 0.2–0.3 decades
+too high after 30 ns, lit from the top 0.1–0.28 too low: the measured PL at 1 µs is three times
+smaller after excitation through the glass (0.078 against 0.27), about half the carriers lost
+early on that side only. A uniform perovskite with two surfaces cannot do that: a recombining
+glass surface reaches the carriers lit from the top too, at the mobility the data ask for.
+A defective zone at each perovskite's bottom (`--bottom-zone 30` and 80 nm, its own deep-trap
+density; the films grow on Al2O3 nanoparticles) does not either: at the best fit's mobility
+it helps the glass side as much as it hurts the top side (0.1925 without its traps, 0.198 at
+1e19 m⁻³, 0.506 at 1e20), and fits from 0.1 or 1 cm²/Vs end at 0.49 and 0.24, the mobility
+pushed back up. Left as candidates: optics that differ with the side (the absorbed share of the
+pulse, reabsorption of the PL on its way out, photon recycling), none of which either model has.
+
+**The posterior** (`trpl_sample.py`: 48 walkers, 300 steps, 43 min; σ the fit's 0.193 decades,
+a lower bound on the widths as the misfit is systematic; autocorrelation about 22 steps,
+acceptance 5 %). Medians, 16–84 %, against the authors' medians:
+
+| | jaxdd, eight decays | Kober-Czerny et al. |
+|---|---|---|
+| k_rad | 1.04 (0.92–1.14)·10⁻¹⁰ cm³/s | 0.75·10⁻¹⁰ |
+| photodoping | 1.2 (1.0–1.4)·10¹⁵ cm⁻³ | 2.1·10¹⁵ |
+| mobility FAPbI3 | 10 (9–12) cm²/Vs | 0.41 (film), 2.2 (SnO2 stack) |
+| SRV FAPbI3/Spiro | 170 (120–215) cm/s | 100 (60–120) |
+| SRV SnO2/FAPbI3 | 1.9 (0.4–5.8)·10⁴ cm/s | 9 (4–17) |
+| SRV glass/FAPbI3 | 0.13 (0.01–1.2) cm/s | 7.2 |
+| SRV FAPbI3/air | 0.07 (0.006–1.0) cm/s | 3.6 |
+
+The radiative constant (within 40 %), the photodoping (within a factor of two) and the Spiro
+interface agree. The SnO2 interface's
+SRV is set by its traps against SnO2's doping and band edge (correlation 0.84): in a stack with
+band bending its traps are not the authors' boundary condition, and the two numbers measure
+different things. The film's two surfaces are barely determined (two decades each), as the
+authors found for their sum. The mobility is determined, and 25 times theirs: what the side
+asymmetry above leaves unexplained may sit there.
 
 **Speed** (`trpl_timing.py`, the film's transient with electrodes, 142 steps; RTX 4070 Ti SUPER
 against the Ryzen 9 5950X's cores): jaxdd 0.18 s for one, 32 ms each in a batch of 28 (one
@@ -615,6 +658,8 @@ as arguments. SimSS itself is built by [`simss/`](../simss/README.md).
 | `validation/trpl_halfstacks.py` | TRPL of two half-stacks without electrodes: free ends against SIMsalabim's electrodes and their best case ([above](#trpl-without-electrodes)) |
 | `validation/trpl_zimt.py [--cap S] [--workdir DIR]` | ZimT 5.36 on a decay with an exact answer and on the half-stacks' best case (Docker, each run stopped after `S` seconds) |
 | `validation/trpl_fit.py` | the SnO2 half-stack's measured decays fitted with free ends |
+| `validation/trpl_joint.py [--starts N] [--from-best] [--start-mu LOG10] [--bottom-zone NM]` | all eight measured decays fitted together, one perovskite, every end free; with `--bottom-zone` the hypothesis of a defective zone at the perovskite's bottom |
+| `validation/trpl_sample.py [--walkers W] [--steps S] [--sigma F]` | the joint fit's posterior by the ensemble sampler over the batch; the chain to `benchmarks/samples/trpl_chain.npz` |
 | `validation/trpl_timing.py [--batches N …] [--parallel P]` | the same transient's wall time in jaxdd and in ZimT |
 
 ## Running SimSS for a comparison

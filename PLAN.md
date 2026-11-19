@@ -7,19 +7,7 @@ handbook or the commit message, not here.
 
 ## 1 Next
 
-0.2.0 is released (CHANGELOG.md).
-
-### 1.1 The TRPL data jointly, then their posterior
-
-With each trap level's own capture coefficients (a shallow electron trap beside a deep
-level, [docs/model.md](docs/model.md#bulk-traps-init_trapping-calc_trap_filling_charge)): the film's four decays and both half-stacks' together, one perovskite (bulk, traps,
-mobility) for all three, each transport layer its own; from many starts at once (the batch).
-Then the posterior by sampling (`validation/sample_measured.py`'s ensemble sampler over the
-batch), to see what the decays determine: the mobility against the interfaces' SRV, the two
-surfaces of the film.
-
-**Done when** one parameter set meets all seven decays within the noise or the misfit is
-named, and the posterior's medians and spreads stand beside the authors'.
+0.2.0 is released (CHANGELOG.md). Nothing is next until one of the items below is taken up.
 
 ## 2 Waiting
 
@@ -56,6 +44,13 @@ about two A100s).
   and in 7–9 dimensions a table is out of reach. The price is a model evaluation instead of an
   interpolation. **Done when** such a sample meets a table's tolerance with fewer devices than
   `refine_axes`.
+- **TRPL lit from either side.** Fitted together, the eight decays of Kober-Czerny et al. leave
+  one misfit: after excitation through the glass the PL falls three times further than after
+  excitation from the top, which neither a uniform perovskite with two surfaces nor a defective
+  zone at its bottom reproduces ([docs/validation.md](docs/validation.md#trpl-without-electrodes)).
+  The candidates are optical and in neither model: the absorbed share of the pulse by side,
+  the PL's reabsorption on its way out, photon recycling. **Done when** one of them, in jaxdd,
+  brings both sides within the noise, or all three are ruled out.
 - **Impedance in the frequency domain**, from the steady state's Jacobian
   (`(J + iω·M)·δx = b`, one complex solve per frequency) instead of a transient per frequency.
   ZimT has no reference for it but its own time-domain response.

@@ -49,6 +49,10 @@ PEROVSKITE = {
 # The authors' k_deep (1.6e4 /s) and k_capture (1.3e6 /s) as N_t·C, k_emission (7.5e5 /s) as the
 # shallow level's depth below E_c.
 TRAPS = f"E Ntrap\n4.765 {1.6e4 / C:.4e}\n4.261 {1.3e6 / C:.4e}\n"
+# The same with each level's own capture coefficients (`device.TRAP_FILE_CAPTURE`): the shallow
+# level takes no holes, so it traps electrons and gives them back without recombining.
+TRAPS_OWN = (f"E Ntrap C_n C_p\n4.765 {1.6e4 / C:.4e} {C} {C}\n"
+             f"4.261 {1.3e6 / C:.4e} {C} 0\n")  # fmt: skip
 SNO2 = {
     "L": "30e-9", "E_c": 4.1, "E_v": 7.6, "N_c": "2.2e24", "eps_r": 9, "N_D": "1e24", "N_A": 0,
     "mu_n": "1e-4", "mu_p": "1e-4", "k_direct": 0, "layerGen": 0, "G_ehp": 0, "N_t_bulk": 0,
@@ -67,12 +71,26 @@ def interface(S_cm):
             "intTrapType": 0}  # fmt: skip
 
 
-#: name: (layers from the glass up, index of the perovskite)
+#: name: (layers from the glass up, index of the perovskite, or a tuple of the indices of the
+#: layers it is made of)
 STACKS = {
     "film": ([PEROVSKITE], 0),
     "SnO2": ([{**SNO2, **interface(9)}, PEROVSKITE], 1),
     "Spiro": ([{**PEROVSKITE, **interface(100)}, SPIRO], 0),
 }
+
+
+def with_bottom_zone(thickness):
+    """`STACKS` with a zone of `thickness` (m) at each perovskite's bottom, a layer of its own
+    (the same bands, its own traps): the stacks, and each stack's zone (its layer index)."""
+    zone = {**PEROVSKITE, "L": f"{thickness:.6e}", "nu_int_n": "1e7", "nu_int_p": "1e7"}
+    rest = {**PEROVSKITE, "L": f"{600e-9 - thickness:.6e}"}
+    stacks = {
+        "film": ([zone, rest], (0, 1)),
+        "SnO2": ([{**SNO2, **interface(9)}, zone, rest], (1, 2)),
+        "Spiro": ([zone, {**rest, **interface(100)}, SPIRO], (0, 1)),
+    }
+    return stacks, {"film": 0, "SnO2": 1, "Spiro": 0}
 
 
 def _set(text, key, value):
@@ -82,17 +100,18 @@ def _set(text, key, value):
     return new
 
 
-def _files(name, lit_from_glass, fluence):
+def _files(name, lit_from_glass, fluence, traps=None):
     """The layer files, the traps and the generation profile (G at G_frac = 1, m⁻³ s⁻¹)."""
     layers, k = STACKS[name]
-    files = {"traps.txt": TRAPS}
+    files = {"traps.txt": TRAPS if traps is None else traps}
     for i, ly in enumerate(layers):
         text = _LAYER
         for key, v in ly.items():
             text = _set(text, key, v)
         files[f"L{i + 1}.txt"] = text
     thick = [float(ly["L"]) for ly in layers]
-    x0, x1 = sum(thick[:k]), sum(thick[: k + 1])
+    first, last = (k[0], k[-1]) if isinstance(k, tuple) else (k, k)  # the absorbing layers
+    x0, x1 = sum(thick[:first]), sum(thick[: last + 1])
     x = np.linspace(0, sum(thick), 2000)
     depth = np.clip((x - x0) if lit_from_glass else (x1 - x), 0, None)
     G = np.where((x >= x0) & (x <= x1), fluence * ALPHA * np.exp(-ALPHA * depth) / T_PULSE, 0.0)
@@ -116,10 +135,11 @@ def _setup_text(template, name, W, S, NP, extra=None):
 
 
 def setup(name, W=("free", "free"), S=(0, 0, 0, 0), NP=400, lit_from_glass=True,
-          fluence=FLUENCE):  # fmt: skip
+          fluence=FLUENCE, traps=None):  # fmt: skip
     """A stack of `STACKS` for jaxdd: its ends free, or electrodes at the work functions `W`
-    (eV or 'sfb') with the surface recombination velocities `S` (m/s, SIMsalabim's order)."""
-    files = _files(name, lit_from_glass, fluence)
+    (eV or 'sfb') with the surface recombination velocities `S` (m/s, SIMsalabim's order);
+    `traps` the perovskite's trap file (`TRAPS` by default)."""
+    files = _files(name, lit_from_glass, fluence, traps)
     files["simulation_setup.txt"] = _setup_text(_SETUP, name, W, S, NP)
     return setup_from_texts(files)
 
@@ -174,6 +194,14 @@ def binned(y, which):
     for b in np.unique(which):
         out[:, b] = np.nanmean(y[:, which == b], axis=1)
     return out
+
+
+def film_data(t_max=1.5e-5):
+    """The film's decays: t (s) and 4 × points (glass 4.8e11, glass 4.8e10, film 4.8e11, film
+    4.8e10 photons/cm²)."""
+    a = np.loadtxt(DATA / "Seo_FAPI_nuts_data_norm.dat", skiprows=1)
+    m = a[:, 1] * 1e-9 < t_max
+    return a[m, 1] * 1e-9, a[m, 2:].T
 
 
 def sno2_data(t_max=1.5e-5):

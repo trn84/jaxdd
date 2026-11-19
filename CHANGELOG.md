@@ -7,6 +7,14 @@ the API, and says so here.
 
 ## [Unreleased]
 
+## [0.3.0] – 2026-11-19
+
+Films and half-stacks without electrodes (free surfaces), in the steady state and in time, each
+trap level's own capture coefficients, photon recycling and each step's profiles in time. Nothing
+of 0.2.0's API is removed. Results change only where a contact with finite surface recombination
+sat at its branches' tie (such states now converge) and where a trap level is nearly full over a
+time step (now to its tolerance).
+
 ### Added
 
 - **Free surfaces** (jaxdd's; SIMsalabim fixes the potential at both ends). `W_L = free` or
@@ -165,6 +173,7 @@ of devices on CPUs and NVIDIA GPUs, differentiable in the input's parameters.
   depletion zones; ZimT's `varFile` is not written. A transient is not split across several GPUs.
 - AMD GPUs: prepared for the MI50 (gfx906, JAX 0.4.31 in a ROCm image), not yet measured.
 
-[Unreleased]: https://github.com/trn84/jaxdd/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/trn84/jaxdd/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/trn84/jaxdd/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/trn84/jaxdd/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/trn84/jaxdd/releases/tag/v0.1.0

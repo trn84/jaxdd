@@ -13,14 +13,20 @@ from near the glass leaving the film better (`trpl_joint.py --detect same --subl
 --outcoupling film`, 21 parameters, from `trpl_joint_detect_same_out_film.json` or
 `trpl_robust.json`, whichever fits best, else the best fit written below); its boost and reach
 are sampled as log10(boost × reach) and log10 reach, along the valley the decays leave them
-(docs/validation.md), the boost kept within its bounds.
+(docs/validation.md), the boost kept within its bounds. With `--outcoupling --neutral`, that fit
+with the pulse's absorbed share by side and the SnO2 interface's states with their own density
+and capture, neutral (saturable), at physical bounds with SnO2's conduction band at least 4.0 eV
+(`trpl_joint.py ... --outcoupling film --absorbed --neutral-interface --physical --ec-min 4`,
+26 parameters, from `trpl_joint_detect_same_out_film_absorbed_neutral_physical_ec4.json`, else
+the best fit written below).
 
-    .venv/bin/python validation/trpl_sample.py [--outcoupling] [--walkers W] [--steps S]
-        [--sigma F] [--seed N] [--resume]
+    .venv/bin/python validation/trpl_sample.py [--outcoupling [--neutral]] [--walkers W]
+        [--steps S] [--sigma F] [--seed N] [--resume]
 
 writes the summary (validation/trpl_sample.json, with `--outcoupling`
-validation/trpl_sample_out_s<seed>.json) and the chain (benchmarks/samples/trpl_chain.npz,
-trpl_out_chain_s<seed>.npz), the chain also every `--every` steps; `--resume` goes on from the
+validation/trpl_sample_out_s<seed>.json, with `--neutral` trpl_sample_neutral_s<seed>.json) and
+the chain (benchmarks/samples/trpl_chain.npz, trpl_out_chain_s<seed>.npz,
+trpl_neutral_chain_s<seed>.npz), the chain also every `--every` steps; `--resume` goes on from the
 chain saved, up to `--steps` in all. Prints its progress as it goes.
 """
 
@@ -51,14 +57,26 @@ OUTCOUPLING_BEST = [
     4.0012, 25.0799, -0.4414, 5.0820, 24.9613, -7.6404, 6.7800, 6.5491, 0.8955, 23.7511,
     -7.2314,
 ]  # fmt: skip
+#: The same for `--neutral` (`trpl_joint.py`, the fit of the module docstring).
+NEUTRAL_BEST = [
+    -15.8740, -2.3468, 21.3363, -13.6032, 14.0497, 21.2660, 0.1924, -0.9734, -4.8911, 2.9993,
+    4.0703, 25.4594, -0.3895, 5.0259, 25.4601, -8.1955, 3.2936, 6.5265, 0.9999, 53.8015, -7.3891,
+    -0.0201, -0.2473, 14.4918, 4.6753, -17.8121,
+]  # fmt: skip
+NEUTRAL_RMS = 0.0912
+NEUTRAL_FILE = "trpl_joint_detect_same_out_film_absorbed_neutral_physical_ec4.json"
 BOOST, REACH = 19, 20
 
 
-def best_fit(outcoupling):
+def best_fit(outcoupling, neutral=False):
     """The best fit's parameters and rms misfit."""
     found = []
-    names = (["trpl_joint_detect_same_out_film.json", "trpl_robust.json"] if outcoupling
-             else ["trpl_joint.json"])  # fmt: skip
+    if neutral:
+        names = [NEUTRAL_FILE]
+    elif outcoupling:
+        names = ["trpl_joint_detect_same_out_film.json", "trpl_robust.json"]
+    else:
+        names = ["trpl_joint.json"]
     for name in names:
         path = REPO / "validation" / name
         if path.exists():
@@ -67,6 +85,8 @@ def best_fit(outcoupling):
     if found:
         f = min(found, key=lambda f: f["rms"])
         return np.array(f["theta"]), f["rms"]
+    if neutral:
+        return np.array(NEUTRAL_BEST), NEUTRAL_RMS
     if outcoupling:
         return np.array(OUTCOUPLING_BEST), 0.1193
     raise SystemExit("no validation/trpl_joint.json: run validation/trpl_joint.py first")
@@ -78,9 +98,9 @@ def coordinates(outcoupling):
     if not outcoupling:
         same = lambda u: np.array(u, dtype=float)  # noqa: E731
         return tj.NAMES, tj.LO, tj.HI, same, same
-    names = (*tj.NAMES[:BOOST], "log10 boost × reach (m)", tj.NAMES[REACH])
-    lo = np.r_[tj.LO[:BOOST], -9.0, tj.LO[REACH]]
-    hi = np.r_[tj.HI[:BOOST], -5.0, tj.HI[REACH]]
+    names = (*tj.NAMES[:BOOST], "log10 boost × reach (m)", *tj.NAMES[REACH:])
+    lo = np.r_[tj.LO[:BOOST], -9.0, tj.LO[REACH:]]
+    hi = np.r_[tj.HI[:BOOST], -5.0, tj.HI[REACH:]]
 
     def to_theta(u):
         th = np.array(u, dtype=float)
@@ -99,6 +119,9 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--outcoupling", action="store_true",
                     help="the fit with outcoupling near the glass (21 parameters)")  # fmt: skip
+    ap.add_argument("--neutral", action="store_true",
+                    help="with --outcoupling: the absorbed share by side and saturable SnO2 "
+                         "interface states, at physical bounds (26 parameters)")  # fmt: skip
     ap.add_argument("--walkers", type=int, default=48)
     ap.add_argument("--steps", type=int, default=300, help="steps in all, with --resume too")
     ap.add_argument("--sigma", type=float, default=1.0, help="× the fit's rms misfit")
@@ -106,11 +129,19 @@ def main():
     ap.add_argument("--every", type=int, default=20, help="save and report every N steps")
     ap.add_argument("--resume", action="store_true", help="go on from the chain saved")
     a = ap.parse_args()
+    if a.neutral and not a.outcoupling:
+        raise SystemExit("--neutral goes with --outcoupling")
     if a.outcoupling:
         tj.use_detection("same", 24)
         tj.use_outcoupling(["film"])
         out_npz = REPO / "benchmarks" / "samples" / f"trpl_out_chain_s{a.seed}.npz"
         out_json = REPO / "validation" / f"trpl_sample_out_s{a.seed}.json"
+    if a.neutral:  # in trpl_joint.py's order of the parameters
+        tj.use_absorbed()
+        tj.use_charged_interface(0)
+        tj.use_physical_bounds(4.0)
+        out_npz = REPO / "benchmarks" / "samples" / f"trpl_neutral_chain_s{a.seed}.npz"
+        out_json = REPO / "validation" / f"trpl_sample_neutral_s{a.seed}.json"
     else:
         out_npz = REPO / "benchmarks" / "samples" / "trpl_chain.npz"
         out_json = REPO / "validation" / "trpl_sample.json"
@@ -139,7 +170,7 @@ def main():
         rng = np.random.default_rng([a.seed, len(before)])
         print(f"going on from step {len(before)} of {out_npz.relative_to(REPO)}")
     else:
-        th_best, rms = best_fit(a.outcoupling)
+        th_best, rms = best_fit(a.outcoupling, a.neutral)
         theta = np.clip(from_theta(th_best), LO + 1e-9, HI - 1e-9)
         sigma = a.sigma * rms
         rng = np.random.default_rng(a.seed)

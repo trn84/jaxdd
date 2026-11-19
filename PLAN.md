@@ -7,7 +7,7 @@ handbook or the commit message, not here.
 
 ## 1 Next
 
-0.2.0 is released (CHANGELOG.md). Nothing is next until one of the items below is taken up.
+0.3.0 is released (CHANGELOG.md). Nothing is next until one of the items below is taken up.
 
 ## 2 Waiting
 
@@ -30,6 +30,14 @@ as a hand-written HIP kernel beside JAX.
 criteria, at a throughput worth the cards (four MI50 are, for this bandwidth-bound FP64 solver,
 about two A100s).
 
+### 2.2 The posterior of the TRPL fit with saturable SnO2 interface states (a hub run)
+
+The fit of [3, TRPL](#3-later) (`trpl_joint.py ... --absorbed --neutral-interface --physical
+--ec-min 4`, 26 parameters, 0.091 decades) has no posterior yet; the one in docs/validation.md is the
+outcoupling fit's. On the hub: `STEPS=trpl TRPL_SEEDS="4 5" TRPL_ARGS="--neutral --walkers 256
+--steps 1000 --every 25" UPLOAD=... benchmarks/apptainer.sh`, about five hours per chain on an
+A100. **Done when** both chains agree and their summary is in docs/validation.md.
+
 ## 3 Later
 
 - **Ions bounded by their sites in time.** The steady state has them (docs/model.md), a
@@ -44,11 +52,11 @@ about two A100s).
   and in 7–9 dimensions a table is out of reach. The price is a model evaluation instead of an
   interpolation. **Done when** such a sample meets a table's tolerance with fewer devices than
   `refine_axes`.
-- **TRPL, the SnO2 stack lit from the top.** With saturable interface states and the
-  pulse's absorbed share by side the eight decays of Kober-Czerny et al. fit to 0.103 decades
-  rms at physical bounds; the SnO2 stack lit from the top stays at 0.23, the rest 0.04–0.10
-  ([docs/validation.md](docs/validation.md#trpl-without-electrodes)), and the fit then takes
-  SnO2's doping to its bound and the top side's absorbed share to 0.5 (0.78 expected). Not
+- **TRPL, the SnO2 stack lit from the top.** With saturable interface states, the pulse's
+  absorbed share by side and SnO2's band edge from 4.0 eV the eight decays of Kober-Czerny et
+  al. fit to 0.091 decades rms; the SnO2 stack lit from the top stays at 0.20, the rest 0.04–0.07
+  ([docs/validation.md](docs/validation.md#trpl-without-electrodes)), and the fit then holds the
+  SnO2 interface's SRV at its bound and the top side's absorbed share at 0.57 (0.78 expected). Not
   explained by SnO2 traps, a dipole (the same as SnO2's band edge) or photon recycling.
   **Done when** that decay is within the others' misfit with every parameter inside its bounds,
   or its misfit is traced to the measurement.
@@ -66,7 +74,4 @@ about two A100s).
 
 - **A fused CUDA kernel**: decided against for now; why, and when it comes back, is in
   [docs/hardware.md](docs/hardware.md#why-there-is-no-fused-kernel).
-- **A line-by-line port of SIMsalabim** (its one-device Gummel structure does not batch), a GUI.
-  SimSS and ZimT stay the references jaxdd is validated against. Every addition beyond them is
-  its own decision, released when validated.
 - **Two dimensions**: a project of its own ([docs/overview.md](docs/overview.md#what-the-speed-is-for)).

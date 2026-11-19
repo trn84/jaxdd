@@ -180,14 +180,15 @@ def use_charged_interface(kind=-1):
     LO, HI = np.r_[LO, 12.0, 4.65, -20.0], np.r_[HI, 18.0, 5.5, -10.0]
 
 
-def use_physical_bounds():
+def use_physical_bounds(ec_min=4.2):
     """Bounds a physicist would set: the interfaces' transfer velocity at most the thermal
-    velocity's order (1e5 m/s), SnO2's conduction band at least 0.2 eV below the perovskite's
-    (its electron affinity 4.2–4.5 eV)."""
+    velocity's order (1e5 m/s), SnO2's conduction band at least `ec_min` (eV; 4.2 the electron
+    affinities' 4.2–4.5 eV, 4.0 photoemission's alignment with FA-rich perovskites within
+    30 meV, docs/validation.md)."""
     global HI, LO
     HI, LO = HI.copy(), LO.copy()
     HI[NAMES.index("log10 ν_int (m/s)")] = 5.0
-    LO[NAMES.index("E_c SnO2 (eV)")] = 4.2
+    LO[NAMES.index("E_c SnO2 (eV)")] = ec_min
 
 
 def use_recycling():
@@ -400,6 +401,8 @@ def main():
                          "near the glass")  # fmt: skip
     ap.add_argument("--physical", action="store_true",
                     help="physical bounds: ν_int ≤ 1e5 m/s, E_c SnO2 ≥ 4.2 eV")  # fmt: skip
+    ap.add_argument("--ec-min", type=float, default=4.2,
+                    help="with --physical: SnO2's conduction band at least this (eV)")  # fmt: skip
     ap.add_argument("--recycling", action="store_true",
                     help="photon recycling in the perovskite (jaxdd.recycling); k_rad's start "
                          "raised by the share that escapes")  # fmt: skip
@@ -467,8 +470,10 @@ def main():
         first = first.copy()
         first[1] = a.start_mu
     if a.physical:
-        use_physical_bounds()
-        out = out.replace(".json", "_physical.json")
+        use_physical_bounds(a.ec_min)
+        out = out.replace(
+            ".json", "_physical.json" if a.ec_min == 4.2 else f"_physical_ec{a.ec_min:g}.json"
+        )
     if a.recycling:
         share = use_recycling()
         first = first.copy()

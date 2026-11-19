@@ -72,6 +72,9 @@
 #              the next start (`--resume`), so a job that ends loses at most 50 steps. Hours on
 #              an A100; not in the default steps:
 #                STEPS=trpl benchmarks/apptainer.sh
+#              `--neutral` in TRPL_ARGS samples the fit with saturable SnO2 interface states
+#              instead (26 parameters; trpl_neutral_chain_s<seed>.npz):
+#                STEPS=trpl TRPL_ARGS="--neutral --walkers 256 --steps 1000 --every 25" ...
 #
 # STEPS=all runs every step of a full measurement: info tests breakdown bench hard steric slots
 # transient run (about 40 min on an A100; not gpus, grid, chunk, sample, trpl).

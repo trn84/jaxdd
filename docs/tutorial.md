@@ -3,8 +3,8 @@
 ## Install
 
 ```bash
-pip install "jaxdd @ git+https://github.com/trn84/jaxdd@v0.2.0"            # CPU
-pip install "jaxdd[cuda12] @ git+https://github.com/trn84/jaxdd@v0.2.0"    # an NVIDIA GPU
+pip install "jaxdd @ git+https://github.com/trn84/jaxdd@v0.3.0"            # CPU
+pip install "jaxdd[cuda12] @ git+https://github.com/trn84/jaxdd@v0.3.0"    # an NVIDIA GPU
 python -c "import jax, jaxdd; print(jaxdd.__version__, jax.devices())"
 ```
 
@@ -273,6 +273,54 @@ device's steps: batch such devices apart from the others where speed matters
 forward mode (`jax.jvp`, `jax.jacfwd`; `validation/fit_transient.py` fits one); inside a
 transformation give `ions` and `vint` explicitly. It is not split across GPUs. What jaxdd
 reproduces of ZimT, and what not, is in [model.md](model.md) "Transients".
+
+### Band diagrams in time, and photon recycling
+
+A photoluminescence decay of a film without contacts is a transient like any other: a free film
+(`W_L = W_R = free`), a `tVGFile` with the light on for the pulse and off after it. Two options
+of `solve_transient` belong to such decays.
+
+`profiles=True` keeps each step's state on every point, from which the band diagram at any
+moment follows (SIMsalabim's convention: energies in eV below the vacuum level, a single `N_c`
+for both bands):
+
+```python
+import numpy as np
+
+setup = read_setup("film/simulation_setup.txt")   # W_L = W_R = free, a pulse in its tVGFile
+dev = build_device(setup)
+r = solve_transient(prepare([dev]), read_tvg(setup), profiles=True)
+V, n, p = (r.profiles[k][0] for k in ("V", "n", "p"))   # steps × NP + 2; V in volts
+E_c = -dev.E_c - V                                      # eV, per step and point
+E_v = -dev.E_v - V
+E_Fn = E_c + dev.Vt * np.log(n / dev.N_c)               # the quasi-Fermi levels
+E_Fp = E_v - dev.Vt * np.log(p / dev.N_c)
+```
+
+Without a contact the potential's zero is a gauge: only differences mean something. A
+carrier far below any density that moves a current (the holes in a doped transport layer, say)
+has a quasi-Fermi level Newton does not resolve; leave it out of a plot.
+
+`recycle=` reabsorbs the light of radiative recombination. In a film of high index most of it
+cannot leave (97 % of a 600 nm perovskite's band-edge photons are absorbed again):
+`recycling.device_kernel` gives the matrix of where each point's photons are absorbed, from the
+absorber's optics (Fresnel at its faces, total reflection beyond the escape cones, the emission
+spectrum from an absorption edge), and each step then adds them to the generation:
+
+```python
+from jaxdd.recycling import device_kernel
+
+K, left, right = device_kernel(dev)       # NP × NP, and the shares leaving at either face
+K[:, dev.k_direct[1:-1] > 0].sum(0)       # per emitting point, the share reabsorbed
+r = solve_transient(prepare([dev]), read_tvg(setup), recycle=K)
+```
+
+The optics' defaults are a perovskite's (`n_slab` 2.6, glass below, air above, an Urbach edge
+at 1.52 eV); `device_kernel(dev, n_slab=..., n_bottom=..., E=..., alpha=...)` takes others.
+The kernel depends on the grid alone, so one serves every device of a batch on the same grid
+(`recycle=K`), or a batch takes one per device (batch × NP × NP). How recycling is computed is
+in [model.md](model.md#photon-recycling-jaxdds-in-time); on the TRPL of Kober-Czerny et al. it
+slows the decays as a smaller `k_rad` would ([validation.md](validation.md#trpl-without-electrodes)).
 
 ## Building devices in code
 

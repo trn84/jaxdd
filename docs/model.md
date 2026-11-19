@@ -629,7 +629,9 @@ direct and bulk recombination as currents, at each interface the interface traps
 recombination of each carrier, the minority carriers' currents at the contacts, the shunt's,
 the ions' and the displacement current, and with `specialOutput = spv` each layer's voltage
 drop. The currents are `batch._current_parts`, what the average `Jint` is made of. ZimT's
-`varFile` (the profiles at each step) is not produced. The QFLS is `V_T·ln(n·p/n_i²)`. It
+`varFile` is not written; `solve_transient(..., profiles=True)` returns its core instead, each
+step's potential and densities on every point (`TransientResult.profiles`, `V`, `n`, `p`; a free
+end's boundary point its neighbour's state, as the solver reads it), for band diagrams in time. The QFLS is `V_T·ln(n·p/n_i²)`. It
 takes the logarithm of densities far below any that moves a current, below Newton's floor of
 convergence (`n_floor`, 1e-12 of the largest `N_c`): the minority carriers in the dark and in a
 transport layer. Newton steps those in the density, not its logarithm, so that they converge

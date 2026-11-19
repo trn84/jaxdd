@@ -51,6 +51,7 @@ from jaxdd.solver import (
     ION_LOG_CAP,
     STEP_CAPS,
     _bulk_occupation,
+    _free_ends,
     _interface_occupation,
     _ion_full,
     _ion_logs,
@@ -86,6 +87,7 @@ class TransientResult:
     n_layers: np.ndarray
     accepted: np.ndarray
     stop: np.ndarray
+    profiles: dict | None = None
 
 
 def _columns(d, parts, points, J, J_ext):
@@ -211,7 +213,7 @@ OC_GUESS = 0.0
 
 
 def _solve_one(d, t, V, oc, G_frac, track, ctl, recycle, B, tol, max_iter, ions, vint, ion_last,
-               zimt_current):  # fmt: skip
+               zimt_current, profiles=False):  # fmt: skip
     """One device through its steps: the start as SIMsalabim's (`Init_Pot_Dens_Ions_Traps`,
     Poisson at the first voltage), then each step by Newton from the one before. With `ions` the
     mobile ions are unknowns of their own (`V, ln n, ln p, ln a, ln c` per point,
@@ -222,7 +224,8 @@ def _solve_one(d, t, V, oc, G_frac, track, ctl, recycle, B, tol, max_iter, ions,
     (`failureMode`, `convVar` and its tolerances) decide, as in ZimT's main loop, which steps
     are kept, where the run stops, and so each step's `Δt`: from the last step kept. `recycle`
     (NP × NP, or None): each step's generation adds the photons of the state before it that
-    it reabsorbs (`solve_transient`)."""
+    it reabsorbs (`solve_transient`). `profiles`: each step's state (`V`, `ln n`, `ln p` on every
+    point, the contacts' included) as one more output."""
     s, ion = d["s"], d["ion"]
     V_first = jnp.where(oc[0] > 0, OC_GUESS, V[0])
     d0, s0, ion0, V0 = jax.lax.stop_gradient((d, s, ion, V_first))
@@ -358,7 +361,11 @@ def _solve_one(d, t, V, oc, G_frac, track, ctl, recycle, B, tol, max_iter, ions,
         static = running & (count >= MIN_COUNT_STATIC)
         stop = jnp.where(failed, STOP_FAILED, jnp.where(static, STOP_STATIC, stop))
         carry = (*new, jnp.array(False), t_last, track_curr, cur, ref, count, stop)
-        return carry, (J, J_ext, V_new, ok, it, columns, keep)
+        # a free end's boundary point its neighbour's state, as the solver reads it
+        state = (
+            ((_free_ends(after[:, :3], s) if "free" in s else after[:, :3]),) if profiles else ()
+        )
+        return carry, (J, J_ext, V_new, ok, it, columns, keep, *state)
 
     # Before the first step (t = 0, a steady state) the occupations do not matter.
     fb0 = jnp.zeros_like(s["Nt"])
@@ -373,21 +380,21 @@ def _solve_one(d, t, V, oc, G_frac, track, ctl, recycle, B, tol, max_iter, ions,
 
 
 @functools.partial(jax.jit, static_argnames=("bernoulli_name", "max_iter", "ions", "vint",
-                                             "ion_last", "zimt_current"))  # fmt: skip
+                                             "ion_last", "zimt_current", "profiles"))  # fmt: skip
 def _solve_batch(batch, t, V, oc, G_frac, track, ctl, recycle, tol, max_iter, bernoulli_name,
-                 ions, vint, ion_last, zimt_current):  # fmt: skip
+                 ions, vint, ion_last, zimt_current, profiles=False):  # fmt: skip
     one = functools.partial(_solve_one, B=BERNOULLI[bernoulli_name], tol=tol, max_iter=max_iter,
-                            ions=ions, vint=vint, ion_last=ion_last,
-                            zimt_current=zimt_current)  # fmt: skip
-    J, J_ext, V_int, ok, its, columns, kept, stop = jax.vmap(one)(batch, t, V, oc, G_frac, track,
-                                                                  ctl, recycle)  # fmt: skip
+                            ions=ions, vint=vint, ion_last=ion_last, zimt_current=zimt_current,
+                            profiles=profiles)  # fmt: skip
+    out = jax.vmap(one)(batch, t, V, oc, G_frac, track, ctl, recycle)
+    J, J_ext, V_int, ok, its, columns, kept = out[:7]
     V_ext = V_int + J_ext * batch["R_series"][:, None]
-    return J, J_ext, V_int, V_ext, ok, its, columns, kept, stop
+    return J, J_ext, V_int, V_ext, ok, its, columns, kept, out[-1], (out[7] if profiles else None)
 
 
 def solve_transient(batch, tvg: TVG | list[TVG], tol=1e-10, max_iter=200, bernoulli_name="exact",
-                    zimt_ion_currents=False, ions=None, vint=None,
-                    zimt_current=False, recycle=None) -> TransientResult:  # fmt: skip
+                    zimt_ion_currents=False, ions=None, vint=None, zimt_current=False,
+                    recycle=None, profiles=False) -> TransientResult:  # fmt: skip
     """A batch (`batch.prepare`) through ZimT's time steps `tvg`: one for every device, or one
     per device (all of one length). Each step's Newton to `tol` or `max_iter`. Where any device
     of the batch has an open circuit or a series resistance, the internal voltage is an unknown
@@ -405,7 +412,9 @@ def solve_transient(batch, tvg: TVG | list[TVG], tol=1e-10, max_iter=200, bernou
     (`recycling.device_kernel`); each step's generation adds them, from the state before the
     step (explicit in time, first order like the steps). A steady state (`t = 0`, a return to
     it) has none: the dark's `n·p = n_i²` emits nothing net, and under light it would need the
-    recycled generation's own solution.
+    recycled generation's own solution. `profiles`: each step's state on every point (the
+    contacts' included), `TransientResult.profiles` `{"V", "n", "p"}` (batch × steps × points;
+    V in volts, the densities in m⁻³), for band diagrams in time.
 
     Differentiable in the batch (`batch.device_tree`): each step's derivatives those of its
     converged solution by the implicit function (`batch._converged_jvp`), carried from step to
@@ -451,14 +460,17 @@ def solve_transient(batch, tvg: TVG | list[TVG], tol=1e-10, max_iter=200, bernou
         if recycle.shape != (n, NP, NP):
             raise ValueError(f"recycle: one {NP} × {NP} matrix, or one per device ({n})")
     with _quiet():
-        J, J_ext, V_int, V_ext, ok, its, columns, kept, stop = _solve_batch(
+        J, J_ext, V_int, V_ext, ok, its, columns, kept, stop, prof = _solve_batch(
             batch, t, V, jnp.asarray(oc, dtype=float), G, track, ctl, recycle, tol, max_iter,
             bernoulli_name, bool(ions), bool(vint), bool(zimt_ion_currents),
-            bool(zimt_current),
+            bool(zimt_current), bool(profiles),
         )  # fmt: skip
     out = (lambda a: a) if traced else np.asarray
     xp = jnp if traced else np
     n_layers = xp.asarray(batch["layers"]["cells"]).any(axis=2).sum(axis=1)
     return TransientResult(*(out(a) for a in (J, J_ext, V_int, V_ext, ok, its)),
                            columns={k: out(v) for k, v in columns.items()},
-                           n_layers=n_layers, accepted=out(kept), stop=out(stop))  # fmt: skip
+                           n_layers=n_layers, accepted=out(kept), stop=out(stop),
+                           profiles=None if prof is None else {
+                               "V": out(prof[..., 0]), "n": out(xp.exp(prof[..., 1])),
+                               "p": out(xp.exp(prof[..., 2]))})  # fmt: skip

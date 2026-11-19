@@ -20,6 +20,9 @@ the API, and says so here.
   field-dependent mobility), and in time (`solve_transient`, e.g. a photoluminescence decay).
   A device with a free end discretises Poisson's equation in flux form and counts its mobile
   ions over the control volumes, so that it keeps its charge exactly ([docs/model.md](docs/model.md#free-surfaces-jaxdds-w_l-or-w_r--free)).
+- **Profiles in time.** `solve_transient(..., profiles=True)` returns each step's potential and
+  densities on every point (`TransientResult.profiles`), the core of ZimT's `varFile`, for band
+  diagrams through a transient. Without it a transient is the same to the bit.
 - **Photon recycling in time** (jaxdd's; SIMsalabim counts direct recombination as lost).
   `jaxdd.recycling.slab_kernel` gives, for an absorbing slab between two media, the share of
   each point's emitted photons absorbed in each control volume and the shares leaving at

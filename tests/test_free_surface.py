@@ -306,6 +306,14 @@ def test_a_free_film_decays_as_implicit_euler() -> None:
         n.append((-1 + np.sqrt(1 + 4 * a * (n[-1] + a * ni**2))) / (2 * a))
     QFLS = tj_columns(r, 0)["QFLSL1"]
     np.testing.assert_allclose(ni * np.exp(QFLS / (2 * d.Vt)), n, rtol=1e-9)
+    # Each step's profiles (`profiles=True`): the same steps, and the film uniform at `n`.
+    with_profiles = solve_transient(prepare([d]), _decay(30, dt), profiles=True)
+    np.testing.assert_array_equal(tj_columns(with_profiles, 0)["QFLSL1"], QFLS)
+    prof = with_profiles.profiles
+    assert prof["n"].shape == (1, 31, len(d.x)) and r.profiles is None
+    uniform = np.broadcast_to(np.array(n)[:, None], prof["n"][0, :, 1:-1].shape)
+    np.testing.assert_allclose(prof["n"][0, :, 1:-1], uniform, rtol=1e-9)
+    np.testing.assert_allclose(prof["p"][0], prof["n"][0], rtol=1e-9)
 
 
 def test_a_free_stack_in_time() -> None:

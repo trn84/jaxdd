@@ -93,6 +93,34 @@ def with_bottom_zone(thickness):
     return stacks, {"film": 0, "SnO2": 1, "Spiro": 0}
 
 
+def with_sublayers(count):
+    """`STACKS` with each perovskite split into `count` equal layers (the same material, their
+    interfaces open: `nu_int` 1e7 m/s, no traps), so that the solver's per-layer columns give
+    the radiative recombination by depth (`detected`): the stacks, and each stack's perovskite
+    layers from the glass up."""
+    thick = float(PEROVSKITE["L"]) / count
+    part = {**PEROVSKITE, "L": f"{thick:.6e}", "nu_int_n": "1e7", "nu_int_p": "1e7"}
+    parts = [dict(part) for _ in range(count)]
+    stacks = {
+        "film": (parts, tuple(range(count))),
+        "SnO2": ([{**SNO2, **interface(9)}, *parts], tuple(range(1, count + 1))),
+        "Spiro": ([*parts[:-1], {**parts[-1], **interface(100)}, SPIRO], tuple(range(count))),
+    }
+    return stacks
+
+
+def detected(columns, layers, alpha, R_back, from_glass, thickness=600e-9):
+    """The PL a detector sees at the wavelength where the perovskite absorbs `alpha` (1/m): each
+    perovskite layer's radiative recombination (`JdirL<k>`, layers from the glass up) weighed by
+    its light's escape towards the detection side (the glass side or the top), directly and after
+    a reflection `R_back` at the far side; reabsorbed light is lost (no photon recycling)."""
+    n = len(layers)
+    depth = (np.arange(n) + 0.5) * thickness / n  # each layer's centre, from the glass side
+    d = depth if from_glass else thickness - depth
+    w = np.exp(-alpha * d) + R_back * np.exp(-alpha * (2 * thickness - d))
+    return sum(w[i] * columns[f"JdirL{k + 1}"] for i, k in enumerate(layers))
+
+
 def _set(text, key, value):
     new, k = re.subn(rf"^{key}\s*=\s*\S+", f"{key} = {value}", text, flags=re.M)
     if k != 1:

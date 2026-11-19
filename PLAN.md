@@ -48,9 +48,11 @@ about two A100s).
   one misfit: after excitation through the glass the PL falls three times further than after
   excitation from the top, which neither a uniform perovskite with two surfaces nor a defective
   zone at its bottom reproduces ([docs/validation.md](docs/validation.md#trpl-without-electrodes)).
-  The candidates are optical and in neither model: the absorbed share of the pulse by side,
-  the PL's reabsorption on its way out, photon recycling. **Done when** one of them, in jaxdd,
-  brings both sides within the noise, or all three are ruled out.
+  The PL's reabsorption on its way to the detector does not either (docs/validation.md). The
+  candidates left are the absorbed share of the pulse by side and photon recycling, and with
+  the misfit the mobility, which the fit uses against it (10 cm²/Vs, the authors' 0.41).
+  **Done when** one of them, in jaxdd, brings both sides within the noise, or both are ruled
+  out.
 - **Impedance in the frequency domain**, from the steady state's Jacobian
   (`(J + iω·M)·δx = b`, one complex solve per frequency) instead of a transient per frequency.
   ZimT has no reference for it but its own time-domain response.

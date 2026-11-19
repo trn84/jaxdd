@@ -29,6 +29,7 @@ import time
 
 import numpy as np
 import trpl_common
+from lm_batch import least_squares_many
 from scipy.optimize import least_squares
 from trpl_common import (
     FLUENCE,
@@ -38,6 +39,7 @@ from trpl_common import (
     C,
     as_measured,
     binned,
+    detected,
     film_data,
     fine_times,
     log_bins,
@@ -62,6 +64,7 @@ DECAYS = (
 #: Each stack's perovskite layers (with `--bottom-zone` two: the zone and the rest).
 PEROVSKITE_LAYERS = {"film": (0,), "SnO2": (1,), "Spiro": (0,)}
 ZONE = None  # with `--bottom-zone`: each stack's zone, its layer index (`use_bottom_zone`)
+DETECT = None  # with `--detect`: "same" (the lit side) or "opposite" (`use_detection`)
 #: name, start (the authors' values where they have them), lower and upper bound
 PARAMETERS = (
     ("log10 k_rad (m³/s)", np.log10(7.5e-17), -19, -14),
@@ -87,6 +90,21 @@ START = np.array([p[1] for p in PARAMETERS])
 LO = np.array([p[2] for p in PARAMETERS])
 HI = np.array([p[3] for p in PARAMETERS])
 FLOOR = 3e-3  # the data below this are noise
+
+
+def use_detection(side, sublayers=12):
+    """The PL as a detector at 806 nm sees it (`trpl_common.detected`): the perovskite in
+    `sublayers` layers, the detector on the lit side ("same") or the other ("opposite"); two more
+    parameters, the absorption at 806 nm (start: the authors' ellipsometry, 4.4e4 cm⁻¹ at the
+    top, 6.2e4 at the bottom) and the far side's reflection."""
+    global NAMES, START, LO, HI, DETECT, PEROVSKITE_LAYERS
+    stacks = trpl_common.with_sublayers(sublayers)
+    trpl_common.STACKS.update(stacks)
+    PEROVSKITE_LAYERS = {name: stacks[name][1] for name in stacks}
+    _BASE.clear()
+    DETECT = side
+    NAMES = (*NAMES, "log10 α at 806 nm (1/m)", "reflection at the far side")
+    START, LO, HI = np.r_[START, np.log10(5.3e6), 0.3], np.r_[LO, 5.5, 0.0], np.r_[HI, 8.0, 1.0]
 
 
 def use_bottom_zone(thickness):
@@ -180,7 +198,16 @@ class Problem:
             for j, (td, which, yb) in enumerate(self.data):
                 k = i * len(DECAYS) + j
                 with np.errstate(invalid="ignore", divide="ignore"):
-                    model = as_measured(self.tm, pl_of(tj_columns(r, k), nl[k]), td)
+                    if DETECT is None:
+                        pl = pl_of(tj_columns(r, k), nl[k])
+                    else:  # as the detector sees it
+                        stack, glass, _ = DECAYS[j]
+                        side = glass if DETECT == "same" else not glass
+                        th = thetas[i]
+                        seen = detected(tj_columns(r, k), PEROVSKITE_LAYERS[stack], 10.0 ** th[-2],
+                                        th[-1], side)  # fmt: skip
+                        pl = seen[1:] / seen[1]
+                    model = as_measured(self.tm, pl, td)
                     rj = np.log10(binned(model[None], which)[0]) - np.log10(yb)
                 bad = ~conv[i, j] or not np.all(np.isfinite(rj[np.isfinite(yb)]))
                 fine &= not bad
@@ -215,7 +242,14 @@ def main():
     ap.add_argument("--starts", type=int, default=3, help="starts besides the authors' values")
     ap.add_argument("--spread", type=float, default=0.5, help="the starts' spread (decades)")
     ap.add_argument("--seed", type=int, default=0)
-    ap.add_argument("--max-nfev", type=int, default=60)
+    ap.add_argument("--max-nfev", type=int, default=60, help="evaluations per start")
+    ap.add_argument(
+        "--optimizer",
+        choices=("batched", "scipy"),
+        default="batched",
+        help="scipy's least_squares from all starts at once, their evaluations batched "
+        "(lm_batch), or one start after another",
+    )
     ap.add_argument(
         "--bottom-zone",
         type=float,
@@ -235,6 +269,12 @@ def main():
         metavar="LOG10",
         help="with --bottom-zone: the first start's zone trap density, log10 m⁻³",
     )
+    ap.add_argument(
+        "--detect",
+        choices=("same", "opposite"),
+        help="the PL as a detector at 806 nm on that side sees it (reabsorption)",
+    )
+    ap.add_argument("--sublayers", type=int, default=12, help="with --detect: perovskite layers")
     ap.add_argument("--from-best", action="store_true",
                     help="start from the best fit in validation/trpl_joint.json")  # fmt: skip
     a = ap.parse_args()
@@ -247,6 +287,10 @@ def main():
         use_bottom_zone(a.bottom_zone * 1e-9)
         first = np.r_[first[:17], a.start_zone]
         out = f"trpl_joint_zone{a.bottom_zone:g}nm.json"
+    if a.detect:
+        use_detection(a.detect, a.sublayers)
+        first = np.r_[first[:17], START[17:]]
+        out = f"trpl_joint_detect_{a.detect}.json"
     if a.start_mu is not None:
         first = first.copy()
         first[1] = a.start_mu
@@ -255,11 +299,40 @@ def main():
     starts = [np.clip(first, LO, HI)] + [
         np.clip(first + rng.uniform(-a.spread, a.spread, len(first)), LO, HI)
         for _ in range(a.starts)]  # fmt: skip
+    t_all = time.time()
+    if a.optimizer == "batched":  # scipy from every start at once, its evaluations batched
+        R0, _ = prob.residuals_many(starts)
+        fits, batches = least_squares_many(prob.residuals_many, starts, LO, HI,
+                                           max_nfev=a.max_nfev)  # fmt: skip
+        R, _ = prob.residuals_many([np.array(f["theta"]) for f in fits])
+        for f, r, r0 in zip(fits, R, R0, strict=True):
+            f["per_decay"] = prob.per_decay_rms(r)
+            f["rms_start"] = float(np.sqrt(np.mean(r0**2)))
+        sizes = [b[0] for b in batches]
+        print(f"{len(batches)} batches of {min(sizes)}–{max(sizes)} parameter sets, "
+              f"{sum(b[1] for b in batches):.0f} s in the solver")  # fmt: skip
+        for i, f in enumerate(fits):
+            print(f"start {i}: rms {f['rms_start']:.3f} -> {f['rms']:.4f} decades; per decay "
+                  + " ".join(f"{v:.3f}" for v in f["per_decay"]), flush=True)  # fmt: skip
+    else:
+        fits = sequential(prob, starts, a.max_nfev)
+    print(f"{len(starts)} starts in {time.time() - t_all:.0f} s")
+    best = min(fits, key=lambda f: f["rms"])
+    print("the best fit:")
+    for n, v, lo, hi in zip(NAMES, best["theta"], LO, HI, strict=True):
+        print(f"   {n:32s} {v:9.3f}" + ("   (at its bound)" if min(v - lo, hi - v) < 1e-3 else ""))
+    path = REPO / "validation" / out
+    path.write_text(json.dumps({"names": NAMES, "fits": fits, "solves": prob.solves}))
+    print("wrote", path.relative_to(REPO), f"({prob.solves} transients)")
+
+
+def sequential(prob, starts, max_nfev):
+    """scipy's least_squares from each start in turn."""
     fits = []
     for i, x0 in enumerate(starts):
         t0 = time.time()
         r0 = prob.fun(x0)
-        res = least_squares(prob.fun, x0, jac=prob.jac, bounds=(LO, HI), max_nfev=a.max_nfev)
+        res = least_squares(prob.fun, x0, jac=prob.jac, bounds=(LO, HI), max_nfev=max_nfev)
         rms = float(np.sqrt(np.mean(res.fun**2)))
         per = prob.per_decay_rms(res.fun)
         fits.append({"start": x0.tolist(), "theta": res.x.tolist(), "rms": rms,
@@ -268,13 +341,7 @@ def main():
         print(f"start {i}: rms {fits[-1]['rms_start']:.3f} -> {rms:.4f} decades in "
               f"{time.time() - t0:.0f} s; per decay " + " ".join(f"{v:.3f}" for v in per),
               flush=True)  # fmt: skip
-    best = min(fits, key=lambda f: f["rms"])
-    print("the best fit:")
-    for n, v, lo, hi in zip(NAMES, best["theta"], LO, HI, strict=True):
-        print(f"   {n:32s} {v:9.3f}" + ("   (at its bound)" if min(v - lo, hi - v) < 1e-3 else ""))
-    path = REPO / "validation" / out
-    path.write_text(json.dumps({"names": NAMES, "fits": fits, "solves": prob.solves}))
-    print("wrote", path.relative_to(REPO), f"({prob.solves} transients)")
+    return fits
 
 
 if __name__ == "__main__":

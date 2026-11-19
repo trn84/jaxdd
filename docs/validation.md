@@ -538,8 +538,26 @@ A defective zone at each perovskite's bottom (`--bottom-zone 30` and 80 nm, its 
 density; the films grow on Al2O3 nanoparticles) does not either: at the best fit's mobility
 it helps the glass side as much as it hurts the top side (0.1925 without its traps, 0.198 at
 1e19 m⁻³, 0.506 at 1e20), and fits from 0.1 or 1 cm²/Vs end at 0.49 and 0.24, the mobility
-pushed back up. Left as candidates: optics that differ with the side (the absorbed share of the
-pulse, reabsorption of the PL on its way out, photon recycling), none of which either model has.
+pushed back up.
+
+Nor does the PL's reabsorption on its way to the detector (`--detect same|opposite`): the
+detector sees only 806 nm, where the film still absorbs 4.4e4 cm⁻¹ at its top and 6.2e4 at its
+bottom (the authors' ellipsometry), so light from the far side of the film arrives at about 5 %.
+Each of twelve perovskite layers weighed by its light's escape towards the detector, directly
+and after a reflection at the far side (two more parameters): 0.191 decades with the detector
+on the lit side, 0.192 on the other, against 0.193 without; the fit takes the absorption down to
+1.8e4 and 1.4e4 cm⁻¹, a third of the measured one. Left as candidates: the absorbed share of the
+pulse by side and photon recycling, neither in either model.
+
+**The mobility** is the fit's means against that misfit, not a measurement. Fixed and the other
+16 refitted (a profile): 0.44 decades rms at 0.1 and 0.41 cm²/Vs, 0.38 at 1, 0.26 at 3, 0.19 at
+10, 0.23 at 30. The decays pull apart: lit through the glass the film's are met best at 1–3
+cm²/Vs (0.06–0.11), lit from the top and the SnO2 stack's at 30 (0.06–0.15). At 10 cm²/Vs the
+carriers spread over the film within the first 2 ns bin, to which the data are normalised, and the
+large fall of `∫n·p` as they leave the 33 nm the pulse fills disappears into it; at 0.41 cm²/Vs it
+runs over the first 10 ns, steeper than measured (0.36 at 10 ns against 0.53). For FAPbI3 the
+authors cite 27–40 cm²/Vs over short distances (OPTP, single crystals) and find 0.1–2 over long
+ones (TRPL, the PL's spectral shift, transient photoconductivity).
 
 **The posterior** (`trpl_sample.py`: 48 walkers, 300 steps, 43 min; σ the fit's 0.193 decades,
 a lower bound on the widths as the misfit is systematic; autocorrelation about 22 steps,
@@ -658,7 +676,7 @@ as arguments. SimSS itself is built by [`simss/`](../simss/README.md).
 | `validation/trpl_halfstacks.py` | TRPL of two half-stacks without electrodes: free ends against SIMsalabim's electrodes and their best case ([above](#trpl-without-electrodes)) |
 | `validation/trpl_zimt.py [--cap S] [--workdir DIR]` | ZimT 5.36 on a decay with an exact answer and on the half-stacks' best case (Docker, each run stopped after `S` seconds) |
 | `validation/trpl_fit.py` | the SnO2 half-stack's measured decays fitted with free ends |
-| `validation/trpl_joint.py [--starts N] [--from-best] [--start-mu LOG10] [--bottom-zone NM]` | all eight measured decays fitted together, one perovskite, every end free; with `--bottom-zone` the hypothesis of a defective zone at the perovskite's bottom |
+| `validation/trpl_joint.py [--starts N] [--from-best] [--start-mu LOG10] [--bottom-zone NM] [--detect same\|opposite] [--optimizer batched\|scipy]` | all eight measured decays fitted together, one perovskite, every end free; with `--bottom-zone` a defective zone at the perovskite's bottom, with `--detect` the PL as a detector at 806 nm sees it; from all starts at once (`validation/lm_batch.py`: scipy's `least_squares` per start in a thread, their evaluations gathered into one batch: the same fits to the bit, four starts in 788 s instead of 1156) |
 | `validation/trpl_sample.py [--walkers W] [--steps S] [--sigma F]` | the joint fit's posterior by the ensemble sampler over the batch; the chain to `benchmarks/samples/trpl_chain.npz` |
 | `validation/trpl_timing.py [--batches N …] [--parallel P]` | the same transient's wall time in jaxdd and in ZimT |
 

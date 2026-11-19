@@ -20,6 +20,11 @@ the API, and says so here.
   field-dependent mobility), and in time (`solve_transient`, e.g. a photoluminescence decay).
   A device with a free end discretises Poisson's equation in flux form and counts its mobile
   ions over the control volumes, so that it keeps its charge exactly ([docs/model.md](docs/model.md#free-surfaces-jaxdds-w_l-or-w_r--free)).
+- **Each trap level's own capture coefficients** (jaxdd's). A trap file whose header reads
+  `E Ntrap C_n C_p` gives each level its own; SIMsalabim's levels share their layer's, so a
+  shallow electron trap (`C_p` = 0) could not sit beside a deep recombination level. Without the
+  columns a device is the same to the bit. In the steady state, the batch and in time
+  ([docs/model.md](docs/model.md#bulk-traps-init_trapping-calc_trap_filling_charge)).
 
 ## [0.2.0] – 2026-11-15
 

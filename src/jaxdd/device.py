@@ -448,31 +448,54 @@ def _named(layer: Layer, name: str) -> bool:
     return layer.raw.get(name, "none").strip().lower() != "none"
 
 
-def _trap_levels(text: str, what: str) -> tuple[np.ndarray, np.ndarray]:
+#: The header of a trap file's optional columns (jaxdd's, not SIMsalabim's): each level's own
+#: capture coefficients (m³/s), in place of its layer's `C_n_*`, `C_p_*` (`_trap_levels`).
+TRAP_FILE_CAPTURE = ("C_n", "C_p")
+
+
+def _trap_levels(text: str, what: str):
     """A trap file's levels (SIMsalabim's `Init_Traps_From_File`): a header (`E Ntrap`), then
-    each level's energy (eV) and density (m⁻³ in the bulk, m⁻² at an interface), absolute."""
+    each level's energy (eV) and density (m⁻³ in the bulk, m⁻² at an interface), absolute.
+    With `E Ntrap C_n C_p` in the header (jaxdd's) each level's capture coefficients follow
+    (m³/s): `(E, N, C)`, `C` levels × 2 or None."""
+    header = text.lstrip().splitlines()[0].split() if text.strip() else []
     table = np.atleast_2d(np.loadtxt(io.StringIO(text), skiprows=1))
     if table.size == 0:
         raise ValueError(f"{what}: no trap levels")
     E, N = table[:, 0].copy(), table[:, 1].copy()
     if (N == 0).any():
         raise ValueError(f"{what}: a trap level of zero density (level {np.argmin(N != 0) + 1})")
-    return E, N
+    own = tuple(h.lower() for h in header[2:4]) == tuple(c.lower() for c in TRAP_FILE_CAPTURE)
+    if not own:
+        return E, N, None
+    if table.shape[1] < 4:
+        raise ValueError(f"{what}: the header names C_n and C_p, the levels do not give them")
+    C = table[:, 2:4].copy()
+    if (C < 0).any():
+        raise ValueError(f"{what}: a negative capture coefficient")
+    return E, N, C
 
 
-def _level_table(layers, files, single_E, read, kind):
-    """Each layer's trap levels from its file, padded to the most any file has: `(E, N)`,
+def _level_table(layers, files, single_E, read, kind, single_C):
+    """Each layer's trap levels from its file, padded to the most any file has: `(E, N, C)`,
     layers × levels, a padded level of density 0 at the file's first energy; zero rows for the
-    layers without a file (their one level is the parameter file's, `device_arrays`)."""
+    layers without a file (their one level is the parameter file's, `device_arrays`). `C`
+    (layers × levels × 2, the capture coefficients of electrons and holes) where any file gives
+    its levels their own (`TRAP_FILE_CAPTURE`), each other level its layer's (`single_C`,
+    layers × 2); else None."""
     levels = {k: _trap_levels(read(layers[k], k), f"layer {k + 1}: {kind}")
               for k in np.flatnonzero(files)}  # fmt: skip
-    K = max(len(E) for E, _ in levels.values())
+    K = max(len(E) for E, _, _ in levels.values())
     E_tab = np.repeat(np.asarray(single_E, dtype=float)[:, None], K, axis=1)
     N_tab = np.zeros((len(layers), K))
-    for k, (E, N) in levels.items():
+    own = any(C is not None for _, _, C in levels.values())
+    C_tab = np.repeat(np.asarray(single_C, dtype=float)[:, None, :], K, axis=1) if own else None
+    for k, (E, N, C) in levels.items():
         E_tab[k] = E[0]
         E_tab[k, : len(E)], N_tab[k, : len(N)] = E, N
-    return E_tab, N_tab
+        if C is not None:
+            C_tab[k, : len(C)] = C
+    return E_tab, N_tab, C_tab
 
 
 def _free_ends(setup: Setup) -> tuple[bool, bool]:
@@ -615,16 +638,22 @@ def device_parameters(
         if on and not (ly.f("k_f") > 0 and ly.f("a") > 0):
             raise ValueError(f"layer {k}: fieldDepG needs k_f > 0 and a > 0")
     extra = {}
-    if bulk_file.any():
-        extra["bulk_trap_E"], extra["bulk_trap_N"] = _level_table(
-            layers, bulk_file, [float(ly.raw.get("E_t_bulk", "0")) for ly in layers],
-            lambda ly, k: setup.read(ly.raw["bulkTrapFile"].strip(), "bulkTrapFile"),
-            "bulkTrapFile")  # fmt: skip
-    if int_file.any():
-        extra["int_trap_E"], extra["int_trap_N"] = _level_table(
-            layers, int_file, [float(ly.raw.get("E_t_int", "0")) for ly in layers],
-            lambda ly, k: setup.read(ly.raw["intTrapFile"].strip(), "intTrapFile"),
-            "intTrapFile")  # fmt: skip
+
+    def capture(kind):  # each layer's capture coefficients (electrons, holes), layers × 2
+        return [[float(ly.raw.get(f"C_{c}_{kind}", "0")) for c in "np"] for ly in layers]
+
+    for kind, file, name in (("bulk", bulk_file, "bulkTrapFile"), ("int", int_file, "intTrapFile")):
+        if not file.any():
+            continue
+
+        def read(ly, k, name=name):
+            return setup.read(ly.raw[name].strip(), name)
+
+        energies = [float(ly.raw.get(f"E_t_{kind}", "0")) for ly in layers]
+        E_tab, N_tab, C_tab = _level_table(layers, file, energies, read, name, capture(kind))
+        extra[f"{kind}_trap_E"], extra[f"{kind}_trap_N"] = E_tab, N_tab
+        if C_tab is not None:  # the levels' own capture coefficients (`TRAP_FILE_CAPTURE`)
+            extra[f"{kind}_trap_Cn"], extra[f"{kind}_trap_Cp"] = C_tab[..., 0], C_tab[..., 1]
 
     def levels(k, file, kind):  # a layer's levels (energies of non-zero density) and their name
         if file[k]:
@@ -758,9 +787,11 @@ def _interface(st: Structure, p: dict, h, total, Vt, xp=np) -> dict:
     def on_edges(values):
         return _set(xp, xp.zeros((st.NP + 1, *values.shape[1:])), e, values)
 
+    own = levels and "int_trap_Cn" in p  # each level its own (`TRAP_FILE_CAPTURE`)
+    Cn, Cp = (p["int_trap_Cn"], p["int_trap_Cp"]) if own else (p["C_n_int"], p["C_p_int"])
     return {
-        "Nt": on_edges(N_t), "Cn": on_edges(p["C_n_int"][j]),
-        "Cp": on_edges(p["C_p_int"][j]),
+        "Nt": on_edges(N_t), "Cn": on_edges(Cn[j]),
+        "Cp": on_edges(Cp[j]),
         "nt0_lo": on_edges(nt0(j)), "pt0_lo": on_edges(pt0(j)),
         "nt0_hi": on_edges(nt0(j + 1)), "pt0_hi": on_edges(pt0(j + 1)),
         "iw": on_edges(1.0 / width),
@@ -836,8 +867,12 @@ def device_arrays(structure: Structure, p: dict, xp=np) -> Device:
 
     nt0 = col(p["N_c"]) * xp.exp((col(p["E_c"]) - E_t) / Vt)
     pt0 = col(p["N_c"]) * xp.exp((E_t - col(p["E_v"])) / Vt)
+    # Each level its own capture coefficients where a trap file gives them, else its layer's.
+    own = levels and "bulk_trap_Cn" in p
+    Cn, Cp, on_c = ((p["bulk_trap_Cn"], p["bulk_trap_Cp"], on) if own
+                    else (p["C_n_bulk"], p["C_p_bulk"], trap))  # fmt: skip
     srh = {key: xp.where(where, v[lid], 0.0) for key, v, where in (
-        ("Nt", N_t, on), ("Cn", p["C_n_bulk"], trap), ("Cp", p["C_p_bulk"], trap),
+        ("Nt", N_t, on), ("Cn", Cn, on_c), ("Cp", Cp, on_c),
         ("nt0", nt0, on), ("pt0", pt0, on))}  # fmt: skip
     trap_charge = trap_cwe = None
     kind = st.bulk_trap_type if st.bulk_trap_type is not None else np.zeros(len(st.traps), int)

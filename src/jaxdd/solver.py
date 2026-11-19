@@ -579,9 +579,12 @@ def _bulk_occupation(n, p, s):
 
 def _per_level(levels, *values):
     """`values` with a trailing axis where the trap arrays carry levels (`levels` has more axes
-    than `values[0]`): a trap file's several levels, summed by the caller."""
+    than `values[0]`): a trap file's several levels, summed by the caller. A value that carries
+    them already (the levels' own capture coefficients) stays as it is."""
     if jnp.ndim(levels) > jnp.ndim(values[0]):
-        return tuple(jnp.asarray(v)[..., None] for v in values)
+        nd = jnp.ndim(levels)
+        return tuple(jnp.asarray(v) if jnp.ndim(v) == nd else jnp.asarray(v)[..., None]
+                     for v in values)  # fmt: skip
     return values
 
 

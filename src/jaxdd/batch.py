@@ -211,7 +211,10 @@ def prepare(devices: list[Device]) -> dict:
 
 def _pad_levels(trees: list[dict]) -> None:
     """Trap levels to one count across a batch: an array over points (one level) or points ×
-    levels (a trap file), padded with levels of density 0, which do nothing."""
+    levels (a trap file), padded with levels of density 0, which do nothing. The capture
+    coefficients carry the levels only where a device gives its levels their own
+    (`device.TRAP_FILE_CAPTURE`); then every device's do, a coefficient over points being its
+    every level's, and padded with the last level's."""
     groups = (("s", ("Nt", "nt0", "pt0", "tq", "tcwe")), ("rec", ("Nt", "nt0", "pt0")),
               ("ti", ("Nt", "nt0_lo", "pt0_lo", "nt0_hi", "pt0_hi")))  # fmt: skip
     for group, keys in groups:
@@ -220,14 +223,19 @@ def _pad_levels(trees: list[dict]) -> None:
             continue
         K = max(np.shape(d[k])[1] if np.ndim(d[k]) == 2 else 1 for d in dicts for k in keys
                 if k in d)  # fmt: skip
-        if K == 1:
-            continue
-        for d in dicts:
-            for k in keys:
-                if k in d:
+        if K > 1:
+            for d in dicts:
+                for k in keys:
+                    if k in d:
+                        a = np.asarray(d[k])
+                        a = a[:, None] if a.ndim == 1 else a
+                        d[k] = np.pad(a, ((0, 0), (0, K - a.shape[1])))
+        if any(np.ndim(d["Cn"]) == 2 for d in dicts):  # the levels' own capture coefficients
+            for d in dicts:
+                for k in ("Cn", "Cp"):
                     a = np.asarray(d[k])
-                    a = a[:, None] if a.ndim == 1 else a
-                    d[k] = np.pad(a, ((0, 0), (0, K - a.shape[1])))
+                    a = np.repeat(a[:, None], K, axis=1) if a.ndim == 1 else a
+                    d[k] = np.pad(a, ((0, 0), (0, K - a.shape[1])), mode="edge")
 
 
 def _bounds(d, Vint):

@@ -147,6 +147,16 @@ level of a file has density 0; SIMsalabim refuses either, and so does jaxdd. `in
 the same for a layer's interface to the next (densities in m⁻²), each level as in the section
 below, their captures and charges summed.
 
+**Each level's own capture coefficients** (jaxdd's, not SIMsalabim's). In SIMsalabim a file's
+levels share their layer's `C_n_bulk`, `C_p_bulk` (`C_n_int`, `C_p_int`). Then a shallow electron
+trap, which takes electrons and gives them back but hardly holes, cannot sit beside a deep
+recombination level: with the hole capture of the deep one it recombines itself. A trap file
+whose header reads `E Ntrap C_n C_p` gives each level its own (m³/s, ≥ 0); a level with
+`C_p` = 0 traps electrons and does not recombine. The other layers' levels keep their
+layer's. A file without the columns is SIMsalabim's, and its device is the same to the bit; SimSS
+cannot read one with them. The parameters (`device_parameters`) then hold `bulk_trap_Cn`,
+`bulk_trap_Cp` (`int_trap_Cn`, `int_trap_Cp`), layers × levels, differentiable as the rest.
+
 `bulkTrapType` makes the layer's levels neutral (0), donors (1, positive when empty) or
 acceptors (−1, negative when full). A charged level carries `(c − f)·N_t` into Poisson's
 equation, `c` = 1 for a donor and 0 for an acceptor, with its occupancy by electrons

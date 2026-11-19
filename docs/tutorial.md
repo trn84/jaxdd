@@ -153,7 +153,8 @@ or ion density, the temperature, a work function — build the device in JAX fro
 generate, hold traps or ions, the pre-bias sequence) and its **parameters** (a dict: each of
 `device.LAYER_PARAMETERS` and `device.ION_SITE_PARAMETERS` an array over the layers, and `T`, `W_L`, `W_R`, `G_frac`, `V_pre`,
 the generation profile `gen_x`, `gen_G`, and with trap files their levels, `bulk_trap_E`,
-`bulk_trap_N`, `int_trap_E`, `int_trap_N`, layers × levels); `device_tree` makes the batch's arrays from both, by
+`bulk_trap_N`, `int_trap_E`, `int_trap_N`, layers × levels, and `bulk_trap_Cn`, `bulk_trap_Cp`,
+`int_trap_Cn`, `int_trap_Cp` where a file gives its levels their own capture coefficients); `device_tree` makes the batch's arrays from both, by
 `build_device`'s formulas in `jax.numpy`:
 
 ```python

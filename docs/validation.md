@@ -546,8 +546,34 @@ bottom (the authors' ellipsometry), so light from the far side of the film arriv
 Each of twelve perovskite layers weighed by its light's escape towards the detector, directly
 and after a reflection at the far side (two more parameters): 0.191 decades with the detector
 on the lit side, 0.192 on the other, against 0.193 without; the fit takes the absorption down to
-1.8e4 and 1.4e4 cm⁻¹, a third of the measured one. Left as candidates: the absorbed share of the
-pulse by side and photon recycling, neither in either model.
+1.8e4 and 1.4e4 cm⁻¹, a third of the measured one.
+
+**Outcoupling near the glass** does (`--detect same --outcoupling film`, two more parameters):
+the light from near the film's bottom, where it is grown on Al2O3 nanoparticles, weighed by
+`1 + boost·e^{−z/reach}`, whichever side is lit. 0.120 decades rms against 0.191: the film's four
+decays 0.05–0.10 (before 0.20–0.23), the Spiro stack's 0.06, the SnO2 stack's unchanged (0.11,
+0.17, 0.23). The boost on the Spiro stack too gains nothing (0.126). Boost and reach trade
+along a valley, `boost·reach` 1.3–1.6 µm; profiles of the boost (the others refitted): 0.190 at
+0, 0.124 at 3, 0.120 at 10, flat to 100 (0.119). The mobility is one value for both sides now,
+27–30 cm²/Vs, the authors' OPTP range; profiles 0.194 at 3 cm²/Vs, 0.122 at 10, 0.169 at 100.
+
+**Photon recycling** does not (`--recycling`, `jaxdd.recycling`: 97 % of the band edge's photons
+reabsorbed in each stack's perovskite): 0.194 decades without the outcoupling, 0.131 with it
+(against 0.191 and 0.120). The fits take `k_rad` up by 1.4–1.6 decades, the share that escapes:
+recycling here slows the decay as a smaller `k_rad` would, and the side asymmetry stays.
+
+**Physical bounds** (`--physical`: the interfaces' transfer velocity at most 1e5 m/s, SnO2's
+conduction band at least 0.2 eV below the perovskite's) cost the outcoupling fit 0.03 decades
+(0.150), all of it in the SnO2 stack (its decays 0.24 and 0.30). The fit's SnO2 interface sits
+at the bounds' other side: `E_c` 4.00 eV, `ν_int` 5.5e6 m/s.
+
+**The posterior with outcoupling** (`trpl_sample.py --outcoupling`, 21 parameters, 256 walkers,
+1000 steps on an A100, two chains of 4.5–4.8 h; σ 0.119 decades, autocorrelation about 70
+steps, acceptance 5 %). The two chains agree in every median within a tenth of its width:
+mobility 30.5 (26–34) cm²/Vs, `k_rad` 1.06 (1.01–1.12)·10⁻¹⁰ cm³/s, photodoping 1.3
+(1.2–1.4)·10¹⁵ cm⁻³, boost 40 (19–75), reach 47 (29–76) nm. The SnO2 interface's SRV sits at
+its upper bound in two thirds of the samples, SnO2's band edge at its lower in a quarter;
+the film's two surfaces stay undetermined (0.004–0.4 cm/s, 16–84 %).
 
 **The mobility** is the fit's means against that misfit, not a measurement. Fixed and the other
 16 refitted (a profile): 0.44 decades rms at 0.1 and 0.41 cm²/Vs, 0.38 at 1, 0.26 at 3, 0.19 at
@@ -676,8 +702,8 @@ as arguments. SimSS itself is built by [`simss/`](../simss/README.md).
 | `validation/trpl_halfstacks.py` | TRPL of two half-stacks without electrodes: free ends against SIMsalabim's electrodes and their best case ([above](#trpl-without-electrodes)) |
 | `validation/trpl_zimt.py [--cap S] [--workdir DIR]` | ZimT 5.36 on a decay with an exact answer and on the half-stacks' best case (Docker, each run stopped after `S` seconds) |
 | `validation/trpl_fit.py` | the SnO2 half-stack's measured decays fitted with free ends |
-| `validation/trpl_joint.py [--starts N] [--from-best] [--start-mu LOG10] [--bottom-zone NM] [--detect same\|opposite] [--optimizer batched\|scipy]` | all eight measured decays fitted together, one perovskite, every end free; with `--bottom-zone` a defective zone at the perovskite's bottom, with `--detect` the PL as a detector at 806 nm sees it; from all starts at once (`validation/lm_batch.py`: scipy's `least_squares` per start in a thread, their evaluations gathered into one batch: the same fits to the bit, four starts in 788 s instead of 1156) |
-| `validation/trpl_sample.py [--walkers W] [--steps S] [--sigma F]` | the joint fit's posterior by the ensemble sampler over the batch; the chain to `benchmarks/samples/trpl_chain.npz` |
+| `validation/trpl_joint.py [--starts N] [--from-best] [--start-mu LOG10] [--bottom-zone NM] [--detect same\|opposite] [--outcoupling STACKS] [--recycling] [--physical] [--start-from FILE] [--optimizer batched\|scipy]` | all eight measured decays fitted together, one perovskite, every end free; with `--bottom-zone` a defective zone at the perovskite's bottom, with `--detect` the PL as a detector at 806 nm sees it, `--outcoupling` its light leaving better near the glass; `--recycling` photon recycling, `--physical` physical bounds on the SnO2 interface; from all starts at once (`validation/lm_batch.py`: scipy's `least_squares` per start in a thread, their evaluations gathered into one batch: the same fits to the bit, four starts in 788 s instead of 1156) |
+| `validation/trpl_sample.py [--outcoupling] [--walkers W] [--steps S] [--sigma F]` | the joint fit's posterior by the ensemble sampler over the batch; the chain to `benchmarks/samples/trpl_chain.npz` (with `--outcoupling` `trpl_out_chain_s<seed>.npz`) |
 | `validation/trpl_timing.py [--batches N …] [--parallel P]` | the same transient's wall time in jaxdd and in ZimT |
 
 ## Running SimSS for a comparison

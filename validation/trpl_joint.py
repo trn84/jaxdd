@@ -52,6 +52,7 @@ from trpl_common import (
 
 from jaxdd.batch import prepare
 from jaxdd.device import device_arrays, device_parameters
+from jaxdd.recycling import device_kernel
 from jaxdd.transient import solve_transient, tj_columns
 
 #: (stack, lit through the glass, fluence) of each decay, in the data's order.
@@ -66,6 +67,7 @@ PEROVSKITE_LAYERS = {"film": (0,), "SnO2": (1,), "Spiro": (0,)}
 ZONE = None  # with `--bottom-zone`: each stack's zone, its layer index (`use_bottom_zone`)
 DETECT = None  # with `--detect`: "same" (the lit side) or "opposite" (`use_detection`)
 OUTCOUPLED = ()  # with `--outcoupling`: the stacks whose light leaves better near the glass
+RECYCLE = None  # with `--recycling`: each stack's photon recycling matrix (`use_recycling`)
 #: name, start (the authors' values where they have them), lower and upper bound
 PARAMETERS = (
     ("log10 k_rad (m³/s)", np.log10(7.5e-17), -19, -14),
@@ -117,6 +119,35 @@ def use_outcoupling(stacks):
     NAMES = (*NAMES, "outcoupling boost near the glass", "log10 its reach (m)")
     START = np.r_[START, 3.0, np.log10(50e-9)]
     LO, HI = np.r_[LO, 0.0, -8.5], np.r_[HI, 100.0, -6.5]
+
+
+def use_physical_bounds():
+    """Bounds a physicist would set: the interfaces' transfer velocity at most the thermal
+    velocity's order (1e5 m/s), SnO2's conduction band at least 0.2 eV below the perovskite's
+    (its electron affinity 4.2–4.5 eV)."""
+    global HI, LO
+    HI, LO = HI.copy(), LO.copy()
+    HI[NAMES.index("log10 ν_int (m/s)")] = 5.0
+    LO[NAMES.index("E_c SnO2 (eV)")] = 4.2
+
+
+def use_recycling():
+    """Photon recycling (`jaxdd.recycling`): each stack's perovskite reabsorbs its own light,
+    the slab between the glass (below) and air (above, through the transport layer), the
+    optics `recycling.slab_kernel`'s defaults. The matrices depend on the stack's grid alone;
+    made once per stack (a minute each). Returns the share of a photon reabsorbed, the film's
+    mean."""
+    global RECYCLE
+    RECYCLE = {}
+    for stack in ("film", "SnO2", "Spiro"):
+        dev = device(START, stack, True, FLUENCE)
+        t0 = time.time()
+        RECYCLE[stack] = device_kernel(dev, n_mu=64)[0]
+        on = np.asarray(dev.k_direct)[1:-1] > 0
+        print(f"photon recycling of {stack}: {RECYCLE[stack][:, on].sum(0).mean():.3f} of a "
+              f"photon reabsorbed ({time.time() - t0:.0f} s)", flush=True)  # fmt: skip
+    on = np.asarray(device(START, "film", True, FLUENCE).k_direct)[1:-1] > 0
+    return float(RECYCLE["film"][:, on].sum(0).mean())
 
 
 def use_bottom_zone(thickness):
@@ -200,7 +231,10 @@ class Problem:
         """Each set's residuals and whether all its decays converged and are finite: a decay
         that is not has `PENALTY` in every bin, so that a step to it is never taken."""
         devices = [device(th, *dec) for th in thetas for dec in DECAYS]
-        r = solve_transient(prepare(devices), pulse(self.t), ions=False, vint=False)
+        recycle = (None if RECYCLE is None
+                   else np.stack([RECYCLE[dec[0]] for _ in thetas for dec in DECAYS]))  # fmt: skip
+        r = solve_transient(prepare(devices), pulse(self.t), ions=False, vint=False,
+                            recycle=recycle)  # fmt: skip
         self.solves += len(devices)
         nl = [int(n) for n in np.asarray(r.n_layers)]
         conv = np.asarray(r.converged).reshape(len(thetas), len(DECAYS), -1).all(axis=2)
@@ -292,6 +326,13 @@ def main():
     ap.add_argument("--outcoupling", metavar="STACKS",
                     help="with --detect: the stacks (film,SnO2,Spiro) whose light leaves better "
                          "near the glass")  # fmt: skip
+    ap.add_argument("--physical", action="store_true",
+                    help="physical bounds: ν_int ≤ 1e5 m/s, E_c SnO2 ≥ 4.2 eV")  # fmt: skip
+    ap.add_argument("--recycling", action="store_true",
+                    help="photon recycling in the perovskite (jaxdd.recycling); k_rad's start "
+                         "raised by the share that escapes")  # fmt: skip
+    ap.add_argument("--start-from", metavar="FILE",
+                    help="start from validation/FILE's best fit (the same parameters)")  # fmt: skip
     ap.add_argument("--from-best", action="store_true",
                     help="start from the best fit in validation/trpl_joint.json")  # fmt: skip
     a = ap.parse_args()
@@ -316,9 +357,22 @@ def main():
             use_outcoupling(a.outcoupling.split(","))
             first = np.r_[first, START[19:]]
             out = f"trpl_joint_detect_{a.detect}_out_{a.outcoupling.replace(',', '+')}.json"
+    if a.start_from:  # a result of this script with the same parameters
+        fits = json.loads((REPO / "validation" / a.start_from).read_text())["fits"]
+        first = np.array(min(fits, key=lambda f: f["rms"])["theta"])
+        if len(first) != len(START):
+            raise SystemExit(f"{a.start_from}: {len(first)} parameters, this fit {len(START)}")
     if a.start_mu is not None:
         first = first.copy()
         first[1] = a.start_mu
+    if a.physical:
+        use_physical_bounds()
+        out = out.replace(".json", "_physical.json")
+    if a.recycling:
+        share = use_recycling()
+        first = first.copy()
+        first[0] += np.log10(1.0 / (1.0 - share))  # the same light leaving at first
+        out = out.replace(".json", "_recycling.json")
     prob = Problem()
     rng = np.random.default_rng(a.seed)
     starts = [np.clip(first, LO, HI)] + [

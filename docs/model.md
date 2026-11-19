@@ -234,6 +234,40 @@ in logarithms (`solver._dissociation`). SimSS integrates by Romberg to 1 % and c
 `b¹¹`; `build_device(..., braun="simss")` does the same ([differences.md](differences.md) §9).
 Generation and recombination then depend on the potential at the point's two neighbours.
 
+### Photon recycling (jaxdd's, in time)
+
+SIMsalabim counts direct recombination as lost. In a film whose index is high (a perovskite,
+`n ≈ 2.6`) most of its light does not leave: only within a narrow cone (23° into air), the rest
+is reflected back, totally, and absorbed again as a new electron–hole pair. In 600 nm of FAPbI₃
+about 97 % of the photons of its band edge are reabsorbed, so recycling slows the decay of the
+carriers and spreads them through the film.
+
+`jaxdd.recycling.slab_kernel` gives, for a slab between two media, the share `P[i, j]` of the
+photons emitted at point `j` that is absorbed in the control volume of point `i`, and the
+shares that leave at either face. Per photon energy `E` and direction `μ = cos θ` (isotropic
+emission, Gauss–Legendre in `μ`) the light is absorbed as `e^{−α(E)·Δz/|μ|}` on its way and
+reflected at each face by Fresnel's `R(μ)` (unpolarised) into the medium beyond, totally
+beyond the escape cone of the medium it ends in (`n_exit`, air): light entering the glass at
+an angle that the glass's back face reflects totally comes back. The round trips between the
+faces are summed in closed form. The spectrum is van Roosbroeck and Shockley's,
+`∝ α(E)·E²·e^{−E/kT}`, from `α(E)` (`urbach_alpha`, an Urbach tail below the gap, or any on a
+grid of energies). Interference is neglected (the band edge's light is incoherent over a
+film's thickness), and nothing absorbs outside the slab. The shares sum to 1 per emitting point
+to the quadrature's error (1e-15). `device_kernel(dev)` gives the matrix over a device's
+interior points, its absorber the points with `k_direct > 0`.
+
+`solve_transient(batch, tvg, recycle=K)` adds to each time step's generation the photons the
+state before the step emits and the matrix reabsorbs,
+
+```
+G_rec[i] = Σ_j K[i, j] · k_direct[j]·(n_j·p_j − n_i,j²) · vol_j / vol_i,
+```
+
+explicit in time (first order, like implicit Euler's steps; a step much shorter than the
+radiative lifetime). A steady state (`t = 0`, a return to it) has none: in the dark
+`n·p = n_i²` emits nothing net, and under light the recycled generation would need its own
+solution. Without `recycle` a transient is the same to the bit.
+
 ## Contacts and the applied voltage
 
 The work functions set the boundary values of the potential and the equilibrium densities
@@ -333,7 +367,8 @@ gauge.
 `V_T·ln(∫k·n·p dx / ∫k·n_i² dx)`, the splitting that direct (radiative) recombination's emission
 sees; and the share of the generated pairs that recombine directly, `∫k·(n·p − n_i²) dx / ∫G dx`,
 the PLQY where all direct recombination is radiative and every photon leaves the film (neither
-reabsorption nor outcoupling is modelled).
+reabsorption nor outcoupling is modelled in the steady state; photon recycling enters a
+transient, below).
 
 A batch takes free ends beside contacted devices: `solve_states` gives the same per device,
 differentiable in `device_tree`'s parameters; `solve_batch`'s current is 0 for them.

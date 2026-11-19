@@ -20,6 +20,14 @@ the API, and says so here.
   field-dependent mobility), and in time (`solve_transient`, e.g. a photoluminescence decay).
   A device with a free end discretises Poisson's equation in flux form and counts its mobile
   ions over the control volumes, so that it keeps its charge exactly ([docs/model.md](docs/model.md#free-surfaces-jaxdds-w_l-or-w_r--free)).
+- **Photon recycling in time** (jaxdd's; SIMsalabim counts direct recombination as lost).
+  `jaxdd.recycling.slab_kernel` gives, for an absorbing slab between two media, the share of
+  each point's emitted photons absorbed in each control volume and the shares leaving at
+  either face (Fresnel, total reflection beyond the escape cones, van Roosbroeck–Shockley's
+  spectrum from an absorption edge, e.g. `urbach_alpha`); `device_kernel` the matrix on a
+  device's grid. `solve_transient(..., recycle=K)` adds the reabsorbed photons to each step's
+  generation, from the state before the step. Without it a transient is the same to the bit
+  ([docs/model.md](docs/model.md#photon-recycling-jaxdds-in-time)).
 - **Each trap level's own capture coefficients** (jaxdd's). A trap file whose header reads
   `E Ntrap C_n C_p` gives each level its own; SIMsalabim's levels share their layer's, so a
   shallow electron trap (`C_p` = 0) could not sit beside a deep recombination level. Without the

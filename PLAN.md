@@ -44,14 +44,13 @@ about two A100s).
   and in 7–9 dimensions a table is out of reach. The price is a model evaluation instead of an
   interpolation. **Done when** such a sample meets a table's tolerance with fewer devices than
   `refine_axes`.
-- **TRPL lit from either side.** Fitted together, the eight decays of Kober-Czerny et al. leave
-  one misfit: after excitation through the glass the PL falls three times further than after
-  excitation from the top, which neither a uniform perovskite with two surfaces nor a defective
-  zone at its bottom reproduces ([docs/validation.md](docs/validation.md#trpl-without-electrodes)).
-  The PL's reabsorption on its way to the detector does not either (docs/validation.md). The
-  candidates left are the absorbed share of the pulse by side and photon recycling, and with
-  the misfit the mobility, which the fit uses against it (10 cm²/Vs, the authors' 0.41).
-  **Done when** one of them, in jaxdd, brings both sides within the noise, or both are ruled
+- **TRPL, the SnO2 stack.** Fitted together, the eight decays of Kober-Czerny et al. leave
+  the SnO2 stack's three at 0.11–0.23 decades rms where the film's and the Spiro stack's are
+  at 0.05–0.10, and the fit holds SnO2's band edge and its interface's transfer velocity beyond
+  physical bounds (with them 0.24 and 0.30;
+  [docs/validation.md](docs/validation.md#trpl-without-electrodes)). Candidates: the absorbed
+  share of the pulse by side, SnO2's own traps or a dipole at its interface. **Done when**
+  one of them brings the stack within the others' misfit at physical bounds, or all are ruled
   out.
 - **Impedance in the frequency domain**, from the steady state's Jacobian
   (`(J + iω·M)·δx = b`, one complex solve per frequency) instead of a transient per frequency.

@@ -57,6 +57,7 @@ from jaxdd.solver import (
     _ion_membership,
     _point_logs,
     _time_terms,
+    _volumes,
     _with_contacts,
 )
 
@@ -209,9 +210,8 @@ def _states_equal(A, B, ctl):
 OC_GUESS = 0.0
 
 
-def _solve_one(
-    d, t, V, oc, G_frac, track, ctl, B, tol, max_iter, ions, vint, ion_last, zimt_current
-):
+def _solve_one(d, t, V, oc, G_frac, track, ctl, recycle, B, tol, max_iter, ions, vint, ion_last,
+               zimt_current):  # fmt: skip
     """One device through its steps: the start as SIMsalabim's (`Init_Pot_Dens_Ions_Traps`,
     Poisson at the first voltage), then each step by Newton from the one before. With `ions` the
     mobile ions are unknowns of their own (`V, ln n, ln p, ln a, ln c` per point,
@@ -220,7 +220,9 @@ def _solve_one(
     target (where `oc` is 0). `ion_last` and `zimt_current`: ZimT's currents (`solve_transient`'s
     `zimt_ion_currents` and `zimt_current`). The steps' `track` and the setup's control `ctl`
     (`failureMode`, `convVar` and its tolerances) decide, as in ZimT's main loop, which steps
-    are kept, where the run stops, and so each step's `Δt`: from the last step kept."""
+    are kept, where the run stops, and so each step's `Δt`: from the last step kept. `recycle`
+    (NP × NP, or None): each step's generation adds the photons of the state before it that
+    it reabsorbs (`solve_transient`)."""
     s, ion = d["s"], d["ion"]
     V_first = jnp.where(oc[0] > 0, OC_GUESS, V[0])
     d0, s0, ion0, V0 = jax.lax.stop_gradient((d, s, ion, V_first))
@@ -254,9 +256,17 @@ def _solve_one(
         full = _with_contacts(_full(_bounds(d, Vint), y), s, Vt, B)
         return _ion_full(full, ion, Vt, B, dti_) if ions else full
 
+    vol = _volumes(s, d["L"])
+
     def stencils(before, dti_k, fb, fi):
-        """The step's stencils and device: the state before it, the traps' occupations."""
+        """The step's stencils and device: the state before it, the traps' occupations, and
+        with `recycle` the photons of its radiative recombination reabsorbed, a generation."""
         s_k = _time_terms(s, before, dti_k, fb, fi if traps else None)
+        if recycle is not None:
+            n_b, p_b = jnp.exp(before[1:-1, 1]), jnp.exp(before[1:-1, 2])
+            emitted = s["kd"] * (n_b * p_b - s["ni2"]) * vol  # per area of each volume
+            # none into a steady state (the first step, a return to t = 0)
+            s_k = dict(s_k, G_rec=jnp.where(dti_k > 0, (recycle @ emitted) / vol, 0.0))
         pad = jnp.zeros_like(fb[:1])
         tr = {"dti": dti_k, "n": jnp.exp(before[:, 1]), "p": jnp.exp(before[:, 2]),
               "V": before[:, 0], "fb": jnp.concatenate([pad, fb, pad]), "width": width}  # fmt: skip
@@ -364,20 +374,20 @@ def _solve_one(
 
 @functools.partial(jax.jit, static_argnames=("bernoulli_name", "max_iter", "ions", "vint",
                                              "ion_last", "zimt_current"))  # fmt: skip
-def _solve_batch(batch, t, V, oc, G_frac, track, ctl, tol, max_iter, bernoulli_name, ions, vint,
-                 ion_last, zimt_current):  # fmt: skip
+def _solve_batch(batch, t, V, oc, G_frac, track, ctl, recycle, tol, max_iter, bernoulli_name,
+                 ions, vint, ion_last, zimt_current):  # fmt: skip
     one = functools.partial(_solve_one, B=BERNOULLI[bernoulli_name], tol=tol, max_iter=max_iter,
                             ions=ions, vint=vint, ion_last=ion_last,
                             zimt_current=zimt_current)  # fmt: skip
     J, J_ext, V_int, ok, its, columns, kept, stop = jax.vmap(one)(batch, t, V, oc, G_frac, track,
-                                                                  ctl)  # fmt: skip
+                                                                  ctl, recycle)  # fmt: skip
     V_ext = V_int + J_ext * batch["R_series"][:, None]
     return J, J_ext, V_int, V_ext, ok, its, columns, kept, stop
 
 
 def solve_transient(batch, tvg: TVG | list[TVG], tol=1e-10, max_iter=200, bernoulli_name="exact",
                     zimt_ion_currents=False, ions=None, vint=None,
-                    zimt_current=False) -> TransientResult:  # fmt: skip
+                    zimt_current=False, recycle=None) -> TransientResult:  # fmt: skip
     """A batch (`batch.prepare`) through ZimT's time steps `tvg`: one for every device, or one
     per device (all of one length). Each step's Newton to `tol` or `max_iter`. Where any device
     of the batch has an open circuit or a series resistance, the internal voltage is an unknown
@@ -389,6 +399,13 @@ def solve_transient(batch, tvg: TVG | list[TVG], tol=1e-10, max_iter=200, bernou
     integral form's sums as ZimT 5.36 has them (each point's change over the interval after
     it, the left contact's too), which converge at first order in the grid; by default over
     each point's control volume, the current the equations balance (docs/differences.md §13).
+    `recycle` (jaxdd's): photon recycling, a matrix over the interior points per device
+    (batch × NP × NP) or one for all (NP × NP), `recycle[i, j]` the share of the photons of point
+    `j`'s radiative recombination absorbed in point `i`'s control volume
+    (`recycling.device_kernel`); each step's generation adds them, from the state before the
+    step (explicit in time, first order like the steps). A steady state (`t = 0`, a return to
+    it) has none: the dark's `n·p = n_i²` emits nothing net, and under light it would need the
+    recycled generation's own solution.
 
     Differentiable in the batch (`batch.device_tree`): each step's derivatives those of its
     converged solution by the implicit function (`batch._converged_jvp`), carried from step to
@@ -426,9 +443,16 @@ def solve_transient(batch, tvg: TVG | list[TVG], tol=1e-10, max_iter=200, bernou
         )
     if vint is None:
         vint = bool(oc.any() or np.any(np.asarray(batch["R_series"]) > 0))
+    if recycle is not None:
+        NP = batch["s"]["G"].shape[-1]
+        recycle = jnp.asarray(recycle)
+        if recycle.ndim == 2:
+            recycle = jnp.broadcast_to(recycle, (n, *recycle.shape))
+        if recycle.shape != (n, NP, NP):
+            raise ValueError(f"recycle: one {NP} × {NP} matrix, or one per device ({n})")
     with _quiet():
         J, J_ext, V_int, V_ext, ok, its, columns, kept, stop = _solve_batch(
-            batch, t, V, jnp.asarray(oc, dtype=float), G, track, ctl, tol, max_iter,
+            batch, t, V, jnp.asarray(oc, dtype=float), G, track, ctl, recycle, tol, max_iter,
             bernoulli_name, bool(ions), bool(vint), bool(zimt_ion_currents),
             bool(zimt_current),
         )  # fmt: skip

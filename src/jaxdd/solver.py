@@ -798,8 +798,11 @@ def _row(left, mid, right, s, Vt, g_frac, la, lc, B=bernoulli):
         kd, g_fac = (r[0] for r in _point_rates(V[None, 0], V[None, 1], V[None, 2], one))
         s = dict(s, kd=kd)
     Rn, Rp = _bulk_rates(n[1], p[1], s)
-    elec = lo_n * n[0] + m_n * n[1] + up_n * n[2] + s["fac"] * (s["G"] * g_frac * g_fac - Rn)
-    hole = lo_p * p[0] + m_p * p[1] + up_p * p[2] + s["fac"] * (s["G"] * g_frac * g_fac - Rp)
+    gen = s["G"] * g_frac * g_fac
+    if "G_rec" in s:  # recycled photons (`transient`, from the state before the step)
+        gen = gen + s["G_rec"]
+    elec = lo_n * n[0] + m_n * n[1] + up_n * n[2] + s["fac"] * (gen - Rn)
+    hole = lo_p * p[0] + m_p * p[1] + up_p * p[2] + s["fac"] * (gen - Rp)
     if "tr" in s:  # a time step (`_time_terms`)
         elec = elec - s["fac"] * s["tr"]["dti"] * (n[1] - s["tr"]["n"])
         hole = hole - s["fac"] * s["tr"]["dti"] * (p[1] - s["tr"]["p"])
@@ -892,6 +895,8 @@ def _assemble(full, s, Vt, g_frac, la, lc, B=bernoulli):
     (Rn, Rp), (dRn_n, dRp_n) = jax.jvp(lambda a: _bulk_rates(a, pm, s), (nm,), (nm,))
     _, (dRn_p, dRp_p) = jax.jvp(lambda b: _bulk_rates(nm, b, s), (pm,), (pm,))
     gen = s["G"] * g_frac * g_fac
+    if "G_rec" in s:  # recycled photons (`transient`, from the state before the step)
+        gen = gen + s["G_rec"]
     dV_mid = zm if dnet_V is None else dnet_V[1]
     dnet_n = jnp.stack([dV_mid, -dRn_n, -dRn_p], -1)
     dnet_p = jnp.stack([dV_mid, -dRp_n, -dRp_p], -1)

@@ -52,6 +52,12 @@ about two A100s).
   share of the pulse by side, SnO2's own traps or a dipole at its interface. **Done when**
   one of them brings the stack within the others' misfit at physical bounds, or all are ruled
   out.
+- **Blocking contacts under bias.** Where the voltage drives the carrier a contact blocks
+  (`S` = 0, or small) into it, the steady state has an accumulation layer at the contact,
+  e^(V/V_T) above equilibrium, and Newton does not reach it from SIMsalabim's start, nor by
+  stepping the voltage (`tests/test_free_surface.py`'s stack, `W_R` 5.4 eV below 0 V, 4.0 eV
+  above). **Done when** such a state converges, or a start or continuation that reaches it is
+  found.
 - **Impedance in the frequency domain**, from the steady state's Jacobian
   (`(J + iω·M)·δx = b`, one complex solve per frequency) instead of a transient per frequency.
   ZimT has no reference for it but its own time-domain response.

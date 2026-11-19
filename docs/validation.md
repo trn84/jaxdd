@@ -571,7 +571,8 @@ at the bounds' other side: `E_c` 4.00 eV, `ν_int` 5.5e6 m/s.
 1000 steps on an A100, two chains of 4.5–4.8 h; σ 0.119 decades, autocorrelation about 70
 steps, acceptance 5 %). The two chains agree in every median within a tenth of its width:
 mobility 30.5 (26–34) cm²/Vs, `k_rad` 1.06 (1.01–1.12)·10⁻¹⁰ cm³/s, photodoping 1.3
-(1.2–1.4)·10¹⁵ cm⁻³, boost 40 (19–75), reach 47 (29–76) nm. The SnO2 interface's SRV sits at
+(1.2–1.4)·10¹⁵ cm⁻³, SRV FAPbI3/Spiro 28 (15–47) cm/s, the absorption at 806 nm 3.7
+(2.9–4.4)·10⁴ cm⁻¹ (back near the ellipsometry's), boost 41 (19–74), reach 48 (29–78) nm. The SnO2 interface's SRV sits at
 its upper bound in two thirds of the samples, SnO2's band edge at its lower in a quarter;
 the film's two surfaces stay undetermined (0.004–0.4 cm/s, 16–84 %).
 

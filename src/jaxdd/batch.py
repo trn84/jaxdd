@@ -785,7 +785,7 @@ def _newton_loop(y, logs, d, s, ion, Vint, g_frac, B, tol, max_iter, strict, vin
         it = it + 1
         done = converged(size_hist, J_hist, it)
         if contacts:  # a branch that does not hold near the solution: changed, histories anew
-            now = _contact_branch(full_of(y, logs), s, Vt, B)
+            now = _contact_branch(full_of(y, logs), s, Vt, B, branch)
             flip = (done | (size < BRANCH_FLIP_SIZE)) & jnp.any(now != branch)
             branch = jnp.where(flip, now, branch)
             size_hist = jnp.where(flip, hist0, size_hist)

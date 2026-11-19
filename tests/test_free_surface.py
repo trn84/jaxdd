@@ -130,12 +130,29 @@ def test_a_free_stack_is_neutral_without_field_beyond_its_ends() -> None:
 def test_the_free_surface_is_not_a_blocking_contact() -> None:
     """SimSS's nearest device, a blocking contact (S = 0) in place of the free end, gives an
     implied V_oc that moves with the contact's work function and the voltage; the free end's
-    is one number."""
-    free = solve_state(stack([HTL, {}], W_L=5.0, S=(-1, -1, 0, 0))).implied_voc
-    blocking = [solve_state(stack([HTL, {}], W_L=5.0, W_R=W, S=(-1, -1, 0, 0)), Vint=V).implied_voc
-                for W in (4.0, 5.4) for V in (-0.5, 0.5)]  # fmt: skip
-    assert np.ptp(blocking) > 0.05
-    assert min(abs(np.array(blocking) - free)) > 1e-3
+    is one number. Each state converged: where the voltage drives the blocked carrier into
+    the contact (an accumulation layer, e^(V/V_T) above equilibrium) Newton does not reach it
+    from SIMsalabim's start (PLAN.md), so the work functions and voltages are those it reaches."""
+    free = solve_state(stack([HTL, {}], W_L=5.0, S=(-1, -1, 0, 0)))
+    assert free.converged
+    blocking = [solve_state(stack([HTL, {}], W_L=5.0, W_R=W, S=(-1, -1, 0, 0)), Vint=V)
+                for W, V in ((5.3, 0.0), (5.4, 0.0), (5.4, 0.5), (5.6, 0.5))]  # fmt: skip
+    assert all(r.converged for r in blocking)
+    voc = np.array([r.implied_voc for r in blocking])
+    assert np.ptp(voc) > 0.03
+    assert min(abs(voc - free.implied_voc)) > 1e-3
+
+
+def test_a_blocking_contact_in_equilibrium_converges() -> None:
+    """In the dark at 0 V a contact's two branches (`_contact_ends`) give the same density, to
+    round-off: the branch held stays (`solver.BRANCH_TIE`). Decided by the sign of that
+    round-off it flipped at every check, each flip starting Newton's convergence anew, and with
+    `S` = 0 the electrons, blocked behind the HTL's barrier, floated off: no state converged."""
+    for S in ((-1, -1, 0, 0), (-1, -1, -1, 0), (-1, -1, 1e-3, 1e-3)):
+        d = stack([HTL, {}], W_L=5.0, W_R=4.0, S=S)
+        r = solve_state(d, g_frac=0.0)
+        assert r.converged, S
+        np.testing.assert_allclose(r.n * r.p, d.ni**2, rtol=1e-6)
 
 
 #: A perovskite's ions: mobile anions over immobile cations, 1e18 cm⁻³ each.

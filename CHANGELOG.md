@@ -36,6 +36,11 @@ the API, and says so here.
 
 ### Fixed
 
+- **A contact's branch at a tie.** With finite surface recombination a contact's branch
+  (extraction or injection) was decided by the sign of a difference that is round-off where
+  the two coincide, at equilibrium: it flipped at every check, and Newton never converged (a
+  blocking contact, `S` = 0, not even in the dark at 0 V). Within round-off (1e-13) the branch held
+  now stays (`solve_jv`, `solve_state`, the batch).
 - **Traps nearly full, in time.** Over a time step a level's empty share was `1 − f̄`, which
   loses every digit of a level nearly full: its capture `n·(1 − f̄) − n_t0·f̄` became round-off
   times `n`, and a step's Newton (the transient's first, a steady state, too) could stall

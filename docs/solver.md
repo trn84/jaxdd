@@ -414,7 +414,14 @@ through the iterations, and changed only once the step is below `BRANCH_FLIP_SIZ
 converged, where it is checked against the solution; after a change the convergence history
 starts anew (`solve_jv` and the batch's `_newton_loop`). A voltage is converged only where every
 contact's branch holds at its solution. On `surface_light` every voltage converges in at most 18
-steps. Devices without a finite `S` have no contact state and skip all of it, to the bit.
+steps. Where the two branches give the same density to `BRANCH_TIE` (1e-13 in
+`ln n`, round-off), as at equilibrium, the branch held stays, and a first choice takes equilibrium: decided
+by the sign of a round-off difference, the branch flipped at every check, each flip starting the
+convergence anew, and where it took the condition at `S` = 0 the blocked carrier floated (behind
+a barrier only recombination fixes its density) and Newton left the solution; a stack with a
+blocking contact did not converge even in the dark at 0 V. The tie is no wider: in the injected
+branch the density's relative error moves the flux by `a·n_eq` times it, and at 1e-12 a ZimT
+transient's QFLS was 4e-9 V off. Devices without a finite `S` have no contact state and skip all of it, to the bit.
 
 ### Free surfaces
 

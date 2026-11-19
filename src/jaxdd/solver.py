@@ -452,6 +452,13 @@ def _direct_rate(Vl, Vm, Vr, s):
 #: the step is below this, or converged: changed at every step, Newton cycles between the two
 #: (docs/solver.md, "Contacts with finite surface recombination").
 BRANCH_FLIP_SIZE = 1e-3
+#: Where a contact's two branches differ by no more than this (`ln n`), they give the same
+#: density to it: the branch held stays, and a first choice takes equilibrium. Decided by the
+#: sign of a difference at round-off, the branch flips at every check near the solution (each
+#: flip starts Newton's convergence anew), and where it then takes the condition at `S` = 0 the
+#: carrier floats (behind a barrier, its density fixed only by recombination) and Newton leaves
+#: the solution.
+BRANCH_TIE = 1e-13
 
 
 def _robin(first, last, z0, zN, s, Vt, B):
@@ -478,11 +485,14 @@ def _robin(first, last, z0, zN, s, Vt, B):
     return jnp.log(dens), eq
 
 
-def _contact_branch(full, s, Vt, B):
+def _contact_branch(full, s, Vt, B, held=None):
     """1 for each contact whose carrier is extracted at `full` (the condition's density above
-    equilibrium), else 0: the branch `_contact_ends` takes there."""
+    equilibrium by more than `BRANCH_TIE`), else 0: the branch `_contact_ends` takes there.
+    Within `BRANCH_TIE` of equilibrium the branch `held`, or without one equilibrium."""
     robin, eq = _robin(full[1], full[-2], full[0], full[-1], s, Vt, B)
-    return (robin > eq).astype(robin.dtype)
+    gap = robin - eq
+    new = (gap > BRANCH_TIE).astype(robin.dtype)
+    return new if held is None else jnp.where(jnp.abs(gap) <= BRANCH_TIE, held, new)
 
 
 def _contact_ends(first, last, z0, zN, s, Vt, B):
@@ -1739,9 +1749,9 @@ def _scan(dev: Device, voltages, g_frac, tol, max_iter, bernoulli_name):
         B = BERNOULLI[bernoulli_name]
         contacts = "ct" in s
 
-        def branch(y):
+        def branch(y, held=None):
             full = jnp.concatenate([bounds[0][None], y, bounds[1][None]])
-            return _contact_branch(full, s, dev.Vt, B)
+            return _contact_branch(full, s, dev.Vt, B, held)
 
         held = branch(y) if contacts else None
         sizes: list[float] = []
@@ -1757,7 +1767,7 @@ def _scan(dev: Device, voltages, g_frac, tol, max_iter, bernoulli_name):
                 len(recent) > STALL_STEPS and max(recent) < ROUND_OFF_FLOOR
                 and min(recent[1:]) >= 0.1 * recent[0])  # fmt: skip
             if contacts and (done or sizes[-1] < BRANCH_FLIP_SIZE):
-                now = branch(y)
+                now = branch(y, held)
                 if bool(jnp.any(now != held)):
                     held, sizes, done = now, [], False
             if done:

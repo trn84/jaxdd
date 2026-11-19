@@ -109,15 +109,19 @@ def with_sublayers(count):
     return stacks
 
 
-def detected(columns, layers, alpha, R_back, from_glass, thickness=600e-9):
+def detected(columns, layers, alpha, R_back, from_glass, thickness=600e-9, boost=0.0,
+             reach=50e-9):  # fmt: skip
     """The PL a detector sees at the wavelength where the perovskite absorbs `alpha` (1/m): each
     perovskite layer's radiative recombination (`JdirL<k>`, layers from the glass up) weighed by
     its light's escape towards the detection side (the glass side or the top), directly and after
-    a reflection `R_back` at the far side; reabsorbed light is lost (no photon recycling)."""
+    a reflection `R_back` at the far side; reabsorbed light is lost (no photon recycling). With
+    `boost`, light from near the bottom leaves better, by `1 + boost·exp(−z/reach)` at a height `z`
+    above it, whichever side is lit (a scattering layer under the film)."""
     n = len(layers)
     depth = (np.arange(n) + 0.5) * thickness / n  # each layer's centre, from the glass side
     d = depth if from_glass else thickness - depth
     w = np.exp(-alpha * d) + R_back * np.exp(-alpha * (2 * thickness - d))
+    w = w * (1 + boost * np.exp(-depth / reach))
     return sum(w[i] * columns[f"JdirL{k + 1}"] for i, k in enumerate(layers))
 
 

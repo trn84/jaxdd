@@ -65,6 +65,7 @@ DECAYS = (
 PEROVSKITE_LAYERS = {"film": (0,), "SnO2": (1,), "Spiro": (0,)}
 ZONE = None  # with `--bottom-zone`: each stack's zone, its layer index (`use_bottom_zone`)
 DETECT = None  # with `--detect`: "same" (the lit side) or "opposite" (`use_detection`)
+OUTCOUPLED = ()  # with `--outcoupling`: the stacks whose light leaves better near the glass
 #: name, start (the authors' values where they have them), lower and upper bound
 PARAMETERS = (
     ("log10 k_rad (m³/s)", np.log10(7.5e-17), -19, -14),
@@ -105,6 +106,17 @@ def use_detection(side, sublayers=12):
     DETECT = side
     NAMES = (*NAMES, "log10 α at 806 nm (1/m)", "reflection at the far side")
     START, LO, HI = np.r_[START, np.log10(5.3e6), 0.3], np.r_[LO, 5.5, 0.0], np.r_[HI, 8.0, 1.0]
+
+
+def use_outcoupling(stacks):
+    """With `use_detection`: in `stacks` the light from near the glass leaves better (a
+    scattering layer under the film, the Al2O3 nanoparticles the authors grow the film on), by
+    `1 + boost·exp(−z/reach)` whichever side is lit; two more parameters."""
+    global NAMES, START, LO, HI, OUTCOUPLED
+    OUTCOUPLED = tuple(stacks)
+    NAMES = (*NAMES, "outcoupling boost near the glass", "log10 its reach (m)")
+    START = np.r_[START, 3.0, np.log10(50e-9)]
+    LO, HI = np.r_[LO, 0.0, -8.5], np.r_[HI, 100.0, -6.5]
 
 
 def use_bottom_zone(thickness):
@@ -204,8 +216,10 @@ class Problem:
                         stack, glass, _ = DECAYS[j]
                         side = glass if DETECT == "same" else not glass
                         th = thetas[i]
-                        seen = detected(tj_columns(r, k), PEROVSKITE_LAYERS[stack], 10.0 ** th[-2],
-                                        th[-1], side)  # fmt: skip
+                        boost, reach = ((th[19], 10.0 ** th[20]) if stack in OUTCOUPLED
+                                        else (0.0, 1.0))  # fmt: skip
+                        seen = detected(tj_columns(r, k), PEROVSKITE_LAYERS[stack], 10.0 ** th[17],
+                                        th[18], side, boost=boost, reach=reach)  # fmt: skip
                         pl = seen[1:] / seen[1]
                     model = as_measured(self.tm, pl, td)
                     rj = np.log10(binned(model[None], which)[0]) - np.log10(yb)
@@ -275,6 +289,9 @@ def main():
         help="the PL as a detector at 806 nm on that side sees it (reabsorption)",
     )
     ap.add_argument("--sublayers", type=int, default=12, help="with --detect: perovskite layers")
+    ap.add_argument("--outcoupling", metavar="STACKS",
+                    help="with --detect: the stacks (film,SnO2,Spiro) whose light leaves better "
+                         "near the glass")  # fmt: skip
     ap.add_argument("--from-best", action="store_true",
                     help="start from the best fit in validation/trpl_joint.json")  # fmt: skip
     a = ap.parse_args()
@@ -289,8 +306,16 @@ def main():
         out = f"trpl_joint_zone{a.bottom_zone:g}nm.json"
     if a.detect:
         use_detection(a.detect, a.sublayers)
-        first = np.r_[first[:17], START[17:]]
         out = f"trpl_joint_detect_{a.detect}.json"
+        known = REPO / "validation" / out
+        if a.from_best and known.exists():  # the best fit with this detection
+            fits = json.loads(known.read_text())["fits"]
+            first = np.array(min(fits, key=lambda f: f["rms"])["theta"])
+        first = np.r_[first[:17], START[17:] if len(first) < 19 else first[17:19]]
+        if a.outcoupling:
+            use_outcoupling(a.outcoupling.split(","))
+            first = np.r_[first, START[19:]]
+            out = f"trpl_joint_detect_{a.detect}_out_{a.outcoupling.replace(',', '+')}.json"
     if a.start_mu is not None:
         first = first.copy()
         first[1] = a.start_mu

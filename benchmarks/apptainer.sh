@@ -63,16 +63,27 @@
 #                STEPS=sample benchmarks/apptainer.sh
 #              with UPLOAD (below) the results go to a shared folder as they come:
 #                STEPS=sample UPLOAD=https://HOST/s/TOKEN benchmarks/apptainer.sh
+#   trpl       validation/trpl_sample.py --outcoupling: the posterior of the joint TRPL fit with
+#              outcoupling near the glass, one chain per seed of TRPL_SEEDS (default "0 1"), the
+#              chains side by side, each on a GPU of its own where the job has as many, else
+#              sharing them, each process then with TRPL_MEM (default 0.45) of its memory;
+#              with TRPL_ARGS (default "--walkers 64 --steps 4000 --every 50"); each chain to
+#              benchmarks/samples/trpl_out_chain_s<seed>.npz, saved every 50 steps and resumed by
+#              the next start (`--resume`), so a job that ends loses at most 50 steps. Hours on
+#              an A100; not in the default steps:
+#                STEPS=trpl benchmarks/apptainer.sh
 #
 # STEPS=all runs every step of a full measurement: info tests breakdown bench hard steric slots
-# transient run (about 40 min on an A100; not gpus, grid, chunk, sample).
+# transient run (about 40 min on an A100; not gpus, grid, chunk, sample, trpl).
 #
 # Settings (environment): STEPS; CHUNK, the batch file of the chunk step; SAMPLES and SAMPLE_ARGS
-# for the sample step; UPLOAD, a public share link of a Nextcloud or ownCloud folder with upload
-# rights (https://HOST/s/TOKEN): the log and the sample step's chains are uploaded to it every
-# UPLOAD_EVERY seconds (default 600) while the run lives, and once at its end; LABEL, the machine's name in the plot (default: the GPU's
-# name and "apptainer"); SIF, the image file (default cuda129.sif in the repository); IMAGE,
-# where it is pulled from. Everything is appended to benchmarks/apptainer.log (not committed).
+# for the sample step; TRPL_SEEDS, TRPL_ARGS and TRPL_MEM for the trpl step; UPLOAD, a public
+# share link of a Nextcloud or ownCloud folder with upload rights (https://HOST/s/TOKEN): the log
+# and the chains of the sample and trpl steps are uploaded to it every UPLOAD_EVERY seconds
+# (default 600) while the run lives, and once at its end; LABEL, the machine's name in the plot
+# (default: the GPU's name and "apptainer"); SIF, the image file (default cuda129.sif in the
+# repository); IMAGE, where it is pulled from. Everything is appended to benchmarks/apptainer.log
+# (not committed).
 set -euo pipefail
 export LC_ALL=C
 
@@ -184,8 +195,31 @@ if [ "${1:-}" = "--inside" ]; then
                         echo "!! sample $s failed (exit $?); going on"
                 done
                 ;;
+            trpl)
+                mkdir -p benchmarks/samples
+                pids=()
+                seeds=(${TRPL_SEEDS:-0 1})
+                gpus=$(nvidia-smi -L 2>/dev/null | wc -l)
+                [ "$gpus" -ge 1 ] || gpus=1
+                mem=0.75  # JAX's own share where a chain has its GPU alone
+                [ "$gpus" -lt "${#seeds[@]}" ] && mem="${TRPL_MEM:-0.45}"
+                for k in "${!seeds[@]}"; do
+                    seed=${seeds[$k]}
+                    echo "chain of seed $seed on GPU $(( k % gpus )) with $mem of its memory"
+                    # shellcheck disable=SC2086
+                    (cd validation && CUDA_VISIBLE_DEVICES=$(( k % gpus )) \
+                        XLA_PYTHON_CLIENT_MEM_FRACTION="$mem" \
+                        "$py" -u trpl_sample.py --outcoupling --seed "$seed" --resume \
+                        ${TRPL_ARGS:---walkers 64 --steps 4000 --every 50} 2>&1 |
+                        grep --line-buffered -v Warning | sed -u "s/^/[seed $seed] /") &
+                    pids+=($!)
+                done
+                for pid in "${pids[@]}"; do
+                    wait "$pid" || echo "!! a trpl chain failed (exit $?)"
+                done
+                ;;
             *)
-                echo "unknown step $step (info tests breakdown bench hard steric slots gpus grid run chunk transient sample)"
+                echo "unknown step $step (info tests breakdown bench hard steric slots gpus grid run chunk transient sample trpl)"
                 ;;
         esac || echo "!! step $step failed (exit $?); going on"
     done
@@ -208,7 +242,7 @@ if pgrep -u "$(id -un)" -f "benchmarks/apptainer.sh --inside" >/dev/null; then
 fi
 if [ -n "${SLURM_JOB_ID:-}" ]; then
     echo "this job has $(squeue -h -j "$SLURM_JOB_ID" -o %L 2>/dev/null || echo '?') left" \
-         "(every default step: about 20 min on an A100; the sample step hours)"
+         "(every default step: about 20 min on an A100; the sample and trpl steps hours)"
 fi
 
 # The host's LD_LIBRARY_PATH stays out, as do the image's CUDA compat libraries, which need a
@@ -238,6 +272,9 @@ export APPTAINERENV_STEPS="$STEPS" APPTAINERENV_LABEL="$LABEL" APPTAINERENV_JAXD
 [ -n "${SAMPLE_ARGS:-}" ] && export APPTAINERENV_SAMPLE_ARGS="$SAMPLE_ARGS"
 [ -n "${GRID_ARGS:-}" ] && export APPTAINERENV_GRID_ARGS="$GRID_ARGS"
 [ -n "${TRANSIENT_ARGS:-}" ] && export APPTAINERENV_TRANSIENT_ARGS="$TRANSIENT_ARGS"
+[ -n "${TRPL_SEEDS:-}" ] && export APPTAINERENV_TRPL_SEEDS="$TRPL_SEEDS"
+[ -n "${TRPL_ARGS:-}" ] && export APPTAINERENV_TRPL_ARGS="$TRPL_ARGS"
+[ -n "${TRPL_MEM:-}" ] && export APPTAINERENV_TRPL_MEM="$TRPL_MEM"
 if [[ " $STEPS " == *" chunk "* ]]; then
     [ -f "${CHUNK:-}" ] || { echo "the chunk step needs CHUNK=<batch file>"; exit 1; }
     export APPTAINERENV_CHUNK="$(realpath "$CHUNK")"

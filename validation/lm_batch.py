@@ -68,35 +68,45 @@ class Gather:
                 self._solve()
 
 
-def least_squares_many(residuals_many, starts, lo, hi, h=0.02, max_nfev=60, log=print):
+def least_squares_many(residuals_many, starts, lo, hi, h=0.02, max_nfev=60, log=print,
+                       expand=None):  # fmt: skip
     """`least_squares` from every row of `starts` at once (`Gather`): a list of dicts per start
     (`start`, `theta`, `rms`, `nfev`, `status`, `message`, `seconds`) and the batches' sizes and
-    wall times."""
-    starts = np.atleast_2d(np.asarray(starts, dtype=float))
+    wall times. `lo`, `hi`: bounds for all starts, or one per start. `expand`: per start, a
+    function from the fitted vector to the parameter set `residuals_many` takes, or None (a
+    profile: the vector without the parameters held, which the function puts back); then
+    `starts`, `lo`, `hi` are lists of the fitted vectors, their lengths each start's own."""
+    if expand is None:
+        starts = np.atleast_2d(np.asarray(starts, dtype=float))
+        lo = np.broadcast_to(np.asarray(lo, dtype=float), starts.shape)
+        hi = np.broadcast_to(np.asarray(hi, dtype=float), starts.shape)
+        expand = [None] * len(starts)
+    expand = [f if f is not None else (lambda x: x) for f in expand]
     gather = Gather(residuals_many, len(starts))
     fits = [None] * len(starts)
-    E = np.eye(starts.shape[1])
 
     def run(k):
         t0 = time.time()
+        full = expand[k]
+        E = np.eye(len(starts[k]))
 
         def fun(x):
-            return gather.ask(k, [x])[0][0]
+            return gather.ask(k, [full(x)])[0][0]
 
         def jac(x):
-            R, ok = gather.ask(k, [x] + [x + h * e for e in E])
+            R, ok = gather.ask(k, [full(x)] + [full(x + h * e) for e in E])
             J = (R[1:] - R[0]) / h
             failed = np.flatnonzero(~ok[1:])
             if failed.size:  # the backward difference, else nothing in that direction
-                Rb, okb = gather.ask(k, [x - h * E[i] for i in failed])
+                Rb, okb = gather.ask(k, [full(x - h * E[i]) for i in failed])
                 for m, i in enumerate(failed):
                     J[i] = (R[0] - Rb[m]) / h if okb[m] else 0.0
             return J.T
 
         try:
-            x0 = np.clip(starts[k], lo, hi)
-            res = least_squares(fun, x0, jac=jac, bounds=(lo, hi), max_nfev=max_nfev)
-            fits[k] = {"start": x0.tolist(), "theta": res.x.tolist(),
+            x0 = np.clip(starts[k], lo[k], hi[k])
+            res = least_squares(fun, x0, jac=jac, bounds=(lo[k], hi[k]), max_nfev=max_nfev)
+            fits[k] = {"start": full(x0).tolist(), "theta": full(res.x).tolist(),
                        "rms": float(np.sqrt(np.mean(res.fun**2))), "nfev": int(res.nfev),
                        "status": int(res.status), "message": res.message,
                        "seconds": time.time() - t0}  # fmt: skip

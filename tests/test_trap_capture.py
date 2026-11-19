@@ -120,3 +120,27 @@ def test_in_time_the_layers_coefficients_per_level_are_the_same() -> None:
 def test_a_trap_files_coefficients_are_checked(text, what) -> None:
     with pytest.raises(ValueError, match=what):
         device(bulk_traps__txt=text)
+
+
+def test_a_nearly_full_level_keeps_its_empty_share():
+    """Over a time step a level's empty share is its own, not `1 − f̄`: a level nearly full (the
+    electrons 1e25 m⁻³ beside n_t0 1e5) keeps every digit of it, so that its capture
+    `n·(1 − f̄) − n_t0·f̄` is the steady state's at `dti = 0` and not round-off times `n`; over a
+    step it moves from `1 − f_old` towards the steady share as `f̄` does."""
+    import jax.numpy as jnp
+
+    from jaxdd.solver import _trap_step
+
+    Cn, Cp, nt0, pt0, n, p = 1e-14, 1e-14, 1e5, 1e5, 1e25, 1e3
+    a = Cn * (n + nt0) + Cp * (p + pt0)
+    exact = (Cn * nt0 + Cp * p) / a  # 1.0e-20
+    mean, _, vacant = _trap_step(Cn, Cp, nt0, pt0, n, p, jnp.asarray(0.0), 0.0, empty=True)
+    assert float(vacant) == pytest.approx(exact, rel=1e-12, abs=0)
+    assert float(1.0 - mean) == 0.0  # what `1 − f̄` gives
+    steady = Cp * (n * p - nt0 * pt0) / a  # the steady state's capture over N_t·C_n
+    assert float(n * vacant - nt0 * mean) == pytest.approx(steady, rel=1e-12, abs=0)
+    dti, f_old = 1e12, 0.5  # a step of 1 ps from half full
+    share = -np.expm1(-a / dti) / (a / dti)
+    mean, _, vacant = _trap_step(Cn, Cp, nt0, pt0, n, p, jnp.asarray(f_old), dti, empty=True)
+    assert float(vacant) == pytest.approx(exact + (1 - f_old - exact) * share, rel=1e-12, abs=0)
+    assert float(mean + vacant) == pytest.approx(1.0, rel=1e-14)

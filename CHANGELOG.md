@@ -26,6 +26,14 @@ the API, and says so here.
   columns a device is the same to the bit. In the steady state, the batch and in time
   ([docs/model.md](docs/model.md#bulk-traps-init_trapping-calc_trap_filling_charge)).
 
+### Fixed
+
+- **Traps nearly full, in time.** Over a time step a level's empty share was `1 − f̄`, which
+  loses every digit of a level nearly full: its capture `n·(1 − f̄) − n_t0·f̄` became round-off
+  times `n`, and a step's Newton (the transient's first, a steady state, too) could stall
+  short of its tolerance, e.g. at a heavily doped transport layer's interface traps
+  (1e25 m⁻³). The empty share is now its own, as the steady state has it, bulk and interface.
+
 ## [0.2.0] – 2026-11-15
 
 Tables with refined axes, ions bounded by their sites, the current in time as the equations

@@ -534,12 +534,15 @@ def _time_terms(s: dict, full_prev, dti, f_bulk=None, f_iface=None) -> dict:
     return s
 
 
-def _trap_step(Cn, Cp, nt0, pt0, n, p, f_old, dti):
+def _trap_step(Cn, Cp, nt0, pt0, n, p, f_old, dti, empty=False):
     """A trap level's occupation over a time step (ZimT's `Calc_f_tb`): `df/dt = b − a·f` with
     `a = C_n·(n + n_t0) + C_p·(p + p_t0)`, `b = C_n·n + C_p·p_t0` from the densities at the step's
     end, solved exactly from `f_old`. `(f̄, f)`: its mean over the step, which the capture rates
     take (ZimT's `Calc_Recombination_n/p`, the ODE's integral over the step), and its value at
-    the end, which the charge takes. With `dti = 0` (the steady state) both are `b/a`."""
+    the end, which the charge takes. With `dti = 0` (the steady state) both are `b/a`. With
+    `empty`, also the mean of the empty share `1 − f`, from the steady state's own
+    `(C_n·n_t0 + C_p·p)/a` and `1 − f_old`: `1 − f̄` taken as it is loses every digit of a
+    level nearly full, whose capture `n·(1 − f̄) − n_t0·f̄` is then round-off times `n`."""
     a = Cn * (n + nt0) + Cp * (p + pt0)
     a = jnp.where(a > 0, a, 1.0)
     steady = (Cn * n + Cp * pt0) / a
@@ -547,7 +550,11 @@ def _trap_step(Cn, Cp, nt0, pt0, n, p, f_old, dti):
     x = a / jnp.where(moving, dti, 1.0)  # a·Δt
     end = jnp.where(moving, jnp.exp(-x), 0.0)
     mean = jnp.where(moving, -jnp.expm1(-x) / x, 0.0)
-    return steady + (f_old - steady) * mean, steady + (f_old - steady) * end
+    out = steady + (f_old - steady) * mean, steady + (f_old - steady) * end
+    if empty:
+        vacant = (Cn * nt0 + Cp * p) / a
+        out = (*out, vacant + ((1.0 - f_old) - vacant) * mean)
+    return out
 
 
 def _bulk_rates(n, p, s):
@@ -560,10 +567,10 @@ def _bulk_rates(n, p, s):
         R = _recombination(n, p, s)
         return R, R
     nl, pl, Cn, Cp, dti = _per_level(s["Nt"], n, p, s["Cn"], s["Cp"], tr["dti"])
-    mean, _ = _trap_step(Cn, Cp, s["nt0"], s["pt0"], nl, pl, tr["fb"], dti)
+    mean, _, vacant = _trap_step(Cn, Cp, s["nt0"], s["pt0"], nl, pl, tr["fb"], dti, empty=True)
     traps = s["Nt"] > 0
-    Rn = jnp.where(traps, s["Nt"] * Cn * (nl - (nl + s["nt0"]) * mean), 0.0)
-    Rp = jnp.where(traps, s["Nt"] * Cp * ((pl + s["pt0"]) * mean - s["pt0"]), 0.0)
+    Rn = jnp.where(traps, s["Nt"] * Cn * (nl * vacant - s["nt0"] * mean), 0.0)
+    Rp = jnp.where(traps, s["Nt"] * Cp * (pl * mean - s["pt0"] * vacant), 0.0)
     direct = s["kd"] * (n * p - s["ni2"])
     if "fs_k" in s:  # a free end's surface: its states follow at once, the same for both
         direct = direct + _surface_srh(n, p, s)
@@ -639,10 +646,11 @@ def _interface_edges(nL, nR, pL, pR, ti):
     traps = Nt > 0
     if "f_old" in ti:  # over a time step (`_trap_step`): captured by the mean, charged by the end
         dti = _per_level(Nt, ti["dti"])[0]
-        full, end = _trap_step(Cn, Cp, ti["nt0_lo"] + ti["nt0_hi"], ti["pt0_lo"] + ti["pt0_hi"],
-                               nL + nR, pL + pR, ti["f_old"], dti)  # fmt: skip
+        full, end, empty = _trap_step(Cn, Cp, ti["nt0_lo"] + ti["nt0_hi"],
+                                      ti["pt0_lo"] + ti["pt0_hi"], nL + nR, pL + pR, ti["f_old"],
+                                      dti, empty=True)  # fmt: skip
         full, end = jnp.where(traps, full, 0.0), jnp.where(traps, end, 0.0)
-        empty = jnp.where(traps, 1.0 - full, 0.0)
+        empty = jnp.where(traps, empty, 0.0)
     else:
         a = an * (nL + nR)
         b = bp * (pL + pR)

@@ -44,14 +44,14 @@ about two A100s).
   and in 7–9 dimensions a table is out of reach. The price is a model evaluation instead of an
   interpolation. **Done when** such a sample meets a table's tolerance with fewer devices than
   `refine_axes`.
-- **TRPL, the SnO2 stack.** Fitted together, the eight decays of Kober-Czerny et al. leave
-  the SnO2 stack's three at 0.11–0.23 decades rms where the film's and the Spiro stack's are
-  at 0.05–0.10, and the fit holds SnO2's band edge and its interface's transfer velocity beyond
-  physical bounds (with them 0.24 and 0.30;
-  [docs/validation.md](docs/validation.md#trpl-without-electrodes)). Candidates: the absorbed
-  share of the pulse by side, SnO2's own traps or a dipole at its interface. **Done when**
-  one of them brings the stack within the others' misfit at physical bounds, or all are ruled
-  out.
+- **TRPL, the SnO2 stack lit from the top.** With saturable interface states and the
+  pulse's absorbed share by side the eight decays of Kober-Czerny et al. fit to 0.103 decades
+  rms at physical bounds; the SnO2 stack lit from the top stays at 0.23, the rest 0.04–0.10
+  ([docs/validation.md](docs/validation.md#trpl-without-electrodes)), and the fit then takes
+  SnO2's doping to its bound and the top side's absorbed share to 0.5 (0.78 expected). Not
+  explained by SnO2 traps, a dipole (the same as SnO2's band edge) or photon recycling.
+  **Done when** that decay is within the others' misfit with every parameter inside its bounds,
+  or its misfit is traced to the measurement.
 - **Blocking contacts under bias.** Where the voltage drives the carrier a contact blocks
   (`S` = 0, or small) into it, the steady state has an accumulation layer at the contact,
   e^(V/V_T) above equilibrium, and Newton does not reach it from SIMsalabim's start, nor by

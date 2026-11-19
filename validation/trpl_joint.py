@@ -68,6 +68,10 @@ ZONE = None  # with `--bottom-zone`: each stack's zone, its layer index (`use_bo
 DETECT = None  # with `--detect`: "same" (the lit side) or "opposite" (`use_detection`)
 OUTCOUPLED = ()  # with `--outcoupling`: the stacks whose light leaves better near the glass
 RECYCLE = None  # with `--recycling`: each stack's photon recycling matrix (`use_recycling`)
+ABSORBED = None  # with `--absorbed`: the index of the two shares in the parameters
+SNO2_TRAPS = None  # with `--sno2-traps`: the index of the SnO2 level's three parameters
+DIPOLE = None  # with `--dipole`: the index of the SnO2/perovskite interface dipole
+CHARGED = None  # with `--charged-interface`: the index of its three parameters
 #: name, start (the authors' values where they have them), lower and upper bound
 PARAMETERS = (
     ("log10 k_rad (m³/s)", np.log10(7.5e-17), -19, -14),
@@ -119,6 +123,61 @@ def use_outcoupling(stacks):
     NAMES = (*NAMES, "outcoupling boost near the glass", "log10 its reach (m)")
     START = np.r_[START, 3.0, np.log10(50e-9)]
     LO, HI = np.r_[LO, 0.0, -8.5], np.r_[HI, 100.0, -6.5]
+
+
+def use_absorbed():
+    """The share of the pulse the perovskite absorbs, by side: lit through the glass (and SnO2)
+    and from the top, each a factor on the fluence (log10, from 0.3 to 1: reflection at the
+    stack's faces, absorption in its other layers); two more parameters."""
+    global NAMES, START, LO, HI, ABSORBED
+    ABSORBED = len(NAMES)
+    NAMES = (*NAMES, "log10 absorbed share, glass side", "log10 absorbed share, top side")
+    START, LO, HI = np.r_[START, -0.1, -0.1], np.r_[LO, -0.5, -0.5], np.r_[HI, 0.0, 0.0]
+
+
+def use_sno2_traps():
+    """A trap level in the SnO2 (acceptor-like, charged when it holds an electron): the
+    electrons the perovskite hands over are trapped there and their charge changes the band
+    bending at the interface over the decay; three more parameters (density, depth below
+    SnO2's conduction band, capture coefficient)."""
+    global NAMES, START, LO, HI, SNO2_TRAPS
+    layers, k = trpl_common.STACKS["SnO2"]
+    trpl_common.STACKS["SnO2"] = ([{**layers[0], "bulkTrapType": -1, "N_t_bulk": "1e20"},
+                                    *layers[1:]], k)  # fmt: skip
+    _BASE.clear()
+    SNO2_TRAPS = len(NAMES)
+    NAMES = (*NAMES, "log10 N_t SnO2 (m⁻³)", "SnO2 level below its E_c (eV)",
+             "log10 C SnO2 (m³/s)")  # fmt: skip
+    START = np.r_[START, 23.0, 0.3, -15.0]
+    LO, HI = np.r_[LO, 18.0, 0.02, -20.0], np.r_[HI, 26.0, 1.5, -11.0]
+
+
+def use_dipole():
+    """A dipole at the SnO2/perovskite interface: a step `Δ` of the vacuum level there, which
+    moves SnO2's bands against the perovskite's by `Δ` (positive: SnO2's conduction band up,
+    towards the perovskite's) while its electron affinity stays within physical bounds; one
+    more parameter."""
+    global NAMES, START, LO, HI, DIPOLE
+    DIPOLE = len(NAMES)
+    NAMES = (*NAMES, "dipole SnO2/FAPbI3 (eV)")
+    START, LO, HI = np.r_[START, 0.0], np.r_[LO, -0.5], np.r_[HI, 0.5]
+
+
+def use_charged_interface(kind=-1):
+    """The SnO2/perovskite interface's states charged (acceptor-like: negative when they hold an
+    electron), so that the electrons they take change the band bending over the decay; three
+    more parameters: their density (m⁻²), level, and electron capture coefficient. The hole
+    capture follows from the fitted SRV, `C_p = S / N_t`. `kind` 0: the same states neutral,
+    their density and capture free (a saturable interface recombination without charge)."""
+    global NAMES, START, LO, HI, CHARGED
+    layers, k = trpl_common.STACKS["SnO2"]
+    trpl_common.STACKS["SnO2"] = ([{**layers[0], "intTrapType": kind}, *layers[1:]], k)
+    _BASE.clear()
+    CHARGED = len(NAMES)
+    NAMES = (*NAMES, "log10 N_t SnO2/FAPbI3 (m⁻²)", "its level E_t (eV)",
+             "log10 its C_n (m³/s)")  # fmt: skip
+    START = np.r_[START, 16.0, 4.765, -14.0]
+    LO, HI = np.r_[LO, 12.0, 4.65, -20.0], np.r_[HI, 18.0, 5.5, -10.0]
 
 
 def use_physical_bounds():
@@ -193,6 +252,8 @@ def device(theta, stack, glass, fluence):
     if ZONE is not None:  # the bottom zone's own deep level
         p["bulk_trap_N"][ZONE[stack], 0] = 10.0 ** theta[17]
     last = PEROVSKITE_LAYERS[stack][-1]
+    if ABSORBED is not None:
+        fluence = fluence * 10.0 ** theta[ABSORBED + (0 if glass else 1)]
     p["gen_G"] = p["gen_G"] * fluence
     S = {"S_n_L": 0.0, "S_p_L": 0.0, "S_n_R": 0.0, "S_p_R": 0.0}
     if stack == "film":
@@ -202,6 +263,17 @@ def device(theta, stack, glass, fluence):
         p["N_t_int"][0] = 10.0**S_sno2 / 1e-14  # the interface traps' C (trpl_common.interface)
         p["E_c"][0], p["N_D"][0] = Ec_sno2, 10.0**ND_sno2
         p["nu_int_n"][0] = p["nu_int_p"][0] = 10.0**nu
+        if DIPOLE is not None:
+            p["E_c"][0] -= theta[DIPOLE]
+            p["E_v"][0] -= theta[DIPOLE]
+        if CHARGED is not None:
+            N_t, E_t, Cn_t = theta[CHARGED : CHARGED + 3]
+            p["N_t_int"][0], p["E_t_int"][0] = 10.0**N_t, E_t
+            p["C_n_int"][0], p["C_p_int"][0] = 10.0**Cn_t, 10.0 ** (S_sno2 - N_t)
+        if SNO2_TRAPS is not None:
+            N, depth, Ct = theta[SNO2_TRAPS : SNO2_TRAPS + 3]
+            p["N_t_bulk"][0], p["E_t_bulk"][0] = 10.0**N, p["E_c"][0] + depth  # its one level
+            p["bulk_trap_Cn"][0] = p["bulk_trap_Cp"][0] = 10.0**Ct
     else:  # the perovskite on the glass; Spiro's top in air
         S.update(S_n_L=10.0**S_glass, S_p_L=10.0**S_glass)
         p["N_t_int"][last] = 10.0**S_spiro / 1e-14
@@ -331,6 +403,18 @@ def main():
     ap.add_argument("--recycling", action="store_true",
                     help="photon recycling in the perovskite (jaxdd.recycling); k_rad's start "
                          "raised by the share that escapes")  # fmt: skip
+    ap.add_argument("--absorbed", action="store_true",
+                    help="the share of the pulse absorbed by side (two parameters)")  # fmt: skip
+    ap.add_argument("--sno2-traps", action="store_true",
+                    help="a trap level in the SnO2 (three parameters)")  # fmt: skip
+    ap.add_argument("--dipole", action="store_true",
+                    help="a dipole at the SnO2/perovskite interface (one parameter)")  # fmt: skip
+    ap.add_argument("--charged-interface", action="store_true",
+                    help="charged SnO2/perovskite interface states (three parameters)")  # fmt: skip
+    ap.add_argument("--neutral-interface", action="store_true",
+                    help="the same interface states, neutral (three parameters)")  # fmt: skip
+    ap.add_argument("--profile", metavar="I=V1,V2,...",
+                    help="hold parameter I (its index) at each value, one start each")  # fmt: skip
     ap.add_argument("--start-from", metavar="FILE",
                     help="start from validation/FILE's best fit (the same parameters)")  # fmt: skip
     ap.add_argument("--from-best", action="store_true",
@@ -360,8 +444,25 @@ def main():
     if a.start_from:  # a result of this script with the same parameters
         fits = json.loads((REPO / "validation" / a.start_from).read_text())["fits"]
         first = np.array(min(fits, key=lambda f: f["rms"])["theta"])
-        if len(first) != len(START):
-            raise SystemExit(f"{a.start_from}: {len(first)} parameters, this fit {len(START)}")
+    if a.absorbed:
+        use_absorbed()
+        first = np.r_[first, START[len(first) :]]
+        out = out.replace(".json", "_absorbed.json")
+    if a.sno2_traps:
+        use_sno2_traps()
+        first = np.r_[first, START[len(first) :]]
+        out = out.replace(".json", "_sno2traps.json")
+    if a.dipole:
+        use_dipole()
+        first = np.r_[first, START[len(first) :]]
+        out = out.replace(".json", "_dipole.json")
+    if a.charged_interface or a.neutral_interface:
+        use_charged_interface(0 if a.neutral_interface else -1)
+        first = np.r_[first, START[len(first) :]]
+        first[CHARGED] = np.clip(first[NAMES.index("log10 S SnO2/FAPbI3 (m/s)")] + 14, 12, 18)
+        out = out.replace(".json", "_neutral.json" if a.neutral_interface else "_charged.json")
+    if len(first) != len(START):
+        raise SystemExit(f"the start has {len(first)} parameters, this fit {len(START)}")
     if a.start_mu is not None:
         first = first.copy()
         first[1] = a.start_mu
@@ -379,10 +480,26 @@ def main():
         np.clip(first + rng.uniform(-a.spread, a.spread, len(first)), LO, HI)
         for _ in range(a.starts)]  # fmt: skip
     t_all = time.time()
+    lo, hi, expand = LO, HI, None
+    if a.profile:  # one start per value, the parameter held there
+        i, values = a.profile.split("=")
+        i = int(i)
+        starts, lo, hi, expand = [], [], [], []
+        free = np.delete(np.arange(len(START)), i)
+        for v in map(float, values.split(",")):
+            th = np.clip(first, LO, HI)
+            th[i] = v
+            starts.append(th)
+            lo.append(LO[free])
+            hi.append(HI[free])
+            expand.append(lambda x, th=th: np.insert(x, i, th[i]))
+        out = out.replace(".json", f"_profile{i}.json")
     if a.optimizer == "batched":  # scipy from every start at once, its evaluations batched
         R0, _ = prob.residuals_many(starts)
-        fits, batches = least_squares_many(prob.residuals_many, starts, LO, HI,
-                                           max_nfev=a.max_nfev)  # fmt: skip
+        if expand is not None:
+            starts = [th[free] for th in starts]
+        fits, batches = least_squares_many(prob.residuals_many, starts, lo, hi,
+                                           max_nfev=a.max_nfev, expand=expand)  # fmt: skip
         R, _ = prob.residuals_many([np.array(f["theta"]) for f in fits])
         for f, r, r0 in zip(fits, R, R0, strict=True):
             f["per_decay"] = prob.per_decay_rms(r)

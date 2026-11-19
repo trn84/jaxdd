@@ -567,6 +567,40 @@ conduction band at least 0.2 eV below the perovskite's) cost the outcoupling fit
 (0.150), all of it in the SnO2 stack (its decays 0.24 and 0.30). The fit's SnO2 interface sits
 at the bounds' other side: `E_c` 4.00 eV, `ν_int` 5.5e6 m/s.
 
+**The SnO2 stack** (`trpl_joint.py --detect same --sublayers 24 --outcoupling film`, each
+candidate refitted from the best fit before it). Lit through the glass the measured decay
+depends less on the fluence than the model's: at 4.8e11 cm⁻² the model lies 0.09 decades low
+between 10 ns and 1 µs, at 1.5e11 0.13 high (0.28 after 1 µs).
+
+| | rms | SnO2 stack's decays |
+|---|---|---|
+| outcoupling near the glass | 0.120 | 0.11, 0.17, 0.23 |
+| with physical bounds (`--physical`) | 0.150 | 0.08, 0.24, 0.30 |
+| and the pulse's absorbed share by side (`--absorbed`) | 0.120 | 0.13, 0.17, 0.23 |
+| and a trap level in the SnO2 (`--sno2-traps`) | 0.120 | 0.13, 0.17, 0.23 |
+| and the interface states' own density and capture (`--charged-interface`) | 0.1034 | 0.07, 0.10, 0.23 |
+| the same states neutral (`--neutral-interface`) | 0.1035 | 0.07, 0.10, 0.23 |
+
+- **The absorbed share** (two parameters, 0.3–1 of the fluence) takes 1.0 through the glass and
+  0.78 from the top without the bounds, close to the reflection at perovskite/air at 398 nm
+  (about 22 % for n ≈ 2.5, k ≈ 0.8); with them it takes 0.55, and the bounds then cost nothing.
+- **A trap level in the SnO2** (acceptor-like; density, depth, capture) changes nothing.
+- **The interface's recombination is needed**: held at 1e-3 or at the authors' 9 cm/s, the rest
+  refitted, 0.28 (both stopped at 60 evaluations); at 1e3 cm/s 0.121, free about 800 cm/s.
+  The authors' SRV is a boundary condition for a perovskite without its SnO2; in jaxdd's stack
+  the band bending keeps the holes from the interface, and the same loss needs a larger `S`.
+- **Its states' own density and capture** (the hole capture `C_p = S/N_t`, the electron
+  capture and the level free) bring the glass side's two decays to 0.07 and 0.10: with slow
+  electron capture (`C_n` 1e-17 against `C_p` 1e-12 m³/s) and few states (1e9 cm⁻²) the
+  states are not always full and the recombination saturates with the fluence. Charged or
+  neutral fit alike: it is the saturation, not the charge. The values are not determined
+  (from two starts 9e8 and 6e10 cm⁻², `C_n` 4e-17 and 5e-19), SnO2's doping goes to its bound
+  (3e25 m⁻³) and the top side's absorbed share to 0.5; the decay lit from the top stays at 0.23.
+
+The bound on SnO2's band edge rests on electron affinities of 4.2–4.5 eV; photoemission on
+FA-rich perovskites on SnO2 finds the conduction bands within 30 meV (Energy Environ. Sci.
+2015, doi:10.1039/C5EE02608C), so the bound is doubtful, the one on the transfer velocity not.
+
 **The posterior with outcoupling** (`trpl_sample.py --outcoupling`, 21 parameters, 256 walkers,
 1000 steps on an A100, two chains of 4.5–4.8 h; σ 0.119 decades, autocorrelation about 70
 steps, acceptance 5 %). The two chains agree in every median within a tenth of its width:
@@ -703,7 +737,7 @@ as arguments. SimSS itself is built by [`simss/`](../simss/README.md).
 | `validation/trpl_halfstacks.py` | TRPL of two half-stacks without electrodes: free ends against SIMsalabim's electrodes and their best case ([above](#trpl-without-electrodes)) |
 | `validation/trpl_zimt.py [--cap S] [--workdir DIR]` | ZimT 5.36 on a decay with an exact answer and on the half-stacks' best case (Docker, each run stopped after `S` seconds) |
 | `validation/trpl_fit.py` | the SnO2 half-stack's measured decays fitted with free ends |
-| `validation/trpl_joint.py [--starts N] [--from-best] [--start-mu LOG10] [--bottom-zone NM] [--detect same\|opposite] [--outcoupling STACKS] [--recycling] [--physical] [--start-from FILE] [--optimizer batched\|scipy]` | all eight measured decays fitted together, one perovskite, every end free; with `--bottom-zone` a defective zone at the perovskite's bottom, with `--detect` the PL as a detector at 806 nm sees it, `--outcoupling` its light leaving better near the glass; `--recycling` photon recycling, `--physical` physical bounds on the SnO2 interface; from all starts at once (`validation/lm_batch.py`: scipy's `least_squares` per start in a thread, their evaluations gathered into one batch: the same fits to the bit, four starts in 788 s instead of 1156) |
+| `validation/trpl_joint.py [--starts N] [--from-best] [--start-mu LOG10] [--bottom-zone NM] [--detect same\|opposite] [--outcoupling STACKS] [--recycling] [--physical] [--absorbed] [--sno2-traps] [--charged-interface\|--neutral-interface] [--profile I=V,…] [--start-from FILE] [--optimizer batched\|scipy]` | all eight measured decays fitted together, one perovskite, every end free; with `--bottom-zone` a defective zone at the perovskite's bottom, with `--detect` the PL as a detector at 806 nm sees it, `--outcoupling` its light leaving better near the glass; `--recycling` photon recycling, `--physical` physical bounds on the SnO2 interface, `--absorbed` the pulse's absorbed share by side, `--sno2-traps` a level in the SnO2, `--charged-interface`/`--neutral-interface` the SnO2 interface states' own density and capture, `--profile` one parameter held at each value; from all starts at once (`validation/lm_batch.py`: scipy's `least_squares` per start in a thread, their evaluations gathered into one batch: the same fits to the bit, four starts in 788 s instead of 1156) |
 | `validation/trpl_sample.py [--outcoupling] [--walkers W] [--steps S] [--sigma F]` | the joint fit's posterior by the ensemble sampler over the batch; the chain to `benchmarks/samples/trpl_chain.npz` (with `--outcoupling` `trpl_out_chain_s<seed>.npz`) |
 | `validation/trpl_timing.py [--batches N …] [--parallel P]` | the same transient's wall time in jaxdd and in ZimT |
 

@@ -42,6 +42,7 @@ from jaxdd.solver import (
     _carrier_excess,
     _contact_branch,
     _degenerate,
+    _drift_factor,
     _excess,
     _field_mobilities,
     _free_ends,
@@ -423,6 +424,7 @@ def _ion_currents(d, full, tr, B):
     last_a = jnp.max(jnp.where((totals > 0) & (idx < ka), idx, -1))
     last_c = jnp.max(jnp.where((totals > 0) & (idx >= ka), idx, -1))
     only_last = tr.get("ion_last", 0.0) > 0
+    drift = "drift" in ion and "a_inv" in ion  # the modified drift (`solver._drift_factor`)
     for k in range(masks.shape[0]):
         anion = k < ka
         sn = -1.0 if anion else 1.0
@@ -438,6 +440,8 @@ def _ion_currents(d, full, tr, B):
         U = tr["dti"] * (dens - before)
         ev = jnp.exp(sn * V / Vt + w) if "a_inv" in ion else jnp.exp(sn * V / Vt)
         mu_ = jnp.where(mu > 0, mu, 1.0)
+        if drift:  # the modified drift: in the continuum the mobility times `1 − n/N_max`
+            mu_ = mu_ * jnp.exp(-w)
         int_u = jnp.concatenate([jnp.zeros(1), jnp.cumsum(0.5 * dx * (U[:-1] + U[1:]) * pair)])
         single = jnp.sum(0.5 * dx * (ev[:-1] / mu_[:-1] + ev[1:] / mu_[1:]) * pair)
         double = jnp.sum(0.5 * dx * (ev[:-1] * int_u[:-1] / mu_[:-1] + ev[1:] * int_u[1:] / mu_[1:])
@@ -451,7 +455,12 @@ def _ion_currents(d, full, tr, B):
         step = jnp.where(e > first, sn * Q * L * width * U[: NP + 1], 0.0) * pair
         J = Q * K + jnp.cumsum(step)
         if "curr_diff" in d:
-            dV = sn * jnp.diff(V) / Vt + (jnp.diff(w) if "a_inv" in ion else 0.0)
+            if drift:  # the potential's argument over the modified drift's factor
+                inv = ion["a_inv" if anion else "c_inv"]
+                dV = sn * jnp.diff(V) / Vt / _drift_factor(ln_dens[:-1], ln_dens[1:], inv[:-1],
+                                                           inv[1:])  # fmt: skip
+            else:
+                dV = sn * jnp.diff(V) / Vt + (jnp.diff(w) if "a_inv" in ion else 0.0)
             flux = sn * Q * mu[: NP + 1] * Vt * (dens[1:] * B(-dV) - dens[:-1] * B(dV)) / (L * hh)
             J = jnp.where(d["curr_diff"] > 0, flux, J)
         J = jnp.where(d["iface"], jnp.roll(J, 1), J)

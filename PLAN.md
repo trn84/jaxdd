@@ -32,11 +32,6 @@ about two A100s).
 
 ## 3 Later
 
-- **Ions bounded by their sites, the other dynamics.** In time they flow down their
-  electrochemical potential at a constant mobility (ChargeTransport.jl's, docs/model.md); a
-  modified drift at a constant diffusivity has the same steady state and other transients
-  (Abdel, Courtier, Farrell 2023). **Done when** it is a switch of `solve_transient`, against a
-  code that has it.
 - **Samples that are not a tensor product**, sparse grids (Smolyak) or scattered samples with a
   surrogate (a GP or a small network): a feature that lies across the axes costs a tensor
   product its points everywhere ([docs/validation.md](docs/validation.md#a-table-with-refined-axes)),

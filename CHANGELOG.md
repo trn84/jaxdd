@@ -14,6 +14,11 @@ the API, and says so here.
   potential at a constant mobility, the Scharfetter–Gummel flux with the excess chemical
   potential `−ln(1 − n/N_max)` beside the potential's (ChargeTransport.jl's scheme;
   docs/model.md). Without sites every transient is the same to the bit.
+- **The ions' other dynamics.** `solve_transient(..., ion_flux="modified-drift")`: ions bounded
+  by their sites flow with the drift modified by the free sites' share at a constant
+  diffusivity, Bessemoulin-Chatard's scheme as ChargeTransport.jl's
+  `DiffusionEnhancedModifiedDrift`; the same steady states, other transients. Against
+  ChargeTransport.jl's voltage steps to 1e-2 in the current (docs/validation.md).
 - **ChargeTransport.jl as a reference** (`validation/chargetransport/psc_ions.jl`,
   `tests/test_chargetransport.py`): its Ex103 perovskite cell with vacancies bounded by their
   sites, in equilibrium, dark and lit steady states and a voltage's step in time; jaxdd agrees to

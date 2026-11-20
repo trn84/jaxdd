@@ -186,6 +186,49 @@ def test_transients_with_sites_are_chargetransport_jl() -> None:
                 assert np.abs(dV).max() < 5e-4, (name, V, j, layer)
 
 
+#: The voltage steps with the modified drift (`ion_flux="modified-drift"`), each against
+#: ChargeTransport.jl's `DiffusionEnhancedModifiedDrift` (`FLUX=modified-drift`).
+DRIFT_STEPS = ((1e24, 1e25, 1.0), (4e24, 2e25, 0.6), (4e24, 2e25, 1.0))
+
+
+def test_transients_with_the_modified_drift_are_chargetransport_jl() -> None:
+    """The steps of `STEPS` with the ions' drift modified by the free sites' share at a constant
+    diffusivity, against ChargeTransport.jl's Bessemoulin-Chatard scheme with a modified drift:
+    the current to 1e-2 of itself to 1 µs (8.7e-3 at most), 1.5e-2 to 1 ms (1.0e-2) and 3e-3
+    after (2.2e-3); the states at 1e-6, 1e-3 and 1 s, `ln n`, `ln p` to 0.1 (9.5e-2 at 1 µs, as
+    the electrochemical flux's), the potential to 0.5 mV. The two fluxes' transients differ by
+    up to 0.1–1 of the current (the references' own difference): the electrochemical flux's
+    against this reference is 0.13–0.5 off, here more than 0.1."""
+    devices, tvgs, refs = [], [], []
+    for ions, sites, V in DRIFT_STEPS:
+        name = f"ions{ions:g}_sites{sites:g}".replace("+", "") + "/modified-drift"
+        ref = np.genfromtxt(DATA / name / f"tstep_dark_{V}_J.csv", delimiter=",", names=True)
+        t = np.concatenate([[0.0], ref["t"]])
+        n = len(t)
+        tvgs.append(TVG(t=t, Vext=np.concatenate([[0.0], np.full(n - 1, V)]),
+                        oc=np.zeros(n, bool), G_frac=np.zeros(n), track=np.zeros(n, int),
+                        dti=np.concatenate([[0.0], 1.0 / np.diff(t)])))  # fmt: skip
+        devices.append(device(ions, sites, 0.0, mu=1e-12))
+        refs.append((name, V, ref, t))
+    r = solve_transient(prepare(devices), tvgs, profiles=True, ion_flux="modified-drift")
+    assert np.asarray(r.converged).all()
+    for b, (name, V, ref, t) in enumerate(refs):
+        J = np.asarray(r.J)[b, 1:]
+        rel = np.abs(J - ref["J"]) / np.abs(ref["J"])
+        for lo, hi, tol in ((0.0, 1e-6, 1e-2), (1e-6, 1e-3, 1.5e-2), (1e-3, np.inf, 3e-3)):
+            m = (ref["t"] > lo) & (ref["t"] <= hi)
+            assert rel[m].max() < tol, (name, V, lo, rel[m].max())
+        other = np.genfromtxt(DATA / name.split("/")[0] / f"tstep_dark_{V}_J.csv", delimiter=",",
+                              names=True)["J"]  # fmt: skip
+        assert np.max(np.abs(other - ref["J"]) / np.abs(ref["J"])) > 0.1, (name, V)
+        for j in (1, 2, 3):
+            tj = float((DATA / name / f"tstep_dark_{V}_at{j}_t.txt").read_text())
+            k = int(np.argmin(np.abs(t - tj)))
+            state = {key: np.asarray(r.profiles[key])[b, k][None, None] for key in ("V", "n", "p")}
+            dens, dV = worst(devices[b], state, 0, reference(name, f"tstep_dark_{V}_at{j}")[1])
+            assert dens < 0.1 and dV < 5e-4, (name, V, j, dens, dV)
+
+
 @pytest.mark.parametrize("statistics", ["fermi-dirac", "blakemore"])
 def test_degenerate_transport_layers_are_chargetransport_jl(statistics) -> None:
     """The cell with its transport layers doped 3e25 m⁻³ against `N_c` 5e25 (degenerate: the

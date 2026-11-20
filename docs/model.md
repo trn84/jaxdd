@@ -514,10 +514,21 @@ interval added to the potential's, `x + sign·Δw` (ChargeTransport.jl's excess 
 potential scheme; with `w` = 0, no sites, the flux is Boltzmann's to the bit); the same `w` in
 the ion's steady row (`ln n + w` Boltzmann's), at a contact's point (zero flux over its
 interval: `ln n = −ln(e^(−η) + 1/N_max)`, `η` the neighbour's `ln n + w` and the step, exact for
-the exact `B`) and in the ions' current (its Slotboom variable `n·e^(±V/V_T + w)`). A modified
-drift at a constant diffusivity has the same steady state and other transients (Abdel,
-Courtier, Farrell 2023); it is not built. The transients agree with ChargeTransport.jl's
-([validation.md](validation.md)). Newton
+the exact `B`) and in the ions' current (its Slotboom variable `n·e^(±V/V_T + w)`).
+
+`solve_transient(..., ion_flux="modified-drift")` takes the other dynamics: the drift modified
+by the free sites' share at a constant diffusivity, `j = −D·(∇n ± n·(1 − n/N_max)·∇V/V_T)`
+(Abdel, Courtier, Farrell 2023). It is the flux above with the mobility times
+`1 − n/N_max = e^(−w)`, so its zero flux, the steady state, is the same, and its transients are
+slower where the ions crowd their sites. Discretised as Bessemoulin-Chatard's scheme with a
+modified drift (ChargeTransport.jl's `DiffusionEnhancedModifiedDrift`): the Scharfetter–Gummel
+flux at the constant mobility with the potential's argument over `g = Δη/Δln n`, `η = ln n + w`
+(`solver._drift_factor`; below `Δln n` = 1e-5 its value at the middle, `e^w`), whose zero flux
+is `Δη = ±x`, the steady state's; the contact's point as above (the same `Δη` for the exact
+`B`), the ions' current with the mobility `μ·e^(−w)` in the integral form and `x/g` in
+`Calc_Curr_Diff`'s. Without sites `g` = 1 and both fluxes are Boltzmann's to the bit. The
+transients of both agree with ChargeTransport.jl's ([validation.md](validation.md)); they differ
+from each other by up to the current itself. Newton
 starts from the solution with Boltzmann's ions ([solver.md](solver.md)) and converges at their
 steps on the hard devices with the sites of the lattice or the codes
 ([validation.md](validation.md)); where the ions fill much of their layer (sites a few times

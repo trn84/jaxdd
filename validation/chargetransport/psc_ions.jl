@@ -10,7 +10,10 @@
 #     CA=1e24 NA=1e25 julia --project=. psc_ions.jl OUTDIR eq dark:0.6 light:0.9 ...
 #
 # STAT the carriers' statistics (boltzmann, blakemore or fermi-dirac: Ex103's TeSCA F_1/2), CN
-# and CP the transport layers' doping (m^-3, 1e24 Ex103's).
+# and CP the transport layers' doping (m^-3, 1e24 Ex103's). FLUX the vacancies' flux, as jaxdd's
+# `solve_transient(..., ion_flux=)` names it: electrochemical (ChargeTransport's default, the
+# excess chemical potential's scheme: a constant mobility) or modified-drift (Bessemoulin-Chatard's
+# scheme with a modified drift: a constant diffusivity); the steady states are the same.
 # CA the vacancies' mean density, NA their sites (m^-3; Ex103's are 1.6e25 and 1e27, where
 # jaxdd's steady state does not converge: PLAN.md). Cases: eq (thermodynamic equilibrium),
 # dark:V and light:V (uniform generation in the perovskite), V at the acceptor (spiro) side;
@@ -28,6 +31,9 @@ const q = ChargeTransport.constants.q
 # The carriers' statistics (STAT), as jaxdd's `statistics` names them.
 const STATISTICS = Dict("boltzmann" => Boltzmann, "blakemore" => Blakemore,
     "fermi-dirac" => FermiDiracOneHalfTeSCA)
+# The vacancies' flux (FLUX), as jaxdd's `ion_flux` names it.
+const FLUX = Dict("electrochemical" => ExcessChemicalPotential,
+    "modified-drift" => DiffusionEnhancedModifiedDrift)
 const eV = q
 
 Base.@kwdef struct P
@@ -102,6 +108,7 @@ function build(p::P)
     # the rate is not 0, whatever λ2, and the model set after the system is built gives NaN.
     data.generationModel = GenerationUniform
     enable_ionic_carrier!(data, ionicCarrier = p.iphia, regions = [p.regionIntrinsic])
+    data.fluxApproximation[p.iphia] = FLUX[get(ENV, "FLUX", "electrochemical")]
 
     params = Params(p.numberOfRegions, p.numberOfBoundaryRegions, p.numberOfCarriers)
     params.temperature = p.T
@@ -215,7 +222,8 @@ function run(dir, p::P, Na, cases)
     sol = equilibrium!(ctsys, data, p, control, mean_of)
     open(joinpath(dir, "params.txt"), "w") do io
         println(io, "ChargeTransport $(pkgversion(ChargeTransport)), CA = $(p.Ca), NA = $(Na), " *
-            "STAT = $(get(ENV, "STAT", "boltzmann")), CN = $(p.Cn), CP = $(p.Cp)")
+            "STAT = $(get(ENV, "STAT", "boltzmann")), CN = $(p.Cn), CP = $(p.Cp), " *
+            "FLUX = $(get(ENV, "FLUX", "electrochemical"))")
         println(io, "vacancy energy E_a = $(data.params.bandEdgeEnergy[p.iphia, p.regionIntrinsic] / q) eV")
         println(io, "mean vacancy density = $(mean_of(sol)) m^-3")
         println(io, "nodes = $(length(coord)), smallest interval = $(minimum(diff(coord))) m")

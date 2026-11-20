@@ -47,6 +47,7 @@ from jaxdd.constants import Q
 from jaxdd.simss_input import TVG
 from jaxdd.solver import (
     BERNOULLI,
+    ION_FLUXES,
     ION_LOG_CAP,
     STEP_CAPS,
     _bulk_occupation,
@@ -219,7 +220,7 @@ OC_GUESS = 0.0
 
 
 def _solve_one(d, t, V, oc, G_frac, track, ctl, recycle, B, tol, max_iter, ions, vint, ion_last,
-               zimt_current, profiles=False):  # fmt: skip
+               zimt_current, profiles=False, drift=False):  # fmt: skip
     """One device through its steps: the start as SIMsalabim's (`Init_Pot_Dens_Ions_Traps`,
     Poisson at the first voltage), then each step by Newton from the one before. With `ions` the
     mobile ions are unknowns of their own (`V, ln n, ln p, ln a, ln c` per point,
@@ -231,7 +232,10 @@ def _solve_one(d, t, V, oc, G_frac, track, ctl, recycle, B, tol, max_iter, ions,
     are kept, where the run stops, and so each step's `Δt`: from the last step kept. `recycle`
     (NP × NP, or None): each step's generation adds the photons of the state before it that
     it reabsorbs (`solve_transient`). `profiles`: each step's state (`V`, `ln n`, `ln p` on every
-    point, the contacts' included) as one more output."""
+    point, the contacts' included) as one more output. `drift`: the ions bounded by their sites
+    flow with the modified drift (`solve_transient`'s `ion_flux`)."""
+    if drift:  # a key, not a value: the flux chosen when tracing (`solver._drift_factor`)
+        d = dict(d, ion=dict(d["ion"], drift=jnp.asarray(1.0)))
     s, ion = d["s"], d["ion"]
     V_first = jnp.where(oc[0] > 0, OC_GUESS, V[0])
     d0, s0, ion0, V0 = jax.lax.stop_gradient((d, s, ion, V_first))
@@ -384,12 +388,13 @@ def _solve_one(d, t, V, oc, G_frac, track, ctl, recycle, B, tol, max_iter, ions,
 
 
 @functools.partial(jax.jit, static_argnames=("bernoulli_name", "max_iter", "ions", "vint",
-                                             "ion_last", "zimt_current", "profiles"))  # fmt: skip
+                                             "ion_last", "zimt_current", "profiles",
+                                             "drift"))  # fmt: skip
 def _solve_batch(batch, t, V, oc, G_frac, track, ctl, recycle, tol, max_iter, bernoulli_name,
-                 ions, vint, ion_last, zimt_current, profiles=False):  # fmt: skip
+                 ions, vint, ion_last, zimt_current, profiles=False, drift=False):  # fmt: skip
     one = functools.partial(_solve_one, B=BERNOULLI[bernoulli_name], tol=tol, max_iter=max_iter,
                             ions=ions, vint=vint, ion_last=ion_last, zimt_current=zimt_current,
-                            profiles=profiles)  # fmt: skip
+                            profiles=profiles, drift=drift)  # fmt: skip
     out = jax.vmap(one)(batch, t, V, oc, G_frac, track, ctl, recycle)
     J, J_ext, V_int, ok, its, columns, kept = out[:7]
     V_ext = V_int + J_ext * batch["R_series"][:, None]
@@ -398,7 +403,8 @@ def _solve_batch(batch, t, V, oc, G_frac, track, ctl, recycle, tol, max_iter, be
 
 def solve_transient(batch, tvg: TVG | list[TVG], tol=1e-10, max_iter=200, bernoulli_name="exact",
                     zimt_ion_currents=False, ions=None, vint=None, zimt_current=False,
-                    recycle=None, profiles=False) -> TransientResult:  # fmt: skip
+                    recycle=None, profiles=False,
+                    ion_flux="electrochemical") -> TransientResult:  # fmt: skip
     """A batch (`batch.prepare`) through ZimT's time steps `tvg`: one for every device, or one
     per device (all of one length). Each step's Newton to `tol` or `max_iter`. Where any device
     of the batch has an open circuit or a series resistance, the internal voltage is an unknown
@@ -418,7 +424,12 @@ def solve_transient(batch, tvg: TVG | list[TVG], tol=1e-10, max_iter=200, bernou
     it) has none: the dark's `n·p = n_i²` emits nothing net, and under light it would need the
     recycled generation's own solution. `profiles`: each step's state on every point (the
     contacts' included), `TransientResult.profiles` `{"V", "n", "p"}` (batch × steps × points;
-    V in volts, the densities in m⁻³), for band diagrams in time.
+    V in volts, the densities in m⁻³), for band diagrams in time. `ion_flux` (`solver.ION_FLUXES`):
+    how mobile ions bounded by their sites (`N_max_anion`, `N_max_cation`) flow, down their
+    electrochemical potential at a constant mobility (`"electrochemical"`, ChargeTransport.jl's
+    default) or with the drift modified by the free sites' share at a constant diffusivity
+    (`"modified-drift"`, Abdel, Courtier, Farrell 2023; docs/model.md): the same steady states,
+    other transients. Without sites the two are the same.
 
     Differentiable in the batch (`batch.device_tree`): each step's derivatives those of its
     converged solution by the implicit function (`batch._converged_jvp`), carried from step to
@@ -443,6 +454,8 @@ def solve_transient(batch, tvg: TVG | list[TVG], tol=1e-10, max_iter=200, bernou
         ion = batch["ion"]
         ions = bool(np.any(np.asarray(ion["a_totals"]) > 0)
                     or np.any(np.asarray(ion["c_totals"]) > 0))  # fmt: skip
+    if ion_flux not in ION_FLUXES:
+        raise ValueError(f"ion_flux {ion_flux!r}: one of {ION_FLUXES}")
     if vint is None:
         vint = bool(oc.any() or np.any(np.asarray(batch["R_series"]) > 0))
     if recycle is not None:
@@ -456,7 +469,7 @@ def solve_transient(batch, tvg: TVG | list[TVG], tol=1e-10, max_iter=200, bernou
         J, J_ext, V_int, V_ext, ok, its, columns, kept, stop, prof = _solve_batch(
             batch, t, V, jnp.asarray(oc, dtype=float), G, track, ctl, recycle, tol, max_iter,
             bernoulli_name, bool(ions), bool(vint), bool(zimt_ion_currents),
-            bool(zimt_current), bool(profiles),
+            bool(zimt_current), bool(profiles), ion_flux == "modified-drift",
         )  # fmt: skip
     out = (lambda a: a) if traced else np.asarray
     xp = jnp if traced else np

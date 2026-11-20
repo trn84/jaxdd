@@ -1,0 +1,4 @@
+ChargeTransport 1.10.0, CA = 1.0e24, NA = 1.0e25, STAT = boltzmann, CN = 1.0e24, CP = 1.0e24, FLUX = modified-drift
+vacancy energy E_a = -4.439017112839203 eV
+mean vacancy density = 1.0000000000000196e24 m^-3
+nodes = 275, smallest interval = 9.999999999999428e-11 m

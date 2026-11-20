@@ -1172,6 +1172,34 @@ def _excess(ln_n, inv):
     return -jnp.log1p(-jnp.minimum(jnp.exp(ln_n) * inv, EXCESS_SHARE_CAP))
 
 
+#: Below this difference of `ln n` over an interval the modified drift's factor (`_drift_factor`)
+#: is its value at the interval's middle: the difference quotient loses `eps·|w|/Δ` there, the
+#: middle's value `Δ²·η‴/24`, both near 1e-11 here.
+DRIFT_TIE = 1e-5
+
+
+def _drift_factor(ln_l, ln_r, inv_l, inv_r):
+    """The modified drift's factor on an interval between two points of ions bounded by their
+    sites, `g = Δη/Δln n` with `η = ln n + w` (`_excess`; Bessemoulin-Chatard's scheme): the
+    Scharfetter–Gummel flux at a constant mobility with the potential's argument over `g`,
+    `c·(B(x/g)·n₁ − B(−x/g)·n₀)`, is in the continuum `−D·(∇n ± n·(1 − n/N_max)·∇V/V_T)`, the
+    drift modified at a constant diffusivity (ChargeTransport.jl's
+    `DiffusionEnhancedModifiedDrift`). With no flux `Δη = ±x`, the electrochemical potential's
+    steady state. At `Δln n` below `DRIFT_TIE` the value at the middle, `exp(w)` =
+    `1/(1 − n/N_max)`; 1 without sites."""
+    wl, wr = _excess(ln_l, inv_l), _excess(ln_r, inv_r)
+    d = ln_r - ln_l
+    tied = jnp.abs(d) < DRIFT_TIE
+    middle = jnp.exp(_excess(0.5 * (ln_l + ln_r), 0.5 * (inv_l + inv_r)))
+    return jnp.where(tied, middle, 1.0 + (wr - wl) / jnp.where(tied, 1.0, d))
+
+
+#: The mobile ions' fluxes in time (`solve_transient`'s `ion_flux`): down their electrochemical
+#: potential at a constant mobility, or with the drift modified at a constant diffusivity
+#: (`_drift_factor`); without sites both are Scharfetter–Gummel's.
+ION_FLUXES = ("electrochemical", "modified-drift")
+
+
 def _ion_full(full, ion, Vt, B, dti):
     """`full` (NP + 2 × 5: `V, ln n, ln p, ln a, ln c`) with each contact's ion densities where a
     region reaches it, from its neighbour: no flux through the contact's interval (ZimT's
@@ -1244,6 +1272,7 @@ def _assemble_ions(full, s, Vt, g_frac, logs, ion, B=bernoulli):
     s_carriers, _ = _unbounded(s, {}) if "a_inv" in s else (s, None)
     F3, A3, B3, C3, U3 = _assemble(full[:, :3], s_carriers, Vt, g_frac, la, lc, B)
     sites = "a_inv" in ion
+    drift = "drift" in ion  # the modified drift (`_drift_factor`), else the electrochemical flux
     NP = Vm.shape[0]
 
     def grow(m):
@@ -1280,7 +1309,11 @@ def _assemble_ions(full, s, Vt, g_frac, logs, ion, B=bernoulli):
                 # potential, its excess part `w` beside the potential (`_excess`)
                 wl, wc, wr = (_excess(ll, inv[:-2]), _excess(lc_, inv[1:-1]),
                               _excess(lr, inv[2:]))  # fmt: skip
-                xl, xr = xl + sn * (wc - wl), xr + sn * (wr - wc)
+                if drift:  # or the modified drift: the potential's argument over `g`
+                    xl = xl / _drift_factor(ll, lc_, inv[:-2], inv[1:-1])
+                    xr = xr / _drift_factor(lc_, lr, inv[1:-1], inv[2:])
+                else:
+                    xl, xr = xl + sn * (wc - wl), xr + sn * (wr - wc)
             nl, nc, nr = jnp.exp(ll), jnp.exp(lc_), jnp.exp(lr)
             if sn < 0:  # anions, as electrons: F = c·(B(x)·n₁ − B(−x)·n₀)
                 Fl, Fr = cl * (B(xl) * nc - B(-xl) * nl), cr * (B(xr) * nr - B(-xr) * nc)

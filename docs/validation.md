@@ -487,6 +487,16 @@ so that the solver is never the larger error in what is computed from it.
   to 1e-3 but at the ions' fastest motion between 1 µs and 1 ms (1.5e-2 at most, the median
   3e-3, whether jaxdd's grid is 2000 points or 4000), and after 1 ms to 2e-4.
 
+  **The modified drift in time** (`ion_flux="modified-drift"`, docs/model.md): the same steps
+  (1e24 on 1e25 to 1.0 V, 4e24 on 2e25 to 0.6 and 1.0 V) against ChargeTransport's
+  `DiffusionEnhancedModifiedDrift` (`FLUX=modified-drift`): the current to 8.7e-3 at most to
+  1 µs, 1.0e-2 to 1 ms (the medians 1.3e-3–1.8e-3 and 6e-4–1.7e-3) and 2.2e-3 after, the states
+  at 1 µs, 1 ms and 1 s to 1.2–9.5 % in `n` and `p` (the 9.5 % at 1 µs with 1e24 ions, as the
+  electrochemical flux's) and 0.41 mV in the potential. The two references differ by 0.03–0.11
+  of the current to 1 µs and up to 1.0 after (4e24 at 0.6 V, while the ions move); jaxdd's
+  electrochemical flux against the modified drift's reference is 0.13–0.51 off and 21 mV at
+  1 ms, so the comparison tells the two apart.
+
 When jaxdd and SimSS disagree, check SimSS first: its `errJ` at that voltage, its log for "No
 convergence", and a rerun at tight tolerances. The cases where SimSS was wrong so far are all in
 [differences.md](differences.md).
@@ -782,9 +792,9 @@ jaxdd supports (JAX 0.4.31, NumPy 1.26, Python 3.11). The main ones:
 | `test_batch_matches_the_one_device_solver` | `solve_batch` against `solve_jv` |
 | `test_a_dark_scan_with_a_density_far_below_the_floor_converges` | a dark scan with densities far below the convergence floor: every voltage converges, the current monotone and zero at 0 V, SimSS's curve (the extrapolated start, [solver.md](solver.md)) |
 | `test_free_ions_keep_their_number` | the ions' constraint holds to round-off |
-| `tests/test_steric.py` | ions bounded by their sites: Boltzmann's curve to the bit without sites and to 1e-10 with 1e35 m⁻³; at 10–100× the mean density no density above the sites, one electrochemical potential over the layer, the number kept; the start's normalisation; the blocks against autodiff in saturation; batch against one device, frozen against free at the pre-bias; the gradient in `N_max`; a hard device that cycled from Poisson's start converges from Boltzmann's; in time with sites at 1e35 Boltzmann's transient to 1e-9, with 1e26 not; refused below the mean density |
+| `tests/test_steric.py` | ions bounded by their sites: Boltzmann's curve to the bit without sites and to 1e-10 with 1e35 m⁻³; at 10–100× the mean density no density above the sites, one electrochemical potential over the layer, the number kept; the start's normalisation; the blocks against autodiff in saturation; batch against one device, frozen against free at the pre-bias; the gradient in `N_max`; a hard device that cycled from Poisson's start converges from Boltzmann's; in time with sites at 1e35 Boltzmann's transient to 1e-9 with either ion flux, with 1e26 not, the modified drift without sites Boltzmann's to the bit; refused below the mean density |
 | `tests/test_statistics.py` | the carriers' statistics: TeSCA's `F_{1/2}` within 1 % of the integral, its inverse and `w`'s derivative, Blakemore's; the Jacobian with them against autodiff, row by row to 1e-12, a blocking contact's Newton included; Boltzmann's the default; refused at a free end |
-| `tests/test_chargetransport.py` | ions bounded by their sites against ChargeTransport.jl's Ex103 cell (1e24 on 1e25 sites, 4e24 on 2e25, and Ex103's own 1.6e25 on 1e27): equilibrium, dark and lit steady states, the densities, ions, potential and current on its nodes; voltages' steps in time on its times, the current, three states and the steady end; degenerate transport layers with Fermi–Dirac's and Blakemore's statistics, steady and after a voltage's step |
+| `tests/test_chargetransport.py` | ions bounded by their sites against ChargeTransport.jl's Ex103 cell (1e24 on 1e25 sites, 4e24 on 2e25, and Ex103's own 1.6e25 on 1e27): equilibrium, dark and lit steady states, the densities, ions, potential and current on its nodes; voltages' steps in time on its times, the current, three states and the steady end, with the electrochemical flux and the modified drift; degenerate transport layers with Fermi–Dirac's and Blakemore's statistics, steady and after a voltage's step |
 | `test_the_block_sweep_solves_the_block_tridiagonal_system` | the sweep against a dense solve |
 | `test_short_circuit_current_never_exceeds_the_generation` | an invariant |
 | `test_bernoulli_*` | finite value and derivative at 0, `B(−x) = B(x) + x`, SimSS's series within its own error |

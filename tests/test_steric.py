@@ -204,9 +204,11 @@ def test_the_curve_is_differentiable_in_the_sites() -> None:
 
 
 def test_bounded_mobile_ions_in_time_with_far_sites_are_boltzmanns() -> None:
-    """In time the ions' flux is the electrochemical potential's (`solver._excess`): with sites
-    far above their densities (1e35 m⁻³) ZimT's ion case is Boltzmann's transient, to 1e-9 of
-    its current; with 1e26 it is not (ChargeTransport.jl's transients: test_chargetransport)."""
+    """In time the ions' flux is the electrochemical potential's (`solver._excess`) or the
+    modified drift's (`solver._drift_factor`, `ion_flux`): without sites the modified drift is
+    Boltzmann's transient to the bit; with sites far above their densities (1e35 m⁻³) ZimT's ion
+    case is Boltzmann's transient with either, to 1e-9 of its current; with 1e26 neither is, and
+    the two differ (ChargeTransport.jl's transients: test_chargetransport)."""
     from jaxdd.simss_input import read_tvg
     from jaxdd.transient import solve_transient
 
@@ -219,12 +221,21 @@ def test_bounded_mobile_ions_in_time_with_far_sites_are_boltzmanns() -> None:
             for name in [k for k in texts if k.startswith("L") and k.endswith("_parameters.txt")]:
                 texts[name] += f"N_max_anion = {sites}\nN_max_cation = {sites}\n"
         setup = setup_from_texts(texts)
-        r = solve_transient(prepare([_build_device(setup, grid="simss")]), read_tvg(setup))
-        assert np.asarray(r.converged).all(), sites
-        currents[sites] = np.asarray(r.J)[0]
-    scale = np.max(np.abs(currents[None]))
-    assert np.max(np.abs(currents["1e35"] - currents[None])) < 1e-9 * scale
-    assert np.max(np.abs(currents["1e26"] - currents[None])) > 1e-5 * scale
+        batch = prepare([_build_device(setup, grid="simss")])
+        for flux in ("electrochemical", "modified-drift"):
+            r = solve_transient(batch, read_tvg(setup), ion_flux=flux)
+            assert np.asarray(r.converged).all(), (sites, flux)
+            currents[sites, flux] = np.asarray(r.J)[0]
+    boltzmann = currents[None, "electrochemical"]
+    scale = np.max(np.abs(boltzmann))
+    np.testing.assert_array_equal(currents[None, "modified-drift"], boltzmann)
+    for flux in ("electrochemical", "modified-drift"):
+        assert np.max(np.abs(currents["1e35", flux] - boltzmann)) < 1e-9 * scale, flux
+        assert np.max(np.abs(currents["1e26", flux] - boltzmann)) > 1e-5 * scale, flux
+    differ = currents["1e26", "modified-drift"] - currents["1e26", "electrochemical"]
+    assert np.max(np.abs(differ)) > 1e-6 * scale
+    with pytest.raises(ValueError, match="ion_flux"):
+        solve_transient(batch, read_tvg(setup), ion_flux="drift")
 
 
 def test_ions_must_fit_into_their_sites() -> None:

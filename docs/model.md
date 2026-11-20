@@ -98,10 +98,25 @@ own derivative `1/(d ln F/dη) − 1`). Everywhere a density meets its quasi-Fer
   themselves, the traps' occupations over a step (`_trap_step`) take the degenerate `n_t0`,
   `p_t0` as the steady state does, the recycled photons the degenerate `n_i²`, and ZimT's QFLS
   column the excess potentials.
+- **Interface traps** compare each point's capture with its own equilibrium, `n_t0·e^(−w_n)`
+  and `p_t0·e^(−w_p)` at the edge's left and right point (`_interface_degenerate`), and **a free
+  surface's** mid-gap level likewise `n_i·e^(−w_n)`, `n_i·e^(−w_p)` against
+  `n·p − n_i²·e^(−w_n − w_p)` (`_surface_srh`). So in the dark at 0 V a degenerate layer's
+  interface traps and surfaces recombine nothing (`tests/test_statistics.py`; with Boltzmann's
+  `n_t0` there the holes' quasi-Fermi level bent by 1e-4 V and more).
+
+Compiling costs another statistics more than Boltzmann's. Each evaluation of `F_{1/2}⁻¹` is
+five Newton steps on TeSCA's `F`. The assembly therefore takes the excess potentials once per
+state (`stat_cache`, `_cached`), and a contact's Newton on its density (`_robin`) is a loop with
+its body traced once, its derivatives the iteration's. Taking the derivative through the
+converged density alone (the implicit function) failed where the contact had not converged in
+its 12 steps: Newton on the device diverged. With these, one assembly of the degenerate HTL's
+stack compiles in 2.2 s against Boltzmann's 0.8 s (25.8 s before), and a whole steady state in
+74 s against 19 s (440 s). Each evaluation's own Newton steps stay unrolled: as a loop they
+compile in 40 % less time but run 15 % slower.
 
 The implied `V_oc` and the PLQY keep their Boltzmann's definitions (`k·n_i²` the radiative
-equilibrium). Not yet with another statistics, refused by name: a free end, interface traps.
-Against ChargeTransport.jl with degenerate transport layers, in the steady state and in time:
+equilibrium). Against ChargeTransport.jl with degenerate transport layers, in the steady state and in time:
 [validation.md](validation.md).
 
 ## Poisson's equation (`Solve_Poisson`)

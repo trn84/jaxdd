@@ -45,12 +45,28 @@ def test_the_statistics_functions() -> None:
     np.testing.assert_allclose(st.ln_inverse(np.log(u), "blakemore", np), eta_b, atol=1e-9)
 
 
+#: A degenerate HTL (`N_A` 1.5e24 against `N_c` 2.2e24) with charged interface traps towards
+#: the absorber.
+DEGENERATE_HTL = dict(HTL, N_A="1.5e24", N_t_int="1e16")
+#: The cases of `test_the_jacobian_with_a_statistics_is_its_residuals`: a blocking contact, the
+#: degenerate HTL's interface traps, a free end with its surface's recombination.
+JACOBIAN_CASES = {
+    "contact": dict(layers=[HTL, {}], W_L=5.0, W_R=5.4, S=(-1, -1, 0, 0)),
+    "interface traps": dict(layers=[DEGENERATE_HTL, {}], W_L="sfb", W_R=4.275),
+    "free end": dict(layers=[{"N_A": "1.5e24"}], W_L="sfb", W_R="free", S=(-1, -1, 1e2, 1e2)),
+}
+
+
+@pytest.mark.parametrize("case", list(JACOBIAN_CASES))
 @pytest.mark.parametrize("statistics", ["fermi-dirac", "blakemore"])
-def test_the_jacobian_with_a_statistics_is_its_residuals(statistics) -> None:
+def test_the_jacobian_with_a_statistics_is_its_residuals(statistics, case) -> None:
     """`_assemble`'s hand-written blocks (the fluxes' `x` with the excess potentials, a blocking
-    contact's density by Newton) against autodiff of its residual, row by row to 1e-12 of each
-    row's scale, at a perturbed state of the cell with degenerate transport layers."""
-    setup = stack_setup([HTL, {}], W_L=5.0, W_R=5.4, S=(-1, -1, 0, 0), NP=200)
+    contact's density by Newton; interface traps and a free surface by autodiff of their
+    degenerate rates) against autodiff of its residual, row by row to 1e-12 of each row's
+    scale, at a perturbed state of a device with a degenerate layer."""
+    c = JACOBIAN_CASES[case]
+    setup = stack_setup(c["layers"], W_L=c["W_L"], W_R=c["W_R"], S=c.get("S", (-1, -1, -1, -1)),
+                        NP=200)  # fmt: skip
     d = build_device(setup, statistics=statistics)
     s = jax.tree_util.tree_map(jnp.asarray, sv._stencils(d))
     ion = {k: jnp.asarray(v) if isinstance(v, np.ndarray) else v
@@ -67,7 +83,8 @@ def test_the_jacobian_with_a_statistics_is_its_residuals(statistics) -> None:
     logs = sv._ion_logs(jnp.concatenate([bounds[0][:1], y[:, 0], bounds[1][:1]]), ion)
     la, lc = sv._point_logs(logs, ion)
     full = jnp.concatenate([bounds[0][None], y, bounds[1][None]])
-    s = dict(s, ct=dict(s["ct"], branch=sv._contact_branch(full, s, d.Vt, sv.bernoulli)))
+    if "ct" in s:
+        s = dict(s, ct=dict(s["ct"], branch=sv._contact_branch(full, s, d.Vt, sv.bernoulli)))
 
     def residual(yy):
         return sv._assemble(jnp.concatenate([bounds[0][None], yy, bounds[1][None]]), s, d.Vt,
@@ -92,9 +109,50 @@ def test_the_default_statistics_is_boltzmanns() -> None:
     np.testing.assert_array_equal(a.n_left, b.n_left)
 
 
+def test_equilibrium_is_flat_with_interface_traps_and_free_surfaces() -> None:
+    """In the dark at 0 V every rate vanishes at one Fermi level, also where a layer is
+    degenerate (Fermi–Dirac's `F_{1/2}`; Blakemore's takes the same code): the degenerate HTL's
+    interface traps (each point's equilibrium at its own quasi-Fermi level,
+    `solver._interface_degenerate`) and a degenerate film's free surfaces (`_surface_srh`).
+    Each carrier's quasi-Fermi level is flat to 1e-9 V where it is above `n_floor` (below it
+    its logarithm does not converge, nor count) and no current flows. With Boltzmann's `n_t0`,
+    `p_t0` at the interface traps the degenerate holes recombine in equilibrium: the holes'
+    level then bends by 1e-4 V and more."""
+    from jaxdd.batch import prepare, solve_states
+
+    def spread(dev, res):  # each carrier's quasi-Fermi level's spread, above `n_floor`
+        floor = 1e-12 * float(np.max(dev.N_c))
+        V, n, p = (np.asarray(res[k][0, 0]) for k in ("V", "n", "p"))
+        ln_inv = np.log(1.0 / dev.N_c)
+        wn = np.asarray(st.excess(jnp.log(n) + ln_inv, dev.statistics))
+        wp = np.asarray(st.excess(jnp.log(p) + ln_inv, dev.statistics))
+        Efn = -dev.E_c - V + dev.Vt * (np.log(n) + ln_inv + wn)
+        Efp = -dev.E_v - V - dev.Vt * (np.log(p) + ln_inv + wp)
+        out = 0.0
+        for E, dens in ((Efn, n), (Efp, p)):
+            above = dens > floor
+            if above.any():
+                out = max(out, float(np.ptp(E[above])))
+        return out
+
+    devices = {
+        "interface": stack_setup([DEGENERATE_HTL, {}], W_L="sfb", W_R=4.275, G_frac=0),
+        "film": stack_setup([{"N_A": "1.5e24"}], S=(1e2, 1e2, 1e2, 1e2), G_frac=0),
+    }
+    for name, setup in devices.items():
+        dev = build_device(setup, statistics="fermi-dirac")
+        batch = prepare([dev])
+        res = solve_states(batch, [0.0], max_iter=200)
+        assert bool(res["converged"][0, 0]), name
+        assert spread(dev, res) < 1e-9, name
+        if name == "interface":
+            assert abs(float(res["J"][0, 0])) < 1e-9
+            ti = {k: v for k, v in batch["s"]["ti"].items() if k != "stat"}
+            res = solve_states(dict(batch, s=dict(batch["s"], ti=ti)), [0.0], max_iter=200)
+            assert spread(dev, res) > 1e-4
+
+
 def test_what_another_statistics_refuses() -> None:
-    """At a free end: refused by name; an unknown statistics too."""
-    with pytest.raises(NotImplementedError, match="statistics"):
-        build_device(stack_setup([HTL, {}], W_L=5.0), statistics="blakemore")
+    """An unknown statistics."""
     with pytest.raises(ValueError, match="statistics"):
         build_device(stack_setup([HTL, {}], W_L=5.0, W_R=5.4), statistics="gauss")

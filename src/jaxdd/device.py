@@ -146,23 +146,28 @@ GRADED_SMALLEST = 3e-12
 
 
 def _graded_layout(thicknesses: Sequence[str | float], NP: int,
-                   beta: float = GRADED_POINTS_PER_EFOLD, d0: float = GRADED_SMALLEST):  # fmt: skip
+                   beta: float = GRADED_POINTS_PER_EFOLD, d0: float = GRADED_SMALLEST,
+                   contact_d0: tuple[float, float] | None = None):  # fmt: skip
     """`_layout` for a grid graded geometrically towards the ends of every layer: the points'
     density `1/H + β/(d + d0)` from each end (`d` the distance to it, `H` the total thickness
     over `NP`), so that each layer has its uniform share and about `β` points per e-fold of the
     distance to each of its ends, from `d0` on, whatever its thickness. A layer's points beyond
     its first are its share of the density's integral, `L/H + 2β·ln(1 + L/d0)` (at least
     `MIN_GRID_POINTS_PER_LAYER`, where SIMsalabim gives a thin layer that and no more at any
-    `NP`); within it the points equidistribute the integral."""
+    `NP`); within it the points equidistribute the integral. `contact_d0`: the left and right
+    contact's own `d0`, the device's two outer ends (the interfaces keep `d0`)."""
     L = np.array([float(x) for x in thicknesses])
     H = L.sum() / NP
     n_layers = len(L)
+    starts, ends_ = np.full(n_layers, d0), np.full(n_layers, d0)  # each layer's two ends' d0
+    if contact_d0 is not None:
+        starts[0], ends_[-1] = contact_d0
 
-    def integral(x, Lk):  # the density's integral from the layer's start
-        ends = np.log1p(x / d0) + np.log1p(Lk / d0) - np.log1p((Lk - x) / d0)
+    def integral(x, Lk, a, b):  # the density's integral from the layer's start
+        ends = np.log1p(x / a) + np.log1p(Lk / b) - np.log1p((Lk - x) / b)
         return x / H + beta * ends
 
-    weight = np.array([integral(Lk, Lk) for Lk in L])
+    weight = np.array([integral(Lk, Lk, a, b) for Lk, a, b in zip(L, starts, ends_, strict=True)])
     # Each layer holds its count and one point more; the last ends at the grid's last point.
     shares = (NP + 2 - n_layers) * weight / weight.sum()
     counts = np.maximum(MIN_GRID_POINTS_PER_LAYER, np.floor(shares).astype(int))
@@ -185,7 +190,7 @@ def _graded_layout(thicknesses: Sequence[str | float], NP: int,
         lo, hi = np.zeros(m + 1), np.full(m + 1, L[k])
         for _ in range(100):  # bisection: the integral increases
             mid = 0.5 * (lo + hi)
-            below = integral(mid, L[k]) < target
+            below = integral(mid, L[k], starts[k], ends_[k]) < target
             lo, hi = np.where(below, mid, lo), np.where(below, hi, mid)
         u = 0.5 * (lo + hi)
         u[0], u[-1] = 0.0, L[k]
@@ -632,11 +637,6 @@ def device_parameters(
         left_elec=setup.i("leftElec"),
         curr_diff=int(float(setup.raw.get("currDiffInt", "2"))) == 1,
     )  # fmt: skip
-    if statistics != "boltzmann" and (any(structure.free) or structure.int_traps.any()):
-        raise NotImplementedError(
-            f"statistics {statistics!r} with a free end or interface traps: only Boltzmann's "
-            '(docs/model.md, "The carriers\' statistics")'
-        )
     _check_free(setup, structure)
     # SIMsalabim's checks: each work function within its layer's gap.
     for k, ly, sfb in (("W_L", layers[0], structure.sfb[0]), ("W_R", layers[-1], structure.sfb[1])):

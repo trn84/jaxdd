@@ -255,6 +255,9 @@ def _stencils(dev: Device, xp=np) -> dict[str, jnp.ndarray]:
         out["tq"], out["tcwe"] = dev.trap_charge[i], dev.trap_cwe[i]
     if dev.interface is not None:  # on the edges (`Device.interface`), only where there are any
         out["ti"] = dict(dev.interface)
+        if dev.statistics != "boltzmann":  # each edge's two points' 1/N_c (`_interface_edges`)
+            inv = 1.0 / dev.N_c
+            out["ti"]["stat"] = {dev.statistics: (inv[:-1], inv[1:])}
     if dev.surface is not None:  # finite surface recombination at a contact (`Device.surface`)
         out["ct"] = dict(dev.surface)
     if any(dev.free):  # an end without an electrode (`Device.free`)
@@ -511,11 +514,14 @@ def _robin(first, last, z0, zN, s, Vt, B):
         return a * B(turn * xe) * jnp.exp(inner) + S_ * jnp.exp(eq) - (
             a * B(-turn * xe) + S_) * jnp.exp(ln_c)  # fmt: skip
 
-    ln_c = jnp.log(dens)
-    for _ in range(CONTACT_NEWTON_STEPS):
+    def step(_, ln_c):
         r, dr = jax.jvp(residual, (ln_c,), (jnp.ones_like(ln_c),))
-        ln_c = ln_c - r / dr
-    return ln_c, eq
+        return ln_c - r / dr
+
+    # A loop, its body traced once (unrolled, each step's F_{1/2}⁻¹ cost its Newton steps to
+    # compile, in every one of the contacts' derivatives too); its derivatives are the
+    # iteration's, consistent with the density it gives where it has not converged.
+    return jax.lax.fori_loop(0, CONTACT_NEWTON_STEPS, step, jnp.log(dens)), eq
 
 
 def _contact_branch(full, s, Vt, B, held=None):
@@ -608,6 +614,22 @@ def _stat(s):
     return next(iter(s["stat"].items()))
 
 
+@jax.custom_jvp
+def _cached(ln_x, w, dw):
+    """The excess potential as a function of `ln_x` at the one state where it was computed
+    (`_assemble`'s `stat_cache`): its value `w` and its derivative `dw` there. The tangent is
+    `dw` times `ln_x`'s alone: where `w` itself follows the same state (an outer derivative of
+    the assembly), its own tangent is that one again."""
+    del ln_x, dw
+    return w
+
+
+@_cached.defjvp
+def _cached_jvp(primals, tangents):
+    _, w, dw = primals
+    return w, dw * tangents[0]
+
+
 def _carrier_excess(ln_n, ln_p, s):
     """The carriers' excess chemical potentials `(w_n, w_p)` at `ln n`, `ln p`
     (`statistics.excess`), on all `NP + 2` points or the interior ones as the densities are;
@@ -615,6 +637,10 @@ def _carrier_excess(ln_n, ln_p, s):
     kind, inv = _stat(s)
     if kind is None:
         return None
+    cache = s.get("stat_cache")
+    if cache is not None and cache[0].shape == ln_n.shape:  # the assembly's state (`_assemble`)
+        wn, wp, dwn, dwp = cache
+        return _cached(ln_n, wn, dwn), _cached(ln_p, wp, dwp)
     if inv.shape[-1] != ln_n.shape[-1]:
         inv = inv[..., 1:-1]
     ln_inv = jnp.log(inv)
@@ -638,6 +664,8 @@ def _degenerate(s, n, p):
 
     out = {k: v for k, v in s.items() if k != "stat"}
     out.update(ni2=s["ni2"] * gn * gp, nt0=levels(s["nt0"], gn), pt0=levels(s["pt0"], gp))
+    if "fs_ni" in s:  # a free surface's mid-gap level (`_surface_srh`)
+        out.update(fs_n1=s["fs_ni"] * gn, fs_p1=s["fs_ni"] * gp, fs_ni2=s["fs_ni"] ** 2 * gn * gp)
     return out
 
 
@@ -703,6 +731,10 @@ def _surface_srh(n, p, s):
     every other point and where both velocities are 0."""
     Sn, Sp, ni = s["fs_n"], s["fs_p"], s["fs_ni"]
     num = Sn * Sp
+    if "fs_n1" in s:  # another statistics (`_degenerate`): the level's and the gap's equilibrium
+        # at the point's own quasi-Fermi levels
+        den = Sn * (n + s["fs_n1"]) + Sp * (p + s["fs_p1"])
+        return s["fs_k"] * num * (n * p - s["fs_ni2"]) / jnp.where(num > 0, den, 1.0)
     den = Sn * (n + ni) + Sp * (p + ni)
     return s["fs_k"] * num * (n * p - ni**2) / jnp.where(num > 0, den, 1.0)
 
@@ -720,12 +752,54 @@ def _trap_charge(n, p, s):
     return _summed(s["tq"], jnp.where(q, s["tq"] * (s["tcwe"] - f), 0.0), n)
 
 
-def _interface_edges(nL, nR, pL, pR, ti):
+def _interface_factors(dens, ti):
+    """Each point's `e^(−w)` at the density `dens` (on the full grid) under the interface traps'
+    statistics (`ti["stat"]`), and its derivative in `ln dens`: one evaluation per point, which
+    `_interface_terms` passes to every edge's derivative."""
+    ((kind, (inv_lo, inv_hi)),) = ti["stat"].items()
+    ln_inv = jnp.log(jnp.concatenate([inv_lo, inv_hi[-1:]]))
+
+    def g(ln_d):
+        return jnp.exp(-carrier_statistics.excess(ln_d + ln_inv, kind))
+
+    ln_d = jnp.log(dens)
+    return jax.jvp(g, (ln_d,), (jnp.ones_like(ln_d),))
+
+
+def _interface_degenerate(ti, nL, nR, pL, pR, factors=None):
+    """`ti` with each point's equilibrium densities at its own quasi-Fermi level under another
+    statistics (`ti["stat"]`, as `_degenerate` the bulk traps'): `n_t0·e^(−w_n)` and
+    `p_t0·e^(−w_p)` of the edge's left point (`_lo`) and right one (`_hi`), from the densities
+    themselves so that a derivative in them sees it, or from `factors` (`e^(−w)` of `nL`, `nR`,
+    `pL`, `pR`, which then carry the derivative); without `stat`."""
+    if "stat" not in ti:
+        return ti
+    ((kind, (inv_lo, inv_hi)),) = ti["stat"].items()
+
+    def g(dens, inv):  # e^(−w)
+        return jnp.exp(-carrier_statistics.excess(jnp.log(dens) + jnp.log(inv), kind))
+
+    if factors is None:
+        factors = (g(nL, inv_lo), g(nR, inv_hi), g(pL, inv_lo), g(pR, inv_hi))
+
+    def levels(a, f):
+        return a * (f[..., None] if jnp.ndim(a) > jnp.ndim(f) else f)
+
+    out = {k: v for k, v in ti.items() if k != "stat"}
+    for key, factor in zip(("nt0_lo", "nt0_hi", "pt0_lo", "pt0_hi"), factors, strict=True):
+        out[key] = levels(ti[key], factor)
+    return out
+
+
+def _interface_edges(nL, nR, pL, pR, ti, factors=None):
     """Interface traps on each edge (`Device.interface`) from the densities at its left (`L`) and
     right (`R`) point: `(Rn_L, Rn_R, Rp_L, Rp_R, Q)`, each carrier's net capture at either point
     (m⁻³ s⁻¹) and the traps' charge density at both (m⁻³, positive). SIMsalabim's
     `Calc_Recombination_n/p` and `Calc_Trap_Filling_Charge`, steady state: the traps' occupancy
-    from both points' densities, each point capturing from its own; zero where there are none."""
+    from both points' densities, each point capturing from its own; zero where there are none.
+    Another statistics: each point's equilibrium at its own quasi-Fermi level
+    (`_interface_degenerate`; `factors` its `e^(−w)`)."""
+    ti = _interface_degenerate(ti, nL, nR, pL, pR, factors)
     Nt = ti["Nt"]
     like = nL
     nL, nR, pL, pR, Cn, Cp, iw, charge, cwe = _per_level(
@@ -759,6 +833,7 @@ def _interface_edges(nL, nR, pL, pR, ti):
 def _interface_occupation(n, p, ti):
     """The interface traps' occupation at the end of a time step (`_trap_step`), on the edges of
     the full grid (`n`, `p` there), like `ti["Nt"]`."""
+    ti = _interface_degenerate(ti, n[:-1], n[1:], p[:-1], p[1:])
     Nt = ti["Nt"]
     nL, nR, pL, pR, Cn, Cp, dti = _per_level(Nt, n[:-1], n[1:], p[:-1], p[1:], ti["Cn"],
                                              ti["Cp"], ti["dti"])  # fmt: skip
@@ -782,15 +857,29 @@ def _interface_terms(n, p, ti):
     """The interface traps' `(Q, Rn, Rp)` on the interior points (3 × NP) and their derivatives
     in `(ln n, ln p)` (3 × NP × 2) of the point itself, the next and the one before."""
     args = (n[:-1], n[1:], p[:-1], p[1:])
-
-    def f(*a):
-        return jnp.stack(_interface_edges(*a, ti))
-
     z = jnp.zeros_like(args[0])
+    if "stat" in ti:  # another statistics: each point's `e^(−w)` once, its derivative with it
+        (gn, dgn), (gp, dgp) = _interface_factors(n, ti), _interface_factors(p, ti)
+        factors = (gn[:-1], gn[1:], gp[:-1], gp[1:])
+        dfactors = (dgn[:-1], dgn[1:], dgp[:-1], dgp[1:])
+
+        def f(*a):
+            return jnp.stack(_interface_edges(*a[:4], ti, a[4:]))
+
+        args = args + factors
+        tangent = [
+            tuple(a if k == j else z for k, a in enumerate(args[:4]))
+            + tuple(dfactors[j] if k == j else z for k in range(4))
+            for j in range(4)
+        ]
+    else:
+
+        def f(*a):
+            return jnp.stack(_interface_edges(*a, ti))
+
+        tangent = [tuple(a if k == j else z for k, a in enumerate(args)) for j in range(4)]
     value = f(*args)
-    d_nL, d_nR, d_pL, d_pR = (
-        jax.jvp(f, args, tuple(a if k == j else z for k, a in enumerate(args)))[1] for j in range(4)
-    )
+    d_nL, d_nR, d_pL, d_pR = (jax.jvp(f, args, t)[1] for t in tangent)
     lo, hi = (
         np.array([4, 0, 2]),
         np.array([4, 1, 3]),
@@ -945,6 +1034,9 @@ def _assemble(full, s, Vt, g_frac, la, lc, B=bernoulli):
                                        (jnp.ones_like(ln_n), jnp.ones_like(ln_p)))  # fmt: skip
         xn = xn - jnp.diff(wn)
         xp = xp + jnp.diff(wp)
+        # every rate at the interior points the same state's: its excess potentials once
+        # (`_carrier_excess`; each evaluation of F_{1/2}⁻¹ costs its Newton steps to compile)
+        s = dict(s, stat_cache=(wn[1:-1], wp[1:-1], dwn[1:-1], dwp[1:-1]))
     dlog_n = dlog_p = 0.0
     if "fn_m" in s:  # each interval's mobility in its own field, and its derivative in ΔV
         kn, kp = _edge_k(s)

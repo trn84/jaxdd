@@ -38,7 +38,10 @@ the API, and says so here.
   compare with the equilibrium at the point's own quasi-Fermi levels (docs/model.md). Against
   ChargeTransport.jl with degenerate transport layers to 2 % in the densities, 0.5 mV and 1.3e-3
   in the current, and in time (`solve_transient`) after a voltage's step to 4.5e-3 in the
-  current. A free end and interface traps refuse another statistics by name.
+  current. Interface traps and free surfaces compare with each point's own equilibrium, so a
+  degenerate layer's recombine nothing at a flat Fermi level. A steady state with `F_{1/2}`
+  compiles in a sixth of the time it took (a contact's Newton on its density as a loop, the
+  assembly's excess potentials once).
 
 ### Fixed
 

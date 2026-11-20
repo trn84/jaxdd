@@ -51,12 +51,11 @@ about two A100s).
   explained by SnO2 traps, a dipole (the same as SnO2's band edge) or photon recycling.
   **Done when** that decay is within the others' misfit with every parameter inside its bounds,
   or its misfit is traced to the measurement.
-- **Fermi–Dirac statistics, the rest.** The steady state has Blakemore's and `F_{1/2}`
-  (docs/model.md, "The carriers' statistics"), against ChargeTransport.jl; refused still: a
-  transient, a free end, interface traps. And a blocking contact's accumulation on the graded
+- **Fermi–Dirac statistics, the rest.** The steady state and the transient have Blakemore's and
+  `F_{1/2}` (docs/model.md, "The carriers' statistics"), against ChargeTransport.jl; refused still: a free end, interface traps. And a blocking contact's accumulation on the graded
   grid: with `F_{1/2}` `tests/test_free_surface.py`'s stack converges to −0.5 V on SIMsalabim's
   grid but stalls beyond −0.2 V on the graded one at a round-off floor of 1e-3–1e-2 (its 1 pm
-  intervals at the contact; docs/solver.md, "A floor above 1e-6"). **Done when** the three are
+  intervals at the contact; docs/solver.md, "A floor above 1e-6"). **Done when** the two are
   solved with another statistics, and that stack converges at `W_R` 5.4 eV and −0.5 V on the
   graded grid (a smallest interval no smaller than a Debye length, say).
 - **Impedance in the frequency domain**, from the steady state's Jacobian

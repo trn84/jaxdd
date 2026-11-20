@@ -446,6 +446,23 @@ so that the solver is never the larger error in what is computed from it.
   and 1.4–10 mV off, its current 9e-3 at 1.0 V. Lit at 0.9 V the batch's Newton does not converge
   from 0 V in one step in this cell, with any statistics; through 0.3 and 0.6 V it does.
 
+  In time, the step from equilibrium to 1.0 V in the dark (the vacancies at 1e-12 m²/Vs, 100 s on
+  ChargeTransport's 122 times, `tstep:dark:1.0`), with 1e-4 of the perovskite's traps at the same
+  lifetimes (below): the current to 2.2e-2 of itself in the first nanosecond (the field's
+  relaxation over the grids), 5e-3 to 1 µs, 8e-4 to 1 ms and 4.5e-3 after while the ions move,
+  1.2e-3 at the end, the same with both statistics; the states at 1 µs, 1 ms and 1 s, `n` and `p`
+  to 1.8 %, the potential to 0.5 mV. With the cell's own 1e21 m⁻³ of traps the current and the
+  potential are as close, but at 1 ms the electrons in the half of the perovskite where the
+  vacancies pile up are 4 orders below the reference's (9.6 in `ln n`), with Boltzmann's
+  statistics in both codes too, whether jaxdd's grid is 2000 points or 4000 and
+  ChargeTransport's 275 nodes or 1327: there the holes are the minority, 7e14 m⁻³, the
+  recombination is theirs whatever the electrons, and the electrons arrive from the ETL through
+  a layer of 1e23 m⁻³ of holes. jaxdd carries the traps' occupation in time as ZimT does
+  (`_trap_step`), and 1e21 m⁻³ of them take a millisecond to fill with those electrons;
+  ChargeTransport's SRH takes the occupation as the densities' at every instant (its lifetimes
+  only). With 1e17 of them at the same lifetimes they hold nothing and the two agree; their
+  difference is the model's, not the statistics'.
+
   Three things the reference needed: ChargeTransport rounds the vacancies' energy to 0.1 meV
   and stops at 1e-4 of their mean, and 4e-5 of 4e24 m⁻³ too many moved the potential by 1.5 mV
   (the energy refined by secants to the number to 1e-12); its equilibrium solve does not converge
@@ -766,8 +783,8 @@ jaxdd supports (JAX 0.4.31, NumPy 1.26, Python 3.11). The main ones:
 | `test_a_dark_scan_with_a_density_far_below_the_floor_converges` | a dark scan with densities far below the convergence floor: every voltage converges, the current monotone and zero at 0 V, SimSS's curve (the extrapolated start, [solver.md](solver.md)) |
 | `test_free_ions_keep_their_number` | the ions' constraint holds to round-off |
 | `tests/test_steric.py` | ions bounded by their sites: Boltzmann's curve to the bit without sites and to 1e-10 with 1e35 m⁻³; at 10–100× the mean density no density above the sites, one electrochemical potential over the layer, the number kept; the start's normalisation; the blocks against autodiff in saturation; batch against one device, frozen against free at the pre-bias; the gradient in `N_max`; a hard device that cycled from Poisson's start converges from Boltzmann's; in time with sites at 1e35 Boltzmann's transient to 1e-9, with 1e26 not; refused below the mean density |
-| `tests/test_statistics.py` | the carriers' statistics: TeSCA's `F_{1/2}` within 1 % of the integral, its inverse and `w`'s derivative, Blakemore's; the Jacobian with them against autodiff, row by row to 1e-12, a blocking contact's Newton included; Boltzmann's the default; refused in time and at a free end |
-| `tests/test_chargetransport.py` | ions bounded by their sites against ChargeTransport.jl's Ex103 cell (1e24 on 1e25 sites, 4e24 on 2e25, and Ex103's own 1.6e25 on 1e27): equilibrium, dark and lit steady states, the densities, ions, potential and current on its nodes; voltages' steps in time on its times, the current, three states and the steady end; degenerate transport layers with Fermi–Dirac's and Blakemore's statistics |
+| `tests/test_statistics.py` | the carriers' statistics: TeSCA's `F_{1/2}` within 1 % of the integral, its inverse and `w`'s derivative, Blakemore's; the Jacobian with them against autodiff, row by row to 1e-12, a blocking contact's Newton included; Boltzmann's the default; refused at a free end |
+| `tests/test_chargetransport.py` | ions bounded by their sites against ChargeTransport.jl's Ex103 cell (1e24 on 1e25 sites, 4e24 on 2e25, and Ex103's own 1.6e25 on 1e27): equilibrium, dark and lit steady states, the densities, ions, potential and current on its nodes; voltages' steps in time on its times, the current, three states and the steady end; degenerate transport layers with Fermi–Dirac's and Blakemore's statistics, steady and after a voltage's step |
 | `test_the_block_sweep_solves_the_block_tridiagonal_system` | the sweep against a dense solve |
 | `test_short_circuit_current_never_exceeds_the_generation` | an invariant |
 | `test_bernoulli_*` | finite value and derivative at 0, `B(−x) = B(x) + x`, SimSS's series within its own error |

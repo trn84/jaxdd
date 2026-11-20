@@ -94,10 +94,15 @@ own derivative `1/(d ln F/dη) − 1`). Everywhere a density meets its quasi-Fer
   so that every rate vanishes at a flat Fermi level.
 - **The current** (both forms) takes the generalised potentials with `∓V_T·w`, and the QFLS
   `V_T·(ln(n·p/n_i²) + w_n + w_p)`.
+- **In time** (`solve_transient`) nothing else: implicit Euler's `n − n_prev` is in the densities
+  themselves, the traps' occupations over a step (`_trap_step`) take the degenerate `n_t0`,
+  `p_t0` as the steady state does, the recycled photons the degenerate `n_i²`, and ZimT's QFLS
+  column the excess potentials.
 
 The implied `V_oc` and the PLQY keep their Boltzmann's definitions (`k·n_i²` the radiative
-equilibrium). Not yet with another statistics, refused by name: a transient, a free end, interface
-traps. Against ChargeTransport.jl with degenerate transport layers: [validation.md](validation.md).
+equilibrium). Not yet with another statistics, refused by name: a free end, interface traps.
+Against ChargeTransport.jl with degenerate transport layers, in the steady state and in time:
+[validation.md](validation.md).
 
 ## Poisson's equation (`Solve_Poisson`)
 

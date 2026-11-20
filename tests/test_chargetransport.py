@@ -25,14 +25,26 @@ E_C = (4.0, 3.7, 3.4)
 CASES = {"dark": (-0.3, -0.2, -0.1, 0.0, 0.6, 1.0), "light": (0.0, 0.9)}
 
 
-def device(ions, sites, G_frac, mu=None, doping=None, statistics="boltzmann"):
+#: The perovskite's bulk traps (SIMsalabim's L2.txt): ChargeTransport.jl's SRH lifetimes,
+#: `τ_n = 1/(N_t·C_n)` = 3 ns and `τ_p` = 300 ns.
+TRAPS = (1e21, 1 / (1e21 * 3e-9), 1 / (1e21 * 3e-7))
+
+
+def device(ions, sites, G_frac, mu=None, doping=None, statistics="boltzmann", trap_share=1.0):
     """The cell with `ions` on `sites` in the perovskite; `doping` the transport layers' (the
-    ETL's donors and the HTL's acceptors, else 1e24 m⁻³), `statistics` the carriers'."""
+    ETL's donors and the HTL's acceptors, else 1e24 m⁻³), `statistics` the carriers'.
+    `trap_share`: that share of the perovskite's traps at the same lifetimes (their capture
+    coefficients over it), so that what they hold in time is that share."""
     files = {name: (DATA / name).read_text() for name in ("L1.txt", "L2.txt", "L3.txt")}
     changes = [("L2.txt", "N_anion", ions), ("L2.txt", "N_cation", ions),
                ("L2.txt", "N_max_cation", sites)]  # fmt: skip
     if mu is not None:
         changes.append(("L2.txt", "mu_cation", mu))
+    if trap_share != 1.0:
+        Nt, Cn, Cp = TRAPS
+        changes += [("L2.txt", "N_t_bulk", Nt * trap_share),
+                    ("L2.txt", "C_n_bulk", Cn / trap_share),
+                    ("L2.txt", "C_p_bulk", Cp / trap_share)]  # fmt: skip
     if doping is not None:
         changes += [("L1.txt", "N_D", doping), ("L3.txt", "N_A", doping)]
     for name, key, value in changes:
@@ -203,3 +215,40 @@ def test_degenerate_transport_layers_are_chargetransport_jl(statistics) -> None:
         st = solve_states(prepare([d]), [1.0], max_iter=200)
         dens, dV = worst(d, st, 0, reference(name, "dark_1.0")[1])
         assert dens > 0.05 and dV > 5e-3
+
+
+@pytest.mark.parametrize("statistics", ["fermi-dirac", "blakemore"])
+def test_transients_with_another_statistics_are_chargetransport_jl(statistics) -> None:
+    """The degenerate cell's voltage step from equilibrium to 1.0 V in the dark (the vacancies
+    at 1e-12 m²/Vs, 100 s on ChargeTransport's 122 times), each statistics against
+    ChargeTransport.jl's own: the current to 3e-2 of itself to 1 µs (the field's relaxation over
+    the grids, 2.2e-2 at most), 2e-3 to 1 ms and 6e-3 after (4.5e-3, as the ions move); the
+    states at 1e-6, 1e-3 and 1 s, `ln n`, `ln p` to 0.03, the potential to 1 mV; the end the
+    steady state (`solve_states`). With 1e-4 of the traps at the same lifetimes: the reference's
+    SRH takes the traps' occupation as the densities' at every instant (lifetimes only), jaxdd's
+    carries it in time as ZimT's, and 1e21 m⁻³ of them fill with electrons for a millisecond in
+    the half of the perovskite where the vacancies pile up: its electrons there 4 orders below
+    the reference's at 1 ms, Boltzmann's statistics alike (docs/validation.md)."""
+    name = f"degenerate_{statistics}"
+    ref = np.genfromtxt(DATA / name / "tstep_dark_1.0_J.csv", delimiter=",", names=True)
+    t = np.concatenate([[0.0], ref["t"]])
+    n = len(t)
+    tvg = TVG(t=t, Vext=np.concatenate([[0.0], np.full(n - 1, 1.0)]), oc=np.zeros(n, bool),
+              G_frac=np.zeros(n), track=np.zeros(n, int),
+              dti=np.concatenate([[0.0], 1.0 / np.diff(t)]))  # fmt: skip
+    d = device(1e24, 1e25, 0.0, mu=1e-12, doping=3e25, statistics=statistics, trap_share=1e-4)
+    r = solve_transient(prepare([d]), [tvg], profiles=True)
+    assert np.asarray(r.converged).all()
+    J = np.asarray(r.J)[0, 1:]
+    rel = np.abs(J - ref["J"]) / np.abs(ref["J"])
+    for lo, hi, tol in ((0.0, 1e-6, 3e-2), (1e-6, 1e-3, 2e-3), (1e-3, np.inf, 6e-3)):
+        m = (ref["t"] > lo) & (ref["t"] <= hi)
+        assert rel[m].max() < tol, (lo, hi, rel[m].max())
+    steady = solve_states(prepare([d]), [0.0, 0.6, 1.0], max_iter=200)
+    assert J[-1] == pytest.approx(float(steady["J"][0, -1]), rel=1e-6)
+    for j in (1, 2, 3):
+        tj = float((DATA / name / f"tstep_dark_1.0_at{j}_t.txt").read_text())
+        k = int(np.argmin(np.abs(t - tj)))
+        state = {key: np.asarray(r.profiles[key])[:, k][:, None] for key in ("V", "n", "p")}
+        dens, dV = worst(d, state, 0, reference(name, f"tstep_dark_1.0_at{j}")[1])
+        assert dens < 0.03 and dV < 1e-3, (j, dens, dV)

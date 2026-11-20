@@ -50,6 +50,8 @@ from jaxdd.solver import (
     ION_LOG_CAP,
     STEP_CAPS,
     _bulk_occupation,
+    _carrier_excess,
+    _degenerate,
     _free_ends,
     _interface_occupation,
     _ion_full,
@@ -122,7 +124,11 @@ def _columns(d, parts, points, J, J_ext):
         return Q * average(interior(v)) * ((last - first) @ x)
 
     V, n, p = points["V"], points["n"], points["p"]
-    qfls = d["Vt"] * (jnp.log(n) + jnp.log(p) - 2 * jnp.log(d["ni"]))
+    qfls = jnp.log(n) + jnp.log(p) - 2 * jnp.log(d["ni"])
+    w = _carrier_excess(jnp.log(n), jnp.log(p), d["rec"])
+    if w is not None:  # another statistics: the excess potentials' part (`solve_states`)
+        qfls = qfls + w[0] + w[1]
+    qfls = d["Vt"] * qfls
     h_end = last @ jnp.concatenate([h, jnp.zeros(x.shape[0] - h.shape[0])])
     next_ = jnp.roll(last, 1, axis=1)
 
@@ -264,7 +270,8 @@ def _solve_one(d, t, V, oc, G_frac, track, ctl, recycle, B, tol, max_iter, ions,
         s_k = _time_terms(s, before, dti_k, fb, fi if traps else None)
         if recycle is not None:
             n_b, p_b = jnp.exp(before[1:-1, 1]), jnp.exp(before[1:-1, 2])
-            emitted = s["kd"] * (n_b * p_b - s["ni2"]) * vol  # per area of each volume
+            ni2 = _degenerate(s, n_b, p_b)["ni2"]  # another statistics' equilibrium
+            emitted = s["kd"] * (n_b * p_b - ni2) * vol  # per area of each volume
             # none into a steady state (the first step, a return to t = 0)
             s_k = dict(s_k, G_rec=jnp.where(dti_k > 0, (recycle @ emitted) / vol, 0.0))
         pad = jnp.zeros_like(fb[:1])
@@ -436,11 +443,6 @@ def solve_transient(batch, tvg: TVG | list[TVG], tol=1e-10, max_iter=200, bernou
         ion = batch["ion"]
         ions = bool(np.any(np.asarray(ion["a_totals"]) > 0)
                     or np.any(np.asarray(ion["c_totals"]) > 0))  # fmt: skip
-    if "stat" in batch["s"]:
-        raise NotImplementedError(
-            "a carriers' statistics other than Boltzmann's in time: the steady state only "
-            '(docs/model.md, "The carriers\' statistics")'
-        )
     if vint is None:
         vint = bool(oc.any() or np.any(np.asarray(batch["R_series"]) > 0))
     if recycle is not None:

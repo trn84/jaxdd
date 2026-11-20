@@ -10,7 +10,6 @@ from scipy import integrate
 
 import jaxdd.solver as sv
 from jaxdd import statistics as st
-from jaxdd.batch import prepare
 from jaxdd.device import build_device
 from test_chargetransport import device
 from test_free_surface import HTL, stack_setup
@@ -94,16 +93,7 @@ def test_the_default_statistics_is_boltzmanns() -> None:
 
 
 def test_what_another_statistics_refuses() -> None:
-    """In time, at a free end: refused by name."""
-    from jaxdd.simss_input import TVG
-    from jaxdd.transient import solve_transient
-
-    d = device(1e24, 1e25, 0.0, doping=3e25, statistics="fermi-dirac")
-    t = np.array([0.0, 1e-9])
-    tvg = TVG(t=t, Vext=np.zeros(2), oc=np.zeros(2, bool), G_frac=np.zeros(2),
-              track=np.zeros(2, int), dti=np.array([0.0, 1e9]))  # fmt: skip
-    with pytest.raises(NotImplementedError, match="statistics"):
-        solve_transient(prepare([d]), tvg)
+    """At a free end: refused by name; an unknown statistics too."""
     with pytest.raises(NotImplementedError, match="statistics"):
         build_device(stack_setup([HTL, {}], W_L=5.0), statistics="blakemore")
     with pytest.raises(ValueError, match="statistics"):

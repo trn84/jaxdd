@@ -24,4 +24,5 @@ order −1 (docs/validation.md, "Ions bounded by their sites, against ChargeTran
   `_at1`–`_at3` the states nearest 1 µs, 1 ms and 1 s (`_t.txt` their times).
 - `degenerate_fermi-dirac/`, `degenerate_blakemore/`: the cell with its transport layers doped
   3e25 m⁻³ (`CN=3e25 CP=3e25 CA=1e24 NA=1e25`) and the carriers' statistics `STAT=fermi-dirac`
-  (TeSCA's `F_{1/2}`) or `STAT=blakemore`: eq, dark:0.6, dark:1.0, light:0.0, light:0.9.
+  (TeSCA's `F_{1/2}`) or `STAT=blakemore`: eq, dark:0.6, dark:1.0, light:0.0, light:0.9 and
+  tstep:dark:1.0.

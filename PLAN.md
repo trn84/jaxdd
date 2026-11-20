@@ -30,14 +30,6 @@ as a hand-written HIP kernel beside JAX.
 criteria, at a throughput worth the cards (four MI50 are, for this bandwidth-bound FP64 solver,
 about two A100s).
 
-### 2.2 The posterior of the TRPL fit with saturable SnO2 interface states (a hub run)
-
-The fit of [3, TRPL](#3-later) (`trpl_joint.py ... --absorbed --neutral-interface --physical
---ec-min 4`, 26 parameters, 0.091 decades) has no posterior yet; the one in docs/validation.md is the
-outcoupling fit's. On the hub: `STEPS=trpl TRPL_SEEDS="4 5" TRPL_ARGS="--neutral --walkers 256
---steps 1000 --every 25" UPLOAD=... benchmarks/apptainer.sh`, about five hours per chain on an
-A100. **Done when** both chains agree and their summary is in docs/validation.md.
-
 ## 3 Later
 
 - **Ions bounded by their sites in time.** The steady state has them (docs/model.md), a

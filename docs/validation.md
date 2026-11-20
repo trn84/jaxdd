@@ -606,6 +606,43 @@ fit with the neutral states takes 4.07 eV and comes to 0.091 decades, the SnO2 s
 3e10 cm⁻² states of slow electron capture (`C_n` 1.5e-18 m³/s), and the far side's reflection at
 1. This is the fit `trpl_sample.py --outcoupling --neutral` samples.
 
+**The posterior with the saturable states** (`trpl_sample.py --outcoupling --neutral`, 26
+parameters, 256 walkers, 1000 steps, two chains on the hub's two A100s, 5.2 and 5.3 h; σ 0.091
+decades, autocorrelation 70–82 steps, acceptance 4 %). The chains start further out than the
+outcoupling fit's (median log-probability −695 and −552 over the first 100 steps, theirs −256
+and −260) and are still coming in at the end (the median rises by about 2 between steps 700 and
+1000, where the outcoupling chains were flat from 600), so steps 600–1000 are kept (204 800
+samples): against those kept from step 333 the medians move by at most 0.13 half-widths and the
+widths by at most 11 %, but the interface states' `N_t` and `C_n` widen from 0.40 to 0.49 and
+0.55 decades (kept from 333, 600, 800), and theirs are a lower bound. The two chains agree in
+every median within 0.19 half-widths and every half-width within 36 % (`N_t`, `C_n`; the others
+within 20 %), 4200 independent samples between them. Median and 16–84 %, both chains:
+
+| | with the saturable states | with outcoupling (above) | Kober-Czerny et al. |
+|---|---|---|---|
+| mobility FAPbI3 | 42 (36–48) cm²/Vs | 30.5 (26–34) | 0.41 (film), 2.2 (SnO2 stack) |
+| k_rad | 1.37 (1.19–1.60)·10⁻¹⁰ cm³/s | 1.06 (1.01–1.12)·10⁻¹⁰ | 0.75·10⁻¹⁰ |
+| photodoping | 2.1 (1.9–2.3)·10¹⁵ cm⁻³ | 1.3 (1.2–1.4)·10¹⁵ | 2.1·10¹⁵ |
+| SRV FAPbI3/Spiro | 53 (38–79) cm/s | 28 (15–47) | 100 (60–120) |
+| SRV glass/FAPbI3 | 10 (7–13) cm/s | 0.04 (0.003–0.45) | 7.2 |
+| SRV FAPbI3/air | 1.3·10⁻³ cm/s, at its lower bound | 0.03 (0.003–0.24) | 3.6 |
+| SRV SnO2/FAPbI3 | 8.2 (6.3–9.5)·10⁴ cm/s, at its upper bound | at its upper bound | 9 (4–17) |
+| absorption at 806 nm | 3.0 (2.4–3.7)·10⁴ cm⁻¹ | 3.7 (2.9–4.4)·10⁴ | 4.4–6.2·10⁴ (ellipsometry) |
+| absorbed share, glass side / top | 0.93 (0.84–0.98) / 0.55 (0.49–0.59) | – | – |
+| interface states `N_t` | 2.4 (0.6–5.5)·10¹⁰ cm⁻² | – | – |
+| their `C_n` | 2.1 (0.8–8.4)·10⁻¹⁸ m³/s | – | – |
+| boost, reach | 50 (26–82), 46 (27–73) nm | 41 (19–74), 48 (29–78) nm | – |
+
+SnO2's band edge takes 4.08 (4.07–4.09) eV and its doping its upper bound (3·10¹⁹ cm⁻³) in 93 %
+of the samples, the two −0.99 correlated; the interface's SRV sits at its bound in four fifths.
+The film's surfaces, undetermined with outcoupling alone, are now settled: the glass side near
+the authors' 7.2 cm/s, the air side at its bound, −1.00 correlated with the top side's absorbed
+share (the same loss of the early carriers). `N_t` and `C_n` are −0.95 correlated (their product
+the capture rate), the states' level spans 4.72–5.12 eV. Spiro's doping and mobility and the far
+side's reflection stay the prior's. The photodoping comes to the authors' value, `k_rad` rises a
+third and the mobility to just above the 27–40 cm²/Vs the authors cite from OPTP; SnO2's
+two bounds and the air side's still carry the fit.
+
 **The posterior with outcoupling** (`trpl_sample.py --outcoupling`, 21 parameters, 256 walkers,
 1000 steps on an A100, two chains of 4.5–4.8 h; σ 0.119 decades, autocorrelation about 70
 steps, acceptance 5 %). The two chains agree in every median within a tenth of its width:

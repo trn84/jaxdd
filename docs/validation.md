@@ -435,6 +435,17 @@ so that the solver is never the larger error in what is computed from it.
   to 0.1 % (their peak 2.78e25 against 2.78e25 in equilibrium), `n` and `p` to 0.1–3 %, the
   potential to 0.8 mV, the current to 2e-5–4e-4.
 
+  **The carriers' statistics** (2026-11-20, docs/model.md): the same cell with its transport
+  layers doped 3e25 m⁻³ against their `N_c` of 5e25 (degenerate, the Fermi level 0.3 eV within
+  the band; 1e24 vacancies on 1e25 sites), each statistics against ChargeTransport.jl's own
+  (`STAT=fermi-dirac`, its TeSCA `F_{1/2}`, and `STAT=blakemore`): in equilibrium, dark at 0.6 and
+  1.0 V and lit at 0 and 0.9 V, `n` and `p` to 0.04–2.3 % (the transport layers' majority
+  carriers to 0.5 %), the potential to 0.5 mV, the current to 2e-5–1.3e-3 of itself (dark at 1.0
+  V 2.1024 against 2.1050 A/m² with `F_{1/2}`, 2.0989 against 2.1015 with Blakemore's: the two
+  statistics' difference the reference's). Boltzmann's against the `F_{1/2}` reference is 6–20 %
+  and 1.4–10 mV off, its current 9e-3 at 1.0 V. Lit at 0.9 V the batch's Newton does not converge
+  from 0 V in one step in this cell, with any statistics; through 0.3 and 0.6 V it does.
+
   Three things the reference needed: ChargeTransport rounds the vacancies' energy to 0.1 meV
   and stops at 1e-4 of their mean, and 4e-5 of 4e24 m⁻³ too many moved the potential by 1.5 mV
   (the energy refined by secants to the number to 1e-12); its equilibrium solve does not converge
@@ -755,7 +766,8 @@ jaxdd supports (JAX 0.4.31, NumPy 1.26, Python 3.11). The main ones:
 | `test_a_dark_scan_with_a_density_far_below_the_floor_converges` | a dark scan with densities far below the convergence floor: every voltage converges, the current monotone and zero at 0 V, SimSS's curve (the extrapolated start, [solver.md](solver.md)) |
 | `test_free_ions_keep_their_number` | the ions' constraint holds to round-off |
 | `tests/test_steric.py` | ions bounded by their sites: Boltzmann's curve to the bit without sites and to 1e-10 with 1e35 m⁻³; at 10–100× the mean density no density above the sites, one electrochemical potential over the layer, the number kept; the start's normalisation; the blocks against autodiff in saturation; batch against one device, frozen against free at the pre-bias; the gradient in `N_max`; a hard device that cycled from Poisson's start converges from Boltzmann's; in time with sites at 1e35 Boltzmann's transient to 1e-9, with 1e26 not; refused below the mean density |
-| `tests/test_chargetransport.py` | ions bounded by their sites against ChargeTransport.jl's Ex103 cell (1e24 on 1e25 sites, 4e24 on 2e25, and Ex103's own 1.6e25 on 1e27): equilibrium, dark and lit steady states, the densities, ions, potential and current on its nodes; voltages' steps in time on its times, the current, three states and the steady end |
+| `tests/test_statistics.py` | the carriers' statistics: TeSCA's `F_{1/2}` within 1 % of the integral, its inverse and `w`'s derivative, Blakemore's; the Jacobian with them against autodiff, row by row to 1e-12, a blocking contact's Newton included; Boltzmann's the default; refused in time and at a free end |
+| `tests/test_chargetransport.py` | ions bounded by their sites against ChargeTransport.jl's Ex103 cell (1e24 on 1e25 sites, 4e24 on 2e25, and Ex103's own 1.6e25 on 1e27): equilibrium, dark and lit steady states, the densities, ions, potential and current on its nodes; voltages' steps in time on its times, the current, three states and the steady end; degenerate transport layers with Fermi–Dirac's and Blakemore's statistics |
 | `test_the_block_sweep_solves_the_block_tridiagonal_system` | the sweep against a dense solve |
 | `test_short_circuit_current_never_exceeds_the_generation` | an invariant |
 | `test_bernoulli_*` | finite value and derivative at 0, `B(−x) = B(x) + x`, SimSS's series within its own error |

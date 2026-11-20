@@ -22,6 +22,7 @@ from fractions import Fraction
 
 import numpy as np
 
+from jaxdd import statistics as carrier_statistics
 from jaxdd.constants import EPS_0, K_B, Q
 from jaxdd.optics import generation as optics_generation
 from jaxdd.optics import optical_data
@@ -354,6 +355,9 @@ class Device:
     # (`SURFACE_PARAMETERS`), 0 at a contact. None without a free end.
     free: tuple[bool, bool] = (False, False)
     free_S: np.ndarray | None = None
+    #: The carriers' statistics (`statistics.STATISTICS`): Boltzmann's, SIMsalabim's, or
+    #: Blakemore's or Fermi–Dirac's `F_{1/2}` (docs/model.md, "The carriers' statistics").
+    statistics: str = "boltzmann"
 
 
 @dataclass(frozen=True)
@@ -403,6 +407,7 @@ class Structure:
     #: `N_max_cation`): the device then carries them (`Device.anion_max`); without, a site
     #: density set in the parameters does nothing.
     ion_sites: bool = False
+    statistics: str = "boltzmann"  # `statistics.STATISTICS`
     anion_region: np.ndarray = None  # per layer: its mobile region's index, −1 none
     cation_region: np.ndarray = None
 
@@ -518,13 +523,18 @@ def _check_free(setup: Setup, st: Structure) -> None:
         raise ValueError("; ".join(problems))
 
 
-def _sfb(N_A, N_D, E_c, E_v, N_c, Vt, xp=np):
+def _sfb(N_A, N_D, E_c, E_v, N_c, Vt, xp=np, statistics="boltzmann"):
     """SIMsalabim's `ObtainWorkFunction` for 'sfb' (semi-flat band): the adjacent layer's
-    equilibrium Fermi level from its net doping, mid-gap where there is none."""
+    equilibrium Fermi level from its net doping, mid-gap where there is none; with another
+    statistics the level at which the majority band holds the doping, `F⁻¹(|net|/N_c)`."""
     net = N_A - N_D
     safe = xp.where(net == 0, 1.0, xp.abs(net))
-    n_type = xp.where(net < 0, E_c + Vt * xp.log(N_c / safe), 0.5 * (E_c + E_v))
-    return xp.where(net > 0, E_v - Vt * xp.log(N_c / safe), n_type)
+    if statistics == "boltzmann":  # SIMsalabim's, to the bit
+        n_type = xp.where(net < 0, E_c + Vt * xp.log(N_c / safe), 0.5 * (E_c + E_v))
+        return xp.where(net > 0, E_v - Vt * xp.log(N_c / safe), n_type)
+    eta = carrier_statistics.ln_inverse(xp.log(safe / N_c), statistics, xp)
+    n_type = xp.where(net < 0, E_c - Vt * eta, 0.5 * (E_c + E_v))
+    return xp.where(net > 0, E_v + Vt * eta, n_type)
 
 
 def device_parameters(
@@ -534,6 +544,7 @@ def device_parameters(
     langevin: str = "layer",
     braun: str = "exact",
     grid: str = "graded",
+    statistics: str = "boltzmann",
 ) -> tuple[Structure, dict]:
     """A SIMsalabim input (`check_supported` first) as its `Structure` and its
     parameters: a dict of `LAYER_PARAMETERS` and `ION_SITE_PARAMETERS`, each an array over the
@@ -556,6 +567,8 @@ def device_parameters(
         raise ValueError(f"langevin {langevin!r}: one of {LANGEVIN_MOBILITIES}")
     if braun not in BRAUN_RULES:
         raise ValueError(f"braun {braun!r}: one of {BRAUN_RULES}")
+    if statistics not in carrier_statistics.STATISTICS:
+        raise ValueError(f"statistics {statistics!r}: one of {carrier_statistics.STATISTICS}")
     if setup.i("leftElec") not in (-1, 1):
         raise ValueError("leftElec must be -1 (the left electrode the cathode) or 1 (the anode)")
     NP, grad = setup.i("NP"), setup.f("grad")
@@ -589,7 +602,7 @@ def device_parameters(
     int_file = np.array([_named(ly, "intTrapFile") for ly in layers[:-1]] + [False])
 
     structure = Structure(
-        NP=NP, i0=tuple(i0), i1=tuple(i1), lid=lid, raw=raw, norm=norm,
+        NP=NP, i0=tuple(i0), i1=tuple(i1), lid=lid, raw=raw, norm=norm, statistics=statistics,
         layer_gen=flags(lambda ly: ly.i("layerGen")),
         traps=flags(lambda ly: ly.f("N_t_bulk") != 0) | bulk_file,
         anion_mobile=region("anion") >= 0, anion_region=region("anion"),
@@ -619,6 +632,11 @@ def device_parameters(
         left_elec=setup.i("leftElec"),
         curr_diff=int(float(setup.raw.get("currDiffInt", "2"))) == 1,
     )  # fmt: skip
+    if statistics != "boltzmann" and (any(structure.free) or structure.int_traps.any()):
+        raise NotImplementedError(
+            f"statistics {statistics!r} with a free end or interface traps: only Boltzmann's "
+            '(docs/model.md, "The carriers\' statistics")'
+        )
     _check_free(setup, structure)
     # SIMsalabim's checks: each work function within its layer's gap.
     for k, ly, sfb in (("W_L", layers[0], structure.sfb[0]), ("W_R", layers[-1], structure.sfb[1])):
@@ -909,10 +927,15 @@ def device_arrays(structure: Structure, p: dict, xp=np) -> Device:
         )  # fmt: skip
 
     dos = Vt * xp.log(N_c / N_c[0])
+
+    def F(eta):  # a band's density over its N_c (`statistics.density`)
+        return carrier_statistics.density(eta, st.statistics, xp)
+
     W_L, W_R = p["W_L"], p["W_R"]
     for side, k in ((0, 0), (1, -1)):
         if st.sfb[side]:
-            W = _sfb(p["N_A"][k], p["N_D"][k], p["E_c"][k], p["E_v"][k], p["N_c"][k], Vt, xp)
+            W = _sfb(p["N_A"][k], p["N_D"][k], p["E_c"][k], p["E_v"][k], p["N_c"][k], Vt, xp,
+                     st.statistics)  # fmt: skip
             W_L, W_R = (W, W_R) if side == 0 else (W_L, W)
     surface = None
     if st.surface is not None:
@@ -963,10 +986,11 @@ def device_arrays(structure: Structure, p: dict, xp=np) -> Device:
         G=G,
         offset_n=E_c - E_c[0] + dos, offset_p=E_v - E_v[0] - dos,
         V0=0.5 * (-W_L + W_R), VL=0.5 * (W_L - W_R),
-        n_left=N_c[0] * xp.exp(-(W_L - E_c[0]) / Vt),
-        n_right=N_c[-1] * xp.exp(-(W_R - E_c[-1]) / Vt),
-        p_left=N_c[0] * xp.exp((W_L - E_v[0]) / Vt),
-        p_right=N_c[-1] * xp.exp(-(E_v[-1] - W_R) / Vt),
+        # the bands' densities at the contacts' Fermi level (`statistics.density`)
+        n_left=N_c[0] * F(-(W_L - E_c[0]) / Vt),
+        n_right=N_c[-1] * F(-(W_R - E_c[-1]) / Vt),
+        p_left=N_c[0] * F((W_L - E_v[0]) / Vt),
+        p_right=N_c[-1] * F(-(E_v[-1] - W_R) / Vt),
         W_L=W_L, W_R=W_R, G_frac=p["G_frac"],
         i0=tuple(i0), i1=tuple(i1),
         anion_mask=ions["anion"][0], cation_mask=ions["cation"][0],
@@ -986,12 +1010,13 @@ def device_arrays(structure: Structure, p: dict, xp=np) -> Device:
         free_S=xp.stack([xp.where(f, xp.asarray(p[k], dtype=float), 0.0)
                          for k, f in zip(SURFACE_PARAMETERS, st.free * 2, strict=True)])
         if any(st.free) else None,
+        statistics=st.statistics,
     )  # fmt: skip
 
 
 def build_device(setup: Setup, grid_split: str = "exact", surface: str = "extraction",
                  langevin: str = "layer", braun: str = "exact",
-                 grid: str = "graded") -> Device:  # fmt: skip
+                 grid: str = "graded", statistics: str = "boltzmann") -> Device:  # fmt: skip
     """The device of a SIMsalabim input (`check_supported` first), in NumPy. `grid_split`
     "simss" shares the grid points among the layers as SimSS's 10-byte reals do
     (`layer_points`; docs/differences.md §5), for a comparison point by point; `surface` how
@@ -999,5 +1024,7 @@ def build_device(setup: Setup, grid_split: str = "exact", surface: str = "extrac
     mobilities the Langevin rate takes (`LANGEVIN_MOBILITIES`); `braun` how Braun's dissociation
     probability is integrated (`BRAUN_RULES`); `grid` jaxdd's grid, graded geometrically towards
     every layer's ends (`"graded"`, `_graded_layout`, the default), or SIMsalabim's (`"simss"`,
-    `Make_Grid`: SimSS's own, for a comparison with it point by point; docs/differences.md §12)."""
-    return device_arrays(*device_parameters(setup, grid_split, surface, langevin, braun, grid))
+    `Make_Grid`: SimSS's own, for a comparison with it point by point; docs/differences.md §12);
+    `statistics` the carriers' (`statistics.STATISTICS`; docs/model.md)."""
+    return device_arrays(*device_parameters(setup, grid_split, surface, langevin, braun, grid,
+                                            statistics))  # fmt: skip

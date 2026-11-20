@@ -571,6 +571,13 @@ hold the difference between the internal open circuit and the voltage applied, t
 not exist in double precision: the floor is above 1, and Boltzmann statistics there are no
 model of the device anyway. Such a voltage stays not converged.
 
+With Fermi–Dirac's statistics (`statistics="fermi-dirac"`, docs/model.md) the density stays
+below the band's: on SIMsalabim's grid (`grid="simss"`) that stack converges at every voltage to
+−0.5 V (in 5–70 Newton steps from 0 V in 0.05 V steps), the holes there 0.2 eV within the band.
+On the graded grid (its smallest interval 1 pm at the contact, 26 pm SIMsalabim's) Newton stalls
+beyond −0.2 V at a floor of 1e-3 to 1e-2 in the bulk's potential, above `NOISE_FLOOR_CAP`
+(PLAN.md); with Blakemore's on SIMsalabim's grid most voltages to −0.4 V converge.
+
 ### Densities below the floor
 
 A density below `n_floor` (the minority carriers in the dark, a transport layer's, an ionic

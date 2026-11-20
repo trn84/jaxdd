@@ -59,6 +59,46 @@ Vgp = V + (E_v − E_v[0]) − V_T·ln(N_c / N_c[0])
 
 so that an electron sees `Vgn` as it would see `V` in a homogeneous device.
 
+## The carriers' statistics (jaxdd's, Boltzmann's by default)
+
+SIMsalabim's carriers follow Boltzmann's statistics, `n = N_c·exp(η)` with the reduced
+quasi-Fermi level `η = (E_Fn − E_c)/kT` (holes likewise), which puts no bound on the density:
+an accumulation `e^(V/V_T)` above equilibrium passes `N_c` a few tenths of a volt from it
+(docs/solver.md, "A floor above 1e-6"). `build_device(..., statistics=)` takes another
+(`jaxdd.statistics`), `n = N_c·F(η)`:
+
+| `statistics` | `F(η)` | |
+|---|---|---|
+| `"boltzmann"` (default) | `exp(η)` | SIMsalabim's, to the bit |
+| `"blakemore"` | `1/(exp(−η) + 0.27)` | Blakemore 1982: within a few percent of `F_{1/2}` to `η` ≈ 1.3, bounded by `N_c/0.27` |
+| `"fermi-dirac"` | `F_{1/2}(η)`, TeSCA's approximation | within 1 % of the integral (as ChargeTransport.jl's `FermiDiracOneHalfTeSCA`) |
+
+The unknowns stay `ln n` and `ln p`. What changes is the electrochemical potential: `η = ln(n/N_c)
++ w` with the excess chemical potential `w = F⁻¹(n/N_c) − ln(n/N_c)` (`statistics.excess`; 0 for
+Boltzmann's, `−ln(1 − 0.27·n/N_c)` for Blakemore's, Newton on TeSCA's `F` for `F_{1/2}`, with its
+own derivative `1/(d ln F/dη) − 1`). Everywhere a density meets its quasi-Fermi level:
+
+- **The flux** at a constant mobility follows `η`: the Scharfetter–Gummel flux with `w`'s
+  difference over the interval beside the potential's, `x − Δw_n` for electrons and `x + Δw_p`
+  for holes (as the ions bounded by their sites, below); its derivatives in `ln n` gain
+  `∓(∂F/∂x)·dw/d ln n` (`_assemble`, written out and checked against autodiff,
+  `tests/test_statistics.py`). Across an interface the same, each side's `w` at its own `N_c`.
+- **The contacts**: the equilibrium densities `N_c·F(η)` at the work function, and `sfb` the level
+  at which the majority band holds the net doping, `E_c − V_T·F⁻¹(N_D/N_c)` (`E_v +
+  V_T·F⁻¹(N_A/N_c)`). With a finite `S` the condition's `x` holds the contact's own `w`: no longer
+  linear in its density, it is solved by Newton on `ln n` from Boltzmann's density
+  (`CONTACT_NEWTON_STEPS`, quadratic).
+- **The recombination** compares with the equilibrium at the point's own quasi-Fermi levels:
+  `n·p − n_i²·e^(−w_n − w_p)` (`= n·p·(1 − e^(−QFLS/kT))`, ChargeTransport.jl's form), and each
+  trap level's `n_t0·e^(−w_n)`, `p_t0·e^(−w_p)` in SRH, its occupancy and its charge (`_degenerate`),
+  so that every rate vanishes at a flat Fermi level.
+- **The current** (both forms) takes the generalised potentials with `∓V_T·w`, and the QFLS
+  `V_T·(ln(n·p/n_i²) + w_n + w_p)`.
+
+The implied `V_oc` and the PLQY keep their Boltzmann's definitions (`k·n_i²` the radiative
+equilibrium). Not yet with another statistics, refused by name: a transient, a free end, interface
+traps. Against ChargeTransport.jl with degenerate transport layers: [validation.md](validation.md).
+
 ## Poisson's equation (`Solve_Poisson`)
 
 At every interior point `i`, with SIMsalabim's three-point coefficients for a permittivity that

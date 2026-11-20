@@ -9,6 +9,8 @@
 #     julia --project=. -e 'using Pkg; Pkg.instantiate()'
 #     CA=1e24 NA=1e25 julia --project=. psc_ions.jl OUTDIR eq dark:0.6 light:0.9 ...
 #
+# STAT the carriers' statistics (boltzmann, blakemore or fermi-dirac: Ex103's TeSCA F_1/2), CN
+# and CP the transport layers' doping (m^-3, 1e24 Ex103's).
 # CA the vacancies' mean density, NA their sites (m^-3; Ex103's are 1.6e25 and 1e27, where
 # jaxdd's steady state does not converge: PLAN.md). Cases: eq (thermodynamic equilibrium),
 # dark:V and light:V (uniform generation in the perovskite), V at the acceptor (spiro) side;
@@ -23,6 +25,9 @@ using ExtendableGrids
 using Printf
 
 const q = ChargeTransport.constants.q
+# The carriers' statistics (STAT), as jaxdd's `statistics` names them.
+const STATISTICS = Dict("boltzmann" => Boltzmann, "blakemore" => Blakemore,
+    "fermi-dirac" => FermiDiracOneHalfTeSCA)
 const eV = q
 
 Base.@kwdef struct P
@@ -152,7 +157,8 @@ function main(dir, cases)
     mkpath(dir)
     Ca = parse(Float64, get(ENV, "CA", "1.6e25"))
     Na = parse(Float64, get(ENV, "NA", "1e27"))
-    p = P(Ca = Ca, Na = [0.0, Na, 0.0])
+    p = P(Ca = Ca, Na = [0.0, Na, 0.0],
+        Cn = parse(Float64, get(ENV, "CN", "1e24")), Cp = parse(Float64, get(ENV, "CP", "1e24")))
     run(dir, p, Na, cases)
     print(read(joinpath(dir, "params.txt"), String))
 end
@@ -174,8 +180,9 @@ function equilibrium!(ctsys, data, p::P, control, mean_of)
     data.F[p.iphin] = FermiDiracOneHalfTeSCA
     data.F[p.iphip] = FermiDiracOneHalfTeSCA
     sol = equilibrium_solve!(ctsys, control = control, vacancyEnergyCalculation = true)
-    data.F[p.iphin] = Boltzmann
-    data.F[p.iphip] = Boltzmann
+    F = STATISTICS[get(ENV, "STAT", "boltzmann")]
+    data.F[p.iphin] = F
+    data.F[p.iphip] = F
     sol = equilibrium_solve!(ctsys, inival = sol, control = control, vacancyEnergyCalculation = true)
     function solved_at(E)
         data.params.bandEdgeEnergy[p.iphia, p.regionIntrinsic] = E * q
@@ -207,7 +214,8 @@ function run(dir, p::P, Na, cases)
 
     sol = equilibrium!(ctsys, data, p, control, mean_of)
     open(joinpath(dir, "params.txt"), "w") do io
-        println(io, "ChargeTransport $(pkgversion(ChargeTransport)), CA = $(p.Ca), NA = $(Na)")
+        println(io, "ChargeTransport $(pkgversion(ChargeTransport)), CA = $(p.Ca), NA = $(Na), " *
+            "STAT = $(get(ENV, "STAT", "boltzmann")), CN = $(p.Cn), CP = $(p.Cp)")
         println(io, "vacancy energy E_a = $(data.params.bandEdgeEnergy[p.iphia, p.regionIntrinsic] / q) eV")
         println(io, "mean vacancy density = $(mean_of(sol)) m^-3")
         println(io, "nodes = $(length(coord)), smallest interval = $(minimum(diff(coord))) m")

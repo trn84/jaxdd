@@ -3,7 +3,8 @@ Ex103 cell (TiO2 | MAPI | spiro, mobile vacancies limited by the Fermi–Dirac i
 −1) with Boltzmann's electrons and holes, at 1e24 m⁻³ of vacancies on 1e25 sites and 4e24 on
 2e25, where the sites cut the accumulation by up to a fifth. Equilibrium, dark and lit steady
 states, and the transients after a voltage's step (docs/validation.md, "Ions bounded by their
-sites, against ChargeTransport.jl")."""
+sites, against ChargeTransport.jl"); and the carriers' statistics, Fermi–Dirac's and Blakemore's,
+in degenerate transport layers."""
 
 import re
 from pathlib import Path
@@ -24,17 +25,45 @@ E_C = (4.0, 3.7, 3.4)
 CASES = {"dark": (-0.3, -0.2, -0.1, 0.0, 0.6, 1.0), "light": (0.0, 0.9)}
 
 
-def device(ions, sites, G_frac, mu=None):
+def device(ions, sites, G_frac, mu=None, doping=None, statistics="boltzmann"):
+    """The cell with `ions` on `sites` in the perovskite; `doping` the transport layers' (the
+    ETL's donors and the HTL's acceptors, else 1e24 m⁻³), `statistics` the carriers'."""
     files = {name: (DATA / name).read_text() for name in ("L1.txt", "L2.txt", "L3.txt")}
-    changes = [("N_anion", ions), ("N_cation", ions), ("N_max_cation", sites)]
-    for key, value in changes + ([("mu_cation", mu)] if mu is not None else []):
-        files["L2.txt"], k = re.subn(rf"^{key} = \S+", f"{key} = {value:g}", files["L2.txt"],
-                                     flags=re.M)  # fmt: skip
+    changes = [("L2.txt", "N_anion", ions), ("L2.txt", "N_cation", ions),
+               ("L2.txt", "N_max_cation", sites)]  # fmt: skip
+    if mu is not None:
+        changes.append(("L2.txt", "mu_cation", mu))
+    if doping is not None:
+        changes += [("L1.txt", "N_D", doping), ("L3.txt", "N_A", doping)]
+    for name, key, value in changes:
+        files[name], k = re.subn(rf"^{key} = \S+", f"{key} = {value:g}", files[name], flags=re.M)
         assert k == 1, key
     setup = (DATA / "simulation_setup.txt").read_text()
     files["simulation_setup.txt"] = re.sub(r"^G_frac = \S+", f"G_frac = {G_frac}", setup,
                                            flags=re.M)  # fmt: skip
-    return build_device(setup_from_texts(files))
+    return build_device(setup_from_texts(files), statistics=statistics)
+
+
+def worst(d, st, k, ref):
+    """The largest differences of a state (`solve_states`' `k`-th) from the reference's on its
+    nodes, within each layer's own points: `ln n` and `ln p` (above `n_floor`) and the potential
+    (the reference's in jaxdd's gauge, from the left contact), over all three layers."""
+    x, Ec = np.asarray(d.x), np.asarray(d.E_c)
+    floor = 1e-12 * float(np.max(d.N_c))
+    Vs, n, p = st["V"][0, k], st["n"][0, k], st["p"][0, k]
+    gauge = Vs[0] - ref["psi"][0]
+    dens = dV = 0.0
+    for layer in (1, 2, 3):
+        ours = np.isclose(Ec, E_C[layer - 1])
+        a = ref[ref["region"] == layer]
+        a = a[(a["x"] >= x[ours][0]) & (a["x"] <= x[ours][-1])]
+        for got, want in ((n, a["n"]), (p, a["p"])):
+            above = want > floor
+            if above.any():
+                err = np.interp(a["x"][above], x[ours], np.log(got[ours])) - np.log(want[above])
+                dens = max(dens, float(np.abs(err).max()))
+        dV = max(dV, float(np.abs(np.interp(a["x"], x[ours], Vs[ours]) - gauge - a["psi"]).max()))
+    return dens, dV
 
 
 def reference(name, case):
@@ -143,3 +172,34 @@ def test_transients_with_sites_are_chargetransport_jl() -> None:
                     assert not above.any() or np.abs(err).max() < 0.1, (name, V, j, layer, key)
                 dV = np.interp(c["x"], x[ours], Vs[ours]) - (gauge + c["psi"])
                 assert np.abs(dV).max() < 5e-4, (name, V, j, layer)
+
+
+@pytest.mark.parametrize("statistics", ["fermi-dirac", "blakemore"])
+def test_degenerate_transport_layers_are_chargetransport_jl(statistics) -> None:
+    """The cell with its transport layers doped 3e25 m⁻³ against `N_c` 5e25 (degenerate: the
+    Fermi level 0.3 eV within the band; 1e24 vacancies on 1e25 sites), each statistics against
+    ChargeTransport.jl's own (Fermi–Dirac's `F_{1/2}` by TeSCA's approximation, both codes'):
+    `ln n`, `ln p` to 0.04, the potential to 1 mV, the current to 3e-3 of itself where it is above
+    1e-3 A/m² (2.3e-2, 0.5 mV and 1.3e-3 at most). Boltzmann's against the same reference is 6e-2
+    and 7 mV off at 1.0 V in the dark, its current 9e-3 (docs/validation.md)."""
+    name = f"degenerate_{statistics}"
+    # the lit curve through 0.3 and 0.6 V: from 0 V straight to 0.9 the batch's Newton does not
+    # converge in this cell, with any statistics, round-off deciding
+    for kind, voltages in (("dark", (0.0, 0.6, 1.0)), ("light", (0.0, 0.3, 0.6, 0.9))):
+        d = device(1e24, 1e25, 1.0 if kind == "light" else 0.0, doping=3e25, statistics=statistics)
+        st = solve_states(prepare([d]), list(voltages), max_iter=200)
+        for k, V in enumerate(voltages):
+            case = "eq" if kind == "dark" and V == 0.0 else f"{kind}_{V}"
+            assert bool(st["converged"][0, k]), case
+            if not (DATA / name / f"{case}.csv").exists():
+                continue
+            J_ref, ref = reference(name, case)
+            dens, dV = worst(d, st, k, ref)
+            assert dens < 0.04 and dV < 1e-3, (case, dens, dV)
+            if abs(J_ref) > 1e-3:
+                assert float(st["J"][0, k]) == pytest.approx(J_ref, rel=3e-3), case
+    if statistics == "fermi-dirac":  # what the test sees: Boltzmann's is far off
+        d = device(1e24, 1e25, 0.0, doping=3e25)
+        st = solve_states(prepare([d]), [1.0], max_iter=200)
+        dens, dV = worst(d, st, 0, reference(name, "dark_1.0")[1])
+        assert dens > 0.05 and dV > 5e-3

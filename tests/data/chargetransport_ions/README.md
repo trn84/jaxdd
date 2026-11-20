@@ -22,3 +22,6 @@ order −1 (docs/validation.md, "Ions bounded by their sites, against ChargeTran
 - `*/tstep_dark_V_*` (1e24: 1.0 V; 4e24: 0.6 and 1.0 V; 1.6e25: 1.0 V): the voltage's step in time (`tstep:dark:V`,
   the vacancies at 1e-12 m²/Vs): `_J.csv` the current at each of ChargeTransport's times,
   `_at1`–`_at3` the states nearest 1 µs, 1 ms and 1 s (`_t.txt` their times).
+- `degenerate_fermi-dirac/`, `degenerate_blakemore/`: the cell with its transport layers doped
+  3e25 m⁻³ (`CN=3e25 CP=3e25 CA=1e24 NA=1e25`) and the carriers' statistics `STAT=fermi-dirac`
+  (TeSCA's `F_{1/2}`) or `STAT=blakemore`: eq, dark:0.6, dark:1.0, light:0.0, light:0.9.

@@ -32,6 +32,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+from jaxdd import statistics as carrier_statistics
 from jaxdd.constants import Q
 from jaxdd.device import Device
 
@@ -245,6 +246,8 @@ def _stencils(dev: Device, xp=np) -> dict[str, jnp.ndarray]:
         "sP": 1.0 / (Q * dev.N_c[i]),
         "sC": 1.0 / (xp.maximum(dev.mu_n[i], dev.mu_p[i]) * dev.Vt * dev.N_c[i] * h[i]),
     }  # fmt: skip
+    if dev.statistics != "boltzmann":  # the carriers' statistics (`_stat`): 1/N_c on every point
+        out["stat"] = {dev.statistics: 1.0 / dev.N_c}
     if _has_sites(dev):  # ions bounded by their sites: 1/N_max (`occupancy`), 0 unbounded
         out["a_inv"] = _inverse_sites(dev.anion_max, NP + 2, xp)[i]
         out["c_inv"] = _inverse_sites(dev.cation_max, NP + 2, xp)[i]
@@ -465,6 +468,11 @@ BRANCH_FLIP_SIZE = 1e-3
 BRANCH_TIE = 1e-13
 
 
+#: Newton's steps on a contact's density where the carriers' statistics is not Boltzmann's
+#: (`_robin`): from Boltzmann's density, quadratic.
+CONTACT_NEWTON_STEPS = 12
+
+
 def _robin(first, last, z0, zN, s, Vt, B):
     """Each contact's `ln n`, `ln p` where finite surface recombination holds (`_contact_ends`),
     in `S` order (electrons left, holes left, electrons right, holes right), and its
@@ -486,7 +494,28 @@ def _robin(first, last, z0, zN, s, Vt, B):
     eq = jnp.stack([z0[1], z0[2], zN[1], zN[2]])
     S_ = jnp.where(S >= 0, S, 0.0)
     dens = (a * B_in * jnp.exp(inner) + S_ * jnp.exp(eq)) / (a * B_out + S_)
-    return jnp.log(dens), eq
+    kind, inv = _stat(s)
+    if kind is None:
+        return jnp.log(dens), eq
+    # Another statistics: each interval's `x` has the excess potentials' difference beside the
+    # potential's (`_assemble`), the contact's own among them, so the condition is no longer
+    # linear in its density: Newton on `ln n` from Boltzmann's density.
+    ln_inv = jnp.log(jnp.stack([inv[0], inv[0], inv[-1], inv[-1]]))
+    x = jnp.stack([x_nL, x_pL, x_nR, x_pR])
+    sign = jnp.array([1.0, -1.0, -1.0, 1.0])  # the contact's excess in each x
+    turn = jnp.array([1.0, -1.0, -1.0, 1.0])  # B_in = B(turn·x)
+    w_in = carrier_statistics.excess(inner + ln_inv, kind)
+
+    def residual(ln_c):
+        xe = x + sign * (carrier_statistics.excess(ln_c + ln_inv, kind) - w_in)
+        return a * B(turn * xe) * jnp.exp(inner) + S_ * jnp.exp(eq) - (
+            a * B(-turn * xe) + S_) * jnp.exp(ln_c)  # fmt: skip
+
+    ln_c = jnp.log(dens)
+    for _ in range(CONTACT_NEWTON_STEPS):
+        r, dr = jax.jvp(residual, (ln_c,), (jnp.ones_like(ln_c),))
+        ln_c = ln_c - r / dr
+    return ln_c, eq
 
 
 def _contact_branch(full, s, Vt, B, held=None):
@@ -571,11 +600,53 @@ def _trap_step(Cn, Cp, nt0, pt0, n, p, f_old, dti, empty=False):
     return out
 
 
+def _stat(s):
+    """The carriers' statistics of `s` (`s["stat"]`, `{kind: 1/N_c}` on every point): `(kind,
+    1/N_c)`, or `(None, None)` for Boltzmann's."""
+    if "stat" not in s:
+        return None, None
+    return next(iter(s["stat"].items()))
+
+
+def _carrier_excess(ln_n, ln_p, s):
+    """The carriers' excess chemical potentials `(w_n, w_p)` at `ln n`, `ln p`
+    (`statistics.excess`), on all `NP + 2` points or the interior ones as the densities are;
+    None for Boltzmann's."""
+    kind, inv = _stat(s)
+    if kind is None:
+        return None
+    if inv.shape[-1] != ln_n.shape[-1]:
+        inv = inv[..., 1:-1]
+    ln_inv = jnp.log(inv)
+    return (carrier_statistics.excess(ln_n + ln_inv, kind),
+            carrier_statistics.excess(ln_p + ln_inv, kind))  # fmt: skip
+
+
+def _degenerate(s, n, p):
+    """`s` with the equilibrium densities the recombination compares with at the point's own
+    carriers' statistics: `n_i²·e^(−w_n − w_p)`, `n_t0·e^(−w_n)`, `p_t0·e^(−w_p)` (each
+    carrier's in equilibrium with the traps at its own quasi-Fermi level, so that the rates
+    vanish at a flat Fermi level; Boltzmann's `w` = 0), from `n`, `p` themselves so that a
+    derivative in them sees it; without `stat`, so that it is applied once."""
+    w = _carrier_excess(jnp.log(n), jnp.log(p), s)
+    if w is None:
+        return s
+    gn, gp = jnp.exp(-w[0]), jnp.exp(-w[1])
+
+    def levels(a, g):  # a trap file's levels on a trailing axis
+        return a * (g[..., None] if jnp.ndim(a) > jnp.ndim(g) else g)
+
+    out = {k: v for k, v in s.items() if k != "stat"}
+    out.update(ni2=s["ni2"] * gn * gp, nt0=levels(s["nt0"], gn), pt0=levels(s["pt0"], gp))
+    return out
+
+
 def _bulk_rates(n, p, s):
     """Each carrier's recombination `(R_n, R_p)`: direct and through the bulk traps. In the
     steady state both `_recombination`; over a time step (`s["tr"]` with the traps'
     occupations `fb`) each carrier's capture by the occupation's mean over the step
     (`_trap_step`), so that the two differ while the traps fill or empty."""
+    s = _degenerate(s, n, p)
     tr = s.get("tr")
     if tr is None or "fb" not in tr:
         R = _recombination(n, p, s)
@@ -593,6 +664,7 @@ def _bulk_rates(n, p, s):
 
 def _bulk_occupation(n, p, s):
     """The bulk traps' occupation at the end of a time step (`_trap_step`), like `s["Nt"]`."""
+    s = _degenerate(s, n, p)
     tr = s["tr"]
     nl, pl, Cn, Cp, dti = _per_level(s["Nt"], n, p, s["Cn"], s["Cp"], tr["dti"])
     return _trap_step(Cn, Cp, s["nt0"], s["pt0"], nl, pl, tr["fb"], dti)[1]
@@ -615,6 +687,7 @@ def _summed(levels, value, like):
 
 def _recombination(n, p, s):
     """Direct recombination and SRH through the bulk traps, summed over their levels."""
+    s = _degenerate(s, n, p)
     nl, pl, Cn, Cp = _per_level(s["Nt"], n, p, s["Cn"], s["Cp"])
     srh = s["Nt"] * Cn * Cp * (nl * pl - s["nt0"] * s["pt0"])
     srh = srh / jnp.where(s["Nt"] > 0, Cn * (nl + s["nt0"]) + Cp * (pl + s["pt0"]), 1.0)
@@ -638,6 +711,7 @@ def _trap_charge(n, p, s):
     """The charged bulk traps' charge density (m⁻³, positive): `Σ |type|·(cwe − f)·N_t` over the
     levels, `f = (C_n·n + C_p·p_t0)/(C_n·(n + n_t0) + C_p·(p + p_t0))` each level's occupancy
     (SIMsalabim's `Calc_f_tb`, steady state)."""
+    s = _degenerate(s, n, p)
     nl, pl, Cn, Cp = _per_level(s["tq"], n, p, s["Cn"], s["Cp"])
     q = s["tq"] > 0
     f = (Cn * nl + Cp * s["pt0"]) / jnp.where(q, Cn * (nl + s["nt0"]) + Cp * (pl + s["pt0"]), 1.0)
@@ -864,6 +938,13 @@ def _assemble(full, s, Vt, g_frac, la, lc, B=bernoulli):
     cp = Vt * jnp.concatenate([s["mup_m"], s["mup_p"][-1:]])
     xn = jnp.diff(V + offn) / Vt
     xp = jnp.diff(V + offp) / Vt
+    stat = "stat" in s
+    if stat:  # another statistics: each carrier's excess chemical potential beside the potential
+        # (`statistics.excess`), and its derivative in the carrier's logarithm
+        (wn, wp), (dwn, dwp) = jax.jvp(lambda a, b: _carrier_excess(a, b, s), (ln_n, ln_p),
+                                       (jnp.ones_like(ln_n), jnp.ones_like(ln_p)))  # fmt: skip
+        xn = xn - jnp.diff(wn)
+        xp = xp + jnp.diff(wp)
     dlog_n = dlog_p = 0.0
     if "fn_m" in s:  # each interval's mobility in its own field, and its derivative in ΔV
         kn, kp = _edge_k(s)
@@ -888,6 +969,12 @@ def _assemble(full, s, Vt, g_frac, la, lc, B=bernoulli):
     gp = cp * (dBp_f * p0 + dBp_b * p1) / Vt + Fp * dlog_p
     dFp0 = jnp.stack([-gp, zero, cp * Bp_f * p0], -1)
     dFp1 = jnp.stack([gp, zero, -cp * Bp_b * p1], -1)
+    if stat:  # the excess potentials' part of each density's derivative, through x
+        hn, hp_ = cn * (dBn_f * n1 + dBn_b * n0), cp * (dBp_f * p0 + dBp_b * p1)
+        dFn0 = dFn0.at[:, 1].add(hn * dwn[:-1])
+        dFn1 = dFn1.at[:, 1].add(-hn * dwn[1:])
+        dFp0 = dFp0.at[:, 2].add(-hp_ * dwp[:-1])
+        dFp1 = dFp1.at[:, 2].add(hp_ * dwp[1:])
 
     # Per interior point i = 1 … NP: its left edge i − 1 ([:-1]) and right edge i ([1:]).
     Vm, nm, pm = V[1:-1], n[1:-1], p[1:-1]
@@ -903,7 +990,8 @@ def _assemble(full, s, Vt, g_frac, la, lc, B=bernoulli):
         kd, g_fac = rates[0]
         s = dict(s, kd=kd)
         # R is linear in k_direct, the generation in its factor.
-        dnet_V = tuple(s["G"] * g_frac * dg - (nm * pm - s["ni2"]) * dk for dk, dg in tangents)
+        ni2 = _degenerate(s, nm, pm)["ni2"]
+        dnet_V = tuple(s["G"] * g_frac * dg - (nm * pm - ni2) * dk for dk, dg in tangents)
     # Each carrier's rate (`_bulk_rates`; equal in the steady state) and its derivatives in
     # (ln n, ln p).
     (Rn, Rp), (dRn_n, dRp_n) = jax.jvp(lambda a: _bulk_rates(a, pm, s), (nm,), (nm,))
@@ -1432,9 +1520,10 @@ def _poisson_row(left, mid, right, s, Vt, ref_left, ref_mid, ref_right, la, lc):
 
 def _on_points(s):
     """The stencils on the interior points: without the interface traps' edges, the
-    contacts' surface recombination and the gauge of two free ends."""
+    contacts' surface recombination, the gauge of two free ends and the carriers' statistics
+    (a Poisson's start moves the densities as Boltzmann's)."""
     return {k: v for k, v in s.items()
-            if k not in ("ti", "ct", "gauge", "gauge_on", "gauge_col", "free")}  # fmt: skip
+            if k not in ("ti", "ct", "gauge", "gauge_on", "gauge_col", "free", "stat")}  # fmt: skip
 
 
 _P_AXES = (0, 0, 0, 0, None, 0, 0, 0, 0, 0)
@@ -1542,6 +1631,8 @@ def _current(dev: Device, V, n, p, g_frac, B=bernoulli) -> float:
         G[1:-1] *= np.asarray(rates[1])
     s_all.update(kd=kd, ni2=dev.ni**2, Nt=dev.srh_Nt, Cn=dev.srh_Cn,
                  Cp=dev.srh_Cp, nt0=dev.srh_nt0, pt0=dev.srh_pt0)  # fmt: skip
+    if dev.statistics != "boltzmann":
+        s_all["stat"] = {dev.statistics: 1.0 / np.asarray(dev.N_c)}
     R = np.asarray(_recombination(n, p, s_all))
     R_int = (np.zeros(NP + 2), np.zeros(NP + 2))
     if dev.interface is not None:
@@ -1578,8 +1669,13 @@ def _current(dev: Device, V, n, p, g_frac, B=bernoulli) -> float:
         dV = np.sqrt(np.abs(np.diff(V)))
         mu_n = np.concatenate([mu_n[:-1] * np.exp(dev.mob_field[0][:-1] * dV), mu_n[-1:]])
         mu_p = np.concatenate([mu_p[:-1] * np.exp(dev.mob_field[1][:-1] * dV), mu_p[-1:]])
-    Jn = carrier(-1, V + dev.offset_n, n, mu_n, R_int[0])
-    Jp = carrier(1, V + dev.offset_p, p, mu_p, R_int[1])
+    Vgn, Vgp = V + dev.offset_n, V + dev.offset_p
+    w = _carrier_excess(jnp.log(jnp.asarray(n)), jnp.log(jnp.asarray(p)), s_all)
+    if w is not None:  # another statistics: the excess potentials beside the potential, as the
+        # flux has them (`_assemble`), in both the integral and the differential form
+        Vgn, Vgp = Vgn - Vt * np.asarray(w[0]), Vgp + Vt * np.asarray(w[1])
+    Jn = carrier(-1, Vgn, n, mu_n, R_int[0])
+    Jp = carrier(1, Vgp, p, mu_p, R_int[1])
     total = Jn + Jp
     # With the anode on the left SIMsalabim turns every current's sign.
     return -dev.left_elec * float(np.sum(h[: NP + 1] * total) / np.sum(h[: NP + 1]))
@@ -1779,6 +1875,8 @@ def solve_state(dev: Device, Vint: float = 0.0, g_frac: float | None = None,
     V, n, p = full[:, 0], np.exp(full[:, 1]), np.exp(full[:, 2])
     ni2 = dev.ni**2
     s = _stencils(dev)
+    w = _carrier_excess(jnp.asarray(full[:, 1]), jnp.asarray(full[:, 2]), s)
+    excess_sum = 0.0 if w is None else np.asarray(w[0] + w[1])  # the QFLS's own part
     i = slice(1, -1)
     vol = _volumes(s, dev.L)
     k = np.asarray(dev.k_direct)[i]
@@ -1788,7 +1886,7 @@ def solve_state(dev: Device, Vint: float = 0.0, g_frac: float | None = None,
     rad0 = np.sum(vol * k * ni2[i])
     gen = g_frac * np.sum(vol * np.asarray(dev.G)[i])
     return StateResult(
-        x=np.asarray(dev.x), V=V, n=n, p=p, qfls=dev.Vt * np.log(n * p / ni2),
+        x=np.asarray(dev.x), V=V, n=n, p=p, qfls=dev.Vt * (np.log(n * p / ni2) + excess_sum),
         implied_voc=float(dev.Vt * np.log(rad / rad0)) if rad0 > 0 else float("nan"),
         plqy=float((rad - rad0) / gen) if gen > 0 else float("nan"),
         J=_current(dev, V, n, p, g_frac, BERNOULLI[bernoulli_name]), converged=bool(ok),

@@ -1,0 +1,4 @@
+ChargeTransport 1.10.0, CA = 1.0e24, NA = 1.0e25, STAT = blakemore, CN = 3.0e25, CP = 3.0e25
+vacancy energy E_a = -4.8124191918392 eV
+mean vacancy density = 9.99999999999988e23 m^-3
+nodes = 275, smallest interval = 9.999999999999428e-11 m

@@ -19,6 +19,15 @@ the API, and says so here.
   sites, in equilibrium, dark and lit steady states and a voltage's step in time; jaxdd agrees to
   the grids' difference (docs/validation.md).
 
+- **The carriers' statistics** (steady state): `build_device(..., statistics=)` takes
+  Blakemore's (`"blakemore"`) or Fermi–Dirac's `F_{1/2}` (`"fermi-dirac"`, TeSCA's
+  approximation) beside Boltzmann's, the default and SIMsalabim's (`jaxdd.statistics`): the fluxes
+  follow the electrochemical potential with the excess chemical potential beside the potential,
+  the contacts' densities and `sfb` follow the statistics, and the recombination and the traps
+  compare with the equilibrium at the point's own quasi-Fermi levels (docs/model.md). Against
+  ChargeTransport.jl with degenerate transport layers to 2 % in the densities, 0.5 mV and 1.3e-3
+  in the current. A transient, a free end and interface traps refuse another statistics by name.
+
 ### Fixed
 
 - **Blocking contacts under bias.** Each voltage of a scan starts in the contacts' branches of

@@ -436,6 +436,11 @@ def solve_transient(batch, tvg: TVG | list[TVG], tol=1e-10, max_iter=200, bernou
         ion = batch["ion"]
         ions = bool(np.any(np.asarray(ion["a_totals"]) > 0)
                     or np.any(np.asarray(ion["c_totals"]) > 0))  # fmt: skip
+    if "stat" in batch["s"]:
+        raise NotImplementedError(
+            "a carriers' statistics other than Boltzmann's in time: the steady state only "
+            '(docs/model.md, "The carriers\' statistics")'
+        )
     if vint is None:
         vint = bool(oc.any() or np.any(np.asarray(batch["R_series"]) > 0))
     if recycle is not None:

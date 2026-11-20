@@ -39,7 +39,9 @@ from jaxdd.solver import (
     _assemble_ions,
     _balanced_logs,
     _bulk_rates,
+    _carrier_excess,
     _contact_branch,
+    _degenerate,
     _excess,
     _field_mobilities,
     _free_ends,
@@ -69,6 +71,7 @@ from jaxdd.solver import (
     density_steps,
     step_caps,
 )
+from jaxdd.statistics import excess
 from jaxdd.sweep import block_sweep
 
 __all__ = ["device_tree", "external_voltages", "prepare", "solve_batch", "solve_states"]
@@ -104,7 +107,9 @@ def _device_tree(dev: Device, xp=np) -> dict:
         "mu_a": xp.zeros(NP + 2) if dev.mu_anion is None else dev.mu_anion,
         "mu_c": xp.zeros(NP + 2) if dev.mu_cation is None else dev.mu_cation,
         "rec": {"kd": dev.k_direct, "ni2": dev.ni**2, "Nt": dev.srh_Nt, "Cn": dev.srh_Cn,
-                "Cp": dev.srh_Cp, "nt0": dev.srh_nt0, "pt0": dev.srh_pt0},
+                "Cp": dev.srh_Cp, "nt0": dev.srh_nt0, "pt0": dev.srh_pt0,
+                **({"stat": {dev.statistics: 1.0 / dev.N_c}}
+                   if dev.statistics != "boltzmann" else {})},
         "iface": iface,
         "J_scale": xp.maximum(generated, 1.0),
         "R_series": dev.R_series,
@@ -362,9 +367,14 @@ def _current_parts(d, full, g_frac, B=bernoulli):
     before_n, before_p = (None, None) if tr is None else (tr["n"], tr["p"])
     # With the anode on the left SIMsalabim turns every current's sign.
     sign = -d["left_elec"]
+    Vgn, Vgp = V + d["offset_n"], V + d["offset_p"]
+    w = _carrier_excess(full[:, 1], full[:, 2], rec)
+    if w is not None:  # another statistics: the excess potentials beside the potential
+        # (`solver._current`)
+        Vgn, Vgp = Vgn - Vt * w[0], Vgp + Vt * w[1]
     parts = {
-        "Jn": sign * carrier(-1.0, V + d["offset_n"], n, mu_n, Rn, R_int[0], before_n),
-        "Jp": sign * carrier(1.0, V + d["offset_p"], p, mu_p, Rp, R_int[1], before_p),
+        "Jn": sign * carrier(-1.0, Vgn, n, mu_n, Rn, R_int[0], before_n),
+        "Jp": sign * carrier(1.0, Vgp, p, mu_p, Rp, R_int[1], before_p),
     }
     if tr is not None and "ions" in tr:  # mobile ions in time (ZimT's Jnion, Jpion)
         Ja, Jc = _ion_currents(d, _ion_full(full, d["ion"], Vt, B, tr["dti"]), tr, B)
@@ -372,7 +382,7 @@ def _current_parts(d, full, g_frac, B=bernoulli):
     if tr is not None:  # the displacement current on each interval
         dV, dV_before = jnp.diff(V), jnp.diff(tr["V"])
         parts["JD"] = sign * d["eps"][: NP + 1] * (dV - dV_before) * tr["dti"] / (L * h[: NP + 1])
-    direct = rec["kd"] * (n * p - rec["ni2"])
+    direct = rec["kd"] * (n * p - _degenerate(rec, n, p)["ni2"])
     points = {"V": V, "n": n, "p": p, "gen": G * g_frac, "direct": direct, "bulk_n": Rn - direct,
               "bulk_p": Rp - direct, "int_n": R_int[0], "int_p": R_int[1]}  # fmt: skip
     return parts, points
@@ -1147,8 +1157,13 @@ def solve_states(batch, voltages=0.0, tol=1e-10, max_iter=60, first_max_iter=6,
         )
     n, p = jnp.exp(full[..., 1]), jnp.exp(full[..., 2])
     ni2 = batch["rec"]["ni2"][:, None, :]
+    qfls = jnp.log(n * p / ni2)
+    if "stat" in batch["rec"]:  # another statistics: the excess potentials' part (`_degenerate`)
+        ((kind, inv),) = batch["rec"]["stat"].items()
+        ln_inv = jnp.log(inv)[:, None, :]
+        qfls = qfls + excess(jnp.log(n) + ln_inv, kind) + excess(jnp.log(p) + ln_inv, kind)
     return {"V": full[..., 0], "n": n, "p": p, "qfls": batch["Vt"][:, None, None]
-            * jnp.log(n * p / ni2), "implied_voc": voc, "plqy": plqy, "J": J, "converged": ok,
+            * qfls, "implied_voc": voc, "plqy": plqy, "J": J, "converged": ok,
             "iterations": its, "anion": ions[..., 0], "cation": ions[..., 1]}  # fmt: skip
 
 

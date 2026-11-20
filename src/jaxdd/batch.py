@@ -597,13 +597,15 @@ def _apply(blocks, x, z):
     return rows, jnp.einsum("irk,ir->k", W, x) + D @ z
 
 
-def _newton_solve(y, logs, d, s, ion, Vint, g_frac, B, tol, max_iter, strict=False, vint=False):
+def _newton_solve(y, logs, d, s, ion, Vint, g_frac, B, tol, max_iter, strict=False, vint=False,
+                  branch=None):  # fmt: skip
     """Newton at one voltage until converged (module docstring) or `max_iter`:
     `(y, logs, J, converged, iterations)`. Differentiable in everything but the start: the
     derivatives are those of the converged solution (`_converged_jvp`), not of the iterations.
     With `vint` the internal voltage is an unknown, the last of `logs` (its start), and `Vint`
-    the target `(oc, Vext)` of its row (`_vint_row`)."""
-    guess = jax.lax.stop_gradient((y, logs))
+    the target `(oc, Vext)` of its row (`_vint_row`). `branch`: the contacts' branches to start
+    from (`_solution_branch`), else those at the start."""
+    guess = jax.lax.stop_gradient((y, logs) if branch is None else (y, logs, branch))
     y, logs, J, done, it = _converged(B, max_iter, strict, vint, guess,
                                       (d, s, ion, Vint, g_frac), tol)  # fmt: skip
     return y, logs, J, done > 0, it.astype(int)
@@ -615,8 +617,8 @@ def _converged(B, max_iter, strict, vint, guess, params, tol):
     floats, so that their tangents are zeros in every JAX (an integer output's tangent is
     `float0` in newer JAX and of the output's own type in older)."""
     d, s, ion, Vint, g_frac = params
-    y, logs, J, done, it = _newton_loop(*guess, d, s, ion, Vint, g_frac, B, tol, max_iter,
-                                        strict, vint)  # fmt: skip
+    y, logs, J, done, it = _newton_loop(*guess[:2], d, s, ion, Vint, g_frac, B, tol, max_iter,
+                                        strict, vint, *guess[2:])  # fmt: skip
     return y, logs, J, done.astype(float), jnp.asarray(it, dtype=float)
 
 
@@ -699,10 +701,12 @@ def _tangent(B, vint, valid, y, logs, params, params_dot):
     return y_dot, logs_dot, jnp.where(valid, J_dot, 0.0)
 
 
-def _newton_loop(y, logs, d, s, ion, Vint, g_frac, B, tol, max_iter, strict, vint=False):
+def _newton_loop(y, logs, d, s, ion, Vint, g_frac, B, tol, max_iter, strict, vint=False,
+                 branch0=None):  # fmt: skip
     """Newton's iterations of `_newton_solve`. With `vint` the internal voltage the last of
     `logs`, its step held to the potential's cap; the current's settling is then no stop (the
-    voltage's last digits are what the open circuit wants)."""
+    voltage's last digits are what the open circuit wants). `branch0`: the contacts' branches
+    to start from, else those at the start."""
     Vt = d["Vt"]
 
     def bounds_of(logs):
@@ -797,11 +801,22 @@ def _newton_loop(y, logs, d, s, ion, Vint, g_frac, B, tol, max_iter, strict, vin
         *_, it, done, _ = carry
         return (~done) & (it < max_iter)
 
-    branch0 = _contact_branch(full_of(y, logs), s, Vt, B) if contacts else jnp.zeros(4)
+    if not contacts:
+        branch0 = jnp.zeros(4)
+    elif branch0 is None:
+        branch0 = _contact_branch(full_of(y, logs), s, Vt, B)
     y, logs, _, J_hist, it, done, _ = jax.lax.while_loop(
         cond, body, (y, logs, hist0, J0, 0, jnp.array(False), branch0)
     )
     return y, logs, J_hist[-1], done, it
+
+
+def _solution_branch(d, s, y, Vint, B):
+    """Each contact's branch at the solution `y` of `Vint`, with that voltage's contacts
+    (`_contact_branch`); zeros without finite surface recombination."""
+    if "ct" not in s:
+        return jnp.zeros(4)
+    return _contact_branch(_full(_bounds(d, Vint), y), s, d["Vt"], B)
 
 
 def _freeze(s, ion, y, logs, Vt, flag):
@@ -862,9 +877,14 @@ def _solve_one(d, voltages, B, tol, max_iter, start_iter, strict, states=False):
     y, logs, _, pre_ok, _ = _newton_solve(
         y, logs, d, s, ion, first, g_frac, B, tol, start_iter, strict
     )
-    s, ion = _freeze(s, ion, y, logs, Vt, (d["pre_cond"] > 0) & (d["fix_ions"] > 0))
+    frozen = (d["pre_cond"] > 0) & (d["fix_ions"] > 0)
+    s, ion = _freeze(s, ion, y, logs, Vt, frozen)
+    # The pre-bias's solution fails the scan only where the scan's ions are its: else it is a
+    # start like any other, and a voltage converged from it is the steady state there.
+    pre_ok = pre_ok | ~frozen
 
     caps = step_caps(Vt)
+    contacts = "ct" in s
 
     def scan(carry, x):
         # The start: the last two converged solutions extrapolated linearly in the voltage
@@ -874,20 +894,23 @@ def _solve_one(d, voltages, B, tol, max_iter, start_iter, strict, states=False):
         # apart between neighbouring voltages) into the start, e^100 off (docs/solver.md).
         Vint, turn = x
         carry = jax.tree_util.tree_map(lambda s0, c: jnp.where(turn, s0, c), start, carry)
-        y, logs, y_prev, logs_prev, V_last, V_before = carry
+        y, logs, y_prev, logs_prev, V_last, V_before, branch = carry
         ratio = jnp.where(V_last != V_before, (Vint - V_last) / (V_last - V_before), 0.0)
         guess = y + jnp.clip(ratio * (y - y_prev), -caps, caps)
         logs_guess = logs + jnp.clip(ratio * (logs - logs_prev), -ION_LOG_CAP, ION_LOG_CAP)
+        # The contacts start in the last converged solution's branches (`solver._scan`).
         y_new, logs_new, J, ok, it = _newton_solve(
-            guess, logs_guess, d, s, ion, Vint, g_frac, B, tol, max_iter, strict
-        )
+            guess, logs_guess, d, s, ion, Vint, g_frac, B, tol, max_iter, strict,
+            branch=branch if contacts else None,
+        )  # fmt: skip
         # Only a converged, finite solution is carried on: one failed voltage costs that
         # voltage, not the rest of the scan.
         keep = ok & jnp.all(jnp.isfinite(y_new)) & jnp.all(jnp.isfinite(logs_new))
         # The carry only starts the next voltage: without derivatives.
+        branch_new = _solution_branch(d, s, y_new, Vint, B)
         carry = jax.tree_util.tree_map(
             lambda new, old: jnp.where(keep, new, old),
-            jax.lax.stop_gradient((y_new, logs_new, y, logs, Vint, V_last)),
+            jax.lax.stop_gradient((y_new, logs_new, y, logs, Vint, V_last, branch_new)),
             carry,
         )
         if states:
@@ -901,7 +924,8 @@ def _solve_one(d, voltages, B, tol, max_iter, start_iter, strict, states=False):
     below = jnp.searchsorted(voltages, first)
     j = jnp.arange(n)
     order = jnp.where(j < n - below, below + j, n - 1 - j)
-    start = jax.lax.stop_gradient((y, logs, y, logs, first, first))
+    start = jax.lax.stop_gradient((y, logs, y, logs, first, first,
+                                   _solution_branch(d, s, y, first, B)))  # fmt: skip
     _, out = jax.lax.scan(scan, start, (voltages[order], j == n - below))
     J, ok, its, *rest = (jnp.zeros_like(a).at[order].set(a) for a in out)
     return (J, ok & pre_ok, its, *rest)

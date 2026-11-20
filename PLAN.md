@@ -52,12 +52,14 @@ about two A100s).
   explained by SnO2 traps, a dipole (the same as SnO2's band edge) or photon recycling.
   **Done when** that decay is within the others' misfit with every parameter inside its bounds,
   or its misfit is traced to the measurement.
-- **Blocking contacts under bias.** Where the voltage drives the carrier a contact blocks
-  (`S` = 0, or small) into it, the steady state has an accumulation layer at the contact,
-  e^(V/V_T) above equilibrium, and Newton does not reach it from SIMsalabim's start, nor by
-  stepping the voltage (`tests/test_free_surface.py`'s stack, `W_R` 5.4 eV below 0 V, 4.0 eV
-  above). **Done when** such a state converges, or a start or continuation that reaches it is
-  found.
+- **Fermi–Dirac statistics.** At a blocking contact the accumulation `e^(|V|/V_T)` above
+  equilibrium passes the band's density of states a few tenths of a volt from equilibrium, and a
+  contact blocking both carriers under light must hold the whole difference between the
+  internal open circuit and the voltage: with Boltzmann statistics no state there in double
+  precision ([docs/solver.md](docs/solver.md#a-floor-above-1e-6)), and none that describes the
+  device. Blakemore's or the Gauss–Fermi integral bound the density by `N_c`; SIMsalabim has
+  neither, so switchable. **Done when** `tests/test_free_surface.py`'s stack converges at
+  `W_R` 5.4 eV and −0.5 V, the default unchanged to the bit.
 - **Impedance in the frequency domain**, from the steady state's Jacobian
   (`(J + iω·M)·δx = b`, one complex solve per frequency) instead of a transient per frequency.
   ZimT has no reference for it but its own time-domain response.

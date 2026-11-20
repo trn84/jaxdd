@@ -43,6 +43,10 @@ __all__ = ["JVResult", "StateResult", "bernoulli", "solve_jv", "solve_state"]
 #: solution, three orders below SIMsalabim's own `tolDens` of 1e-5.
 ROUND_OFF_FLOOR = 1e-6
 STALL_STEPS = 3
+#: Where the problem's own round-off floor lies above `ROUND_OFF_FLOOR` (`_noise_step`: an
+#: accumulation layer at a blocking contact, its flux far above the bulk's conductance), steps
+#: below that floor are the solution too, up to this (`batch.CURRENT_STEP_CAP`'s 1e-3).
+NOISE_FLOOR_CAP = 1e-3
 
 #: Densities below this share of the largest `N_c` do not count for convergence (m⁻³ there).
 DENSITY_FLOOR = 1e-12
@@ -1434,6 +1438,32 @@ def _ion_logs(V_full, ion):
     return jnp.where(bounded, refined, boltz)
 
 
+@functools.partial(jax.jit, static_argnames="bernoulli_name")
+def _noise_step(y, logs, bounds, s, ion, Vt, g_frac, bernoulli_name="exact"):
+    """The Newton step that the residual's round-off alone gives at `y`, measured as
+    `_newton_step` measures its step: each row's round-off taken as `ε·Σ|∂F/∂y|·|y|` over its
+    three points (a term's derivative in `ln n` is the term itself, `ln n` known to `ε·|ln n|`),
+    with one sign throughout, which reaches the smooth modes, and solved without the ions'
+    border. Pessimistic, by two orders where measured (docs/solver.md, "Convergence").
+
+    Where a carrier accumulates at a blocking contact (`e^(V/V_T)` above equilibrium) the
+    fluxes over the layer's small intervals are far larger than the conductance that ties its
+    quasi-Fermi level to the other contact, and the step's round-off reaches 1e-4 and more."""
+    la, lc = _point_logs(logs, ion)
+    full = jnp.concatenate([bounds[0][None], y, bounds[1][None]])
+    _, A, B, C, _ = _assemble(full, s, Vt, g_frac, la, lc, BERNOULLI[bernoulli_name])
+    a = jnp.abs(full)
+    noise = jnp.finfo(full.dtype).eps * (
+        jnp.einsum("irc,ic->ir", jnp.abs(A), a[:-2])
+        + jnp.einsum("irc,ic->ir", jnp.abs(B), a[1:-1])
+        + jnp.einsum("irc,ic->ir", jnp.abs(C), a[2:])
+    )
+    X = _block_thomas(A, B, C, noise[..., None])[..., 0]
+    dens = jnp.exp(y[:, 1:])
+    weight = dens / (dens + s["n_floor"][:, None])
+    return jnp.maximum(jnp.max(jnp.abs(X[:, 0])) / Vt, jnp.max(jnp.abs(X[:, 1:]) * weight))
+
+
 @jax.jit
 def _poisson_step(y, bounds, s, ion, Vt):
     """One Newton step of Poisson's equation alone; the densities follow the potential, the
@@ -1740,11 +1770,20 @@ def _scan(dev: Device, voltages, g_frac, tol, max_iter, bernoulli_name):
             [dev.VL - 0.5 * dev.left_elec * Vint, np.log(dev.n_right), np.log(dev.p_right)],
         ])  # fmt: skip
 
-    def settle(y, logs, s, ion, Vint):
+    def solution_branch(y, s, Vint):
+        """Each contact's branch at the solution `y` of `Vint`, with that voltage's contacts:
+        the start of the next voltage's (`settle`)."""
+        if "ct" not in s:
+            return None
+        b = bounds_at(Vint)
+        full = jnp.concatenate([b[0][None], y, b[1][None]])
+        return _contact_branch(full, s, dev.Vt, BERNOULLI[bernoulli_name])
+
+    def settle(y, logs, s, ion, Vint, held=None):
         """Newton to `tol`, or to the round-off floor: a step below `ROUND_OFF_FLOOR` that has
         stopped falling for `STALL_STEPS` iterations. With finite surface recombination, each
-        contact's branch held from the start and changed only near convergence
-        (`BRANCH_FLIP_SIZE`); converged only where it holds at the solution."""
+        contact's branch held from the start (`held`, else decided at `y`) and changed only
+        near convergence (`BRANCH_FLIP_SIZE`); converged only where it holds at the solution."""
         bounds = bounds_at(Vint)
         B = BERNOULLI[bernoulli_name]
         contacts = "ct" in s
@@ -1753,8 +1792,10 @@ def _scan(dev: Device, voltages, g_frac, tol, max_iter, bernoulli_name):
             full = jnp.concatenate([bounds[0][None], y, bounds[1][None]])
             return _contact_branch(full, s, dev.Vt, B, held)
 
-        held = branch(y) if contacts else None
+        if contacts and held is None:
+            held = branch(y)
         sizes: list[float] = []
+        floor = None  # the problem's round-off floor (`_noise_step`), once steps stall above 1e-6
         steps = 0
         while steps < max_iter:
             s_now = dict(s, ct=dict(s["ct"], branch=held)) if contacts else s
@@ -1766,10 +1807,15 @@ def _scan(dev: Device, voltages, g_frac, tol, max_iter, bernoulli_name):
             done = sizes[-1] < tol or (
                 len(recent) > STALL_STEPS and max(recent) < ROUND_OFF_FLOOR
                 and min(recent[1:]) >= 0.1 * recent[0])  # fmt: skip
+            if not done and len(recent) > STALL_STEPS and max(recent) < NOISE_FLOOR_CAP:
+                if floor is None:
+                    floor = float(_noise_step(y, logs, bounds, s_now, ion, dev.Vt, g_frac,
+                                              bernoulli_name=bernoulli_name))  # fmt: skip
+                done = max(recent) < floor
             if contacts and (done or sizes[-1] < BRANCH_FLIP_SIZE):
                 now = branch(y, held)
                 if bool(jnp.any(now != held)):
-                    held, sizes, done = now, [], False
+                    held, sizes, done, floor = now, [], False, None
             if done:
                 return y, logs, True, steps
         return y, logs, False, steps
@@ -1800,15 +1846,21 @@ def _scan(dev: Device, voltages, g_frac, tol, max_iter, bernoulli_name):
         if ok:
             y_b, logs_b, ok, _ = settle(y_b, logs_b, s, ion, first)
         y, logs = (y_b, logs_b) if ok else poisson_start(y0, s, ion)
+    # Each voltage's contacts start in the branches of the last converged solution, not in those
+    # its start shows: that is the last solution with the new voltage's contacts, the change of
+    # voltage across the contact's interval alone, which can show a carrier extracted that is
+    # not (docs/solver.md, "Contacts with finite surface recombination").
+    held = None
     if dev.pre_cond:
         y, logs, ok, _ = settle(y, logs, s, ion, dev.V_pre)
         if not ok:
             raise RuntimeError(f"no convergence at the pre-bias {dev.V_pre} V")
+        held = solution_branch(y, s, dev.V_pre)
         if dev.fix_ions:
             s, ion = _freeze(s, ion, y, logs, None, dev.Vt)
 
     for Vint in voltages:
-        y_new, logs_new, ok, it = settle(y, logs, s, ion, float(Vint))
+        y_new, logs_new, ok, it = settle(y, logs, s, ion, float(Vint), held)
         bounds = bounds_at(float(Vint))
         full = _mirrored(dev, _with_contacts(
             jnp.concatenate([bounds[0][None], jnp.asarray(y_new), bounds[1][None]]), s, dev.Vt,
@@ -1817,4 +1869,5 @@ def _scan(dev: Device, voltages, g_frac, tol, max_iter, bernoulli_name):
         # voltage, not the rest of the scan.
         if ok and np.isfinite(full).all() and np.isfinite(np.asarray(logs_new)).all():
             y, logs = y_new, logs_new
+            held = solution_branch(y, s, float(Vint))
         yield Vint, full, ok, it, _ions_on_grid(y_new, logs_new, s, ion, dev.Vt)

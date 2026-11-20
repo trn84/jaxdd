@@ -130,9 +130,8 @@ def test_a_free_stack_is_neutral_without_field_beyond_its_ends() -> None:
 def test_the_free_surface_is_not_a_blocking_contact() -> None:
     """SimSS's nearest device, a blocking contact (S = 0) in place of the free end, gives an
     implied V_oc that moves with the contact's work function and the voltage; the free end's
-    is one number. Each state converged: where the voltage drives the blocked carrier into
-    the contact (an accumulation layer, e^(V/V_T) above equilibrium) Newton does not reach it
-    from SIMsalabim's start (PLAN.md), so the work functions and voltages are those it reaches."""
+    is one number. Each state converged; where the voltage drives the blocked carrier into the
+    contact, see `test_a_blocking_contact_under_bias_converges`."""
     free = solve_state(stack([HTL, {}], W_L=5.0, S=(-1, -1, 0, 0)))
     assert free.converged
     blocking = [solve_state(stack([HTL, {}], W_L=5.0, W_R=W, S=(-1, -1, 0, 0)), Vint=V)
@@ -153,6 +152,43 @@ def test_a_blocking_contact_in_equilibrium_converges() -> None:
         r = solve_state(d, g_frac=0.0)
         assert r.converged, S
         np.testing.assert_allclose(r.n * r.p, d.ni**2, rtol=1e-6)
+
+
+def test_a_blocking_contact_under_bias_converges() -> None:
+    """Where the voltage drives the blocked holes into the contact (`W_R` 5.4 eV, below 0 V)
+    they accumulate, e^(|V|/V_T) above equilibrium, and the step's round-off is 2e-4 at −0.2 V:
+    `solve_state` stops at the problem's own floor (`solver._noise_step`), the batch at its
+    settled current, and the two agree within it (docs/solver.md, "A floor above 1e-6")."""
+    d = stack([HTL, {}], W_L=5.0, W_R=5.4, S=(-1, -1, 0, 0), G_frac=0)
+    batch = solve_states(prepare([d]), [-0.2, -0.1], max_iter=200)
+    for k, V in enumerate((-0.2, -0.1)):
+        r = solve_state(d, Vint=V)
+        assert r.converged and bool(batch["converged"][0, k]), V
+        np.testing.assert_allclose(r.V, batch["V"][0, k], atol=1e-4)
+        np.testing.assert_allclose(np.log(r.p), np.log(batch["p"][0, k]), atol=2e-3)
+    # The accumulation e^(V/V_T) above p_eq beyond N_v: no state in double precision.
+    assert np.log(d.p_right) + 0.5 / d.Vt > np.log(np.asarray(d.N_c)[-2]) + 10
+
+
+def test_a_scan_starts_each_voltage_in_the_last_solution_branch() -> None:
+    """Scanned up from −0.5 V in the dark with `W_R` 4.0 eV, each voltage's start (the last
+    solution with the new contacts) showed the right contact's electrons extracted; with
+    `S` = 0 they were blocked at both ends and Newton left the solution: every voltage above
+    −0.5 V failed, each converging from a cold start. Started in the last solution's branches
+    every voltage converges, in both solvers (docs/solver.md, "The start's branch")."""
+    d = stack([HTL, {}], W_L=5.0, W_R=4.0, S=(-1, -1, 0, 0), G_frac=0)
+    V = np.array([-0.5, -0.2, -0.1, 0.0, 0.2])
+    assert solve_jv(d, V).converged.all()
+    assert np.asarray(solve_batch(prepare([d]), V, max_iter=200)[1]).all()
+
+
+def test_a_failed_first_voltage_fails_only_itself() -> None:
+    """Without a pre-bias the batch's first solve, at the lowest voltage, is a start like any
+    other: where it fails (`W_R` 5.4 eV at −0.5 V, the holes' accumulation beyond `N_v`) the
+    voltages that converge from it are still converged. Only frozen ions make it the scan's."""
+    d = stack([HTL, {}], W_L=5.0, W_R=5.4, S=(-1, -1, 0, 0), G_frac=0)
+    ok = np.asarray(solve_batch(prepare([d]), np.array([-0.5, 0.0, 0.2]), max_iter=60)[1])[0]
+    assert not ok[0] and ok[1:].all()
 
 
 #: A perovskite's ions: mobile anions over immobile cations, 1e18 cm⁻³ each.

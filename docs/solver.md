@@ -423,6 +423,18 @@ blocking contact did not converge even in the dark at 0 V. The tie is no wider: 
 branch the density's relative error moves the flux by `a·n_eq` times it, and at 1e-12 a ZimT
 transient's QFLS was 4e-9 V off. Devices without a finite `S` have no contact state and skip all of it, to the bit.
 
+**The start's branch.** A voltage of a scan starts in the branches the last converged solution
+has, with its own contacts (`solver._scan`'s `solution_branch`, the batch's
+`_solution_branch`, carried with the scan and the pre-bias's solution at a turn), not in those
+its start shows. The start is the last solution with the new voltage's contacts: the voltage's
+change lies across the contact's interval alone (on the graded grid 1 pm at the end), and the
+condition's density there can show a carrier extracted that is not. With `S` = 0 the carrier
+is then blocked at both ends (behind a barrier at the other), Newton leaves the solution
+and, its step never below `BRANCH_FLIP_SIZE`, never changes the branch back: in
+`tests/test_free_surface.py`'s stack with `W_R` 4.0 eV, scanned up from −0.5 V in the dark, every
+voltage above failed, each converging from a cold start. The first voltage, without a converged
+solution before it, takes the branches its start shows.
+
 ### Free surfaces
 
 At a free end ([model.md](model.md#free-surfaces-jaxdds-w_l-or-w_r--free)) only the stencils of
@@ -495,6 +507,7 @@ these holds:
 |---|---|---|
 | step below tolerance | step < `tol` (1e-10) | both solvers |
 | round-off floor | the last four steps all below 1e-6, and none of the last three below a tenth of the first: the step has stopped falling | both solvers |
+| the problem's round-off floor | the last four steps all below 1e-3 and below the step the residual's round-off alone gives ([below](#a-floor-above-1e-6)) | `solve_jv`, `solve_state` |
 | quadratic stop | step < 1e-5 and below 1e-2 of the one before: in the quadratic regime the remaining error is about the step squared (1e-10), so the step that would only confirm it is not taken | `solve_batch` unless `strict` |
 | settled current | step < 1e-3 and the terminal current unchanged to 1e-5 of the current scale over the last four steps | `solve_batch` unless `strict` |
 
@@ -503,6 +516,37 @@ shortcuts: together they save about a quarter of the Newton steps (2.60 per volt
 of 3.51). Checked against `strict=True` on 2014 devices of a perovskite parameter table and the
 ion cases, they change `J` by at most 1.2e-10 of the generation current, in the median by 4e-12
 (`validation/shortcuts.py`).
+
+### A floor above 1e-6
+
+Some states are not resolved to 1e-6 in double precision. Where a carrier accumulates at a
+blocking contact (`S` = 0, the voltage driving it in: `e^(V/V_T)` above equilibrium) its
+quasi-Fermi level there is tied to the other contact only through the bulk's conductance, while
+the fluxes over the layer's intervals, drift and diffusion cancelling, are far larger. The
+step's round-off is about `ε·|ln p|·(p_layer/p_bulk)·(L/h)`: in `tests/test_free_surface.py`'s
+stack at `W_R` 5.4 eV and −0.2 V in the dark, `p` 2e24 m⁻³ in the layer against 5e17 in the
+bulk on 1 pm intervals, 2e-4, which is what the steps do, at random between 1e-5 and 1e-3, with
+the dense pivoted solve the same as the sweep. The fixed floor never saw such a voltage converged.
+
+`solve_jv` and `solve_state` estimate the floor (`solver._noise_step`) once the last four steps
+are below 1e-3 without converging: each row's round-off taken as `ε·Σ|∂F/∂y|·|y|` (a term's
+derivative in `ln n` is the term itself, and `ln n` is known to `ε·|ln n|`), one sign
+throughout, which reaches the smooth modes, through the same sweep. Pessimistic by about two
+orders where measured (5e-2 against 2e-4; on an ordinary device 4e-7, below the fixed floor,
+which then decides as before). Steps all below it and below 1e-3 are the solution. The batch
+needs no estimate: its settled current stops such a voltage (`settled current`, its cap the
+same 1e-3). The two solvers' states then agree within the floor (at −0.2 V `V` to 1e-5 V,
+`ln p` to 5e-4).
+
+The current there is no better than the state: the bulk carries the conductance times the
+quasi-Fermi level's uncertainty, at −0.2 V about 1e-2 A/m² (5e-5 of the generation current),
+in either solver's value and any formula's.
+
+Where the accumulation would pass the band's density of states (`ln p_eq + |V|/V_T` above
+`ln N_v`, at 5.4 eV beyond −0.2 V, where it reaches it), or where a contact blocking both carriers under light must
+hold the difference between the internal open circuit and the voltage applied, the state does
+not exist in double precision: the floor is above 1, and Boltzmann statistics there are no
+model of the device anyway. Such a voltage stays not converged.
 
 ### Densities below the floor
 

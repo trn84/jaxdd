@@ -241,6 +241,31 @@ whole, crosses most intervals of the axis and needs the points everywhere. On su
 refinement saves the points an axis does not need, not more
 ([validation.md](validation.md#a-table-with-refined-axes)).
 
+### A sparse grid
+
+For such a feature `jaxdd.sparse` places the points one by one instead, where the interpolation
+misses, on no tensor product:
+
+```python
+from jaxdd.sparse import interpolate_sparse, refine_sparse
+
+ranges = [(1e21, 4e24), (0.0, 1.0)]
+g = refine_sparse(in_chunks(curves, 512), ranges, tol=3e-2, log=[True, False])
+g.points, g.values                  # the points solved and their curves
+J = interpolate_sparse(g, np.array([[3e23, 0.4]]))
+```
+
+The interpolant is a sum of piecewise multilinear hats, each grid point's as wide as its level
+along each axis; a point's surplus is what its value adds to the interpolant of the points
+before it. Where it is above `tol` the point's children (the points of the next level beside it
+along each axis) are added, with every ancestor they need, and each round solves its new points
+as one call. It starts from five points per axis, as `refine_axes` usually does, and has the same
+first limit: it cannot find a feature its start misses. Its `estimate` is the largest surplus of
+the last points added; the error between the points was up to 1.4 times `tol`, so a table for
+an error of 5e-2 takes a `tol` of 3e-2. On the perovskite cell's table of
+[validation.md](validation.md#a-table-with-refined-axes) that is 10 858 points where the refined
+axes took 50 274.
+
 ## Transients
 
 ZimT's runs take the same devices through its time steps: a `tVGFile` named by the setup

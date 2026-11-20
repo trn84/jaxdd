@@ -533,6 +533,27 @@ solver at 4096 random points between the table's:
 | | even, each axis halved until it passes | 9, 17, 9, 9 | 12 393 | 8.6e-2 | 8.41e-2 | 5.16e-2 |
 | | equal on every axis | 9⁴ | 6 561 | 1.1e-1 | 9.76e-2 | 6.76e-2 |
 
+And a sparse grid (`jaxdd.sparse.refine_sparse`, the fourth way of `validation/axes.py`; no
+tensor product, from the same five points per axis), at the `tol` that keeps its error within
+each tolerance:
+
+| Tolerance | `tol` | Points | Estimate | Error, largest | 99th percentile | Levels per axis |
+|---|---|---|---|---|---|---|
+| 5e-2 | 3e-2 | 10 858 | 2.4e-2 | 4.07e-2 | 2.52e-2 | 6, 6, 6, 4 |
+| | 2e-2 | 17 791 | 1.8e-2 | 2.56e-2 | 1.83e-2 | 6, 7, 6, 5 |
+| | 5e-2 | 4 511 | 4.9e-2 | 6.10e-2 | 4.65e-2 | 5, 6, 5, 4 |
+| 1e-1 | 6e-2 | 3 807 | 4.3e-2 | 6.48e-2 | 4.96e-2 | 5, 6, 5, 4 |
+| | 1e-1 | 1 563 | 8.7e-2 | 1.20e-1 | 8.39e-2 | 4, 5, 4, 3 |
+
+Within 5e-2 it takes 10 858 points, 4.6 times fewer than the refined axes (50 274) and 7.7
+times fewer than 17⁴; within 1e-1 3 807, about half of 9⁴ or the refined axes. The levels it
+reaches (6 on the trap and ion densities and `x_ion`: 65 points' spacing) are those of a tensor
+product of 65⁴ = 1.8e7 points: the front is resolved where it is, not along whole axes. Its
+estimate, the last surpluses, is below the error by up to 1.4 (a point is refined only beyond
+`tol`, and the cells around one just below it keep their miss): take `tol` at about 0.6 of the
+error wanted. A round's surpluses take each new point against all earlier ones (the interpolant
+of N points at M points costs `N·M·d`), seconds per round at these sizes.
+
 At 5e-2 the refined table is within the tolerance with 1.7 times fewer devices than seventeen
 points on every axis, which is at it; the even axes do not pass their own test at 44 217 points
 and the next halving is beyond 100 000. At 1e-1 nine points on every axis are at the tolerance
@@ -846,6 +867,7 @@ jaxdd supports (JAX 0.4.31, NumPy 1.26, Python 3.11). The main ones:
 | `test_tvg_as_zimt_reads_it` | `read_tvg` as ZimT reads its `tVGFile`, and ZimT's checks on it |
 | `test_benchmark.py` | `benchmarks/run.py` hands SimSS exactly the devices jaxdd solves |
 | `test_free_surface.py` | free ends, where SimSS is no reference: a uniform film against its algebraic balance (1e-10), ambipolar diffusion to a recombining surface against the cosh solution (1e-5), one free end independent of the voltage and the contact's role, a charged HTL/absorber/ETL neutral with no field at its ends and its implied V_oc converged in the grid, a blocking contact (SimSS's nearest device) 0.1 V off and moving with its work function and voltage, with `F_{1/2}` converged to −0.5 V on the graded grid in both solvers, in time a uniform film's decay against implicit Euler in closed form (1e-9), a stack with mobile ions and charged traps through a decay converging at first order in the step, one free end not feeling its contact's voltage, Braun's generation and Langevin's rate in a field-dependent mobility in a film without field against their zero-field balance (1e-8), Braun's in a charged stack converged in the grid, mobile ions conserved in their layer with the film neutral and the same frozen after a pre-bias, a batch per device equal to `solve_state`, the implied V_oc's derivative in a surface's velocity against central differences ([model.md](model.md#free-surfaces-jaxdds-w_l-or-w_r--free)) |
+| `test_sparse.py` | `jaxdd.sparse` on functions whose answer is known: a multilinear function exact from its start (1e-12, log axes too), a peak in 2D within twice the tolerance and its points twice as dense near it, every point's hierarchical parents in the grid, NaN results left to the interpolant |
 | `test_axes.py` | `jaxdd.axes` on functions whose answer is known: the interpolation exact on multilinear functions; refined axes within the tolerance with fewer points than even ones on a peak; an axis refined for its part of a cell's error, not for a share; a feature the start misses is not found; the limits and NaN |
 
 `tests/data/` holds SimSS 5.36 runs, inputs and `JV.dat` unchanged, each described in

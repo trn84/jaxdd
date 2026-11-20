@@ -1,7 +1,8 @@
 """M6: a table of a perovskite cell's photo-collection, its axes refined by `jaxdd.axes`
 against evenly spaced ones.
 
-    python validation/axes.py [tol] [chunk] [test_points] [max_size]   # e.g. 5e-2 512 4096 100000
+    python validation/axes.py [tol] [chunk] [test_points] [max_size] [ways]
+    # e.g. 5e-2 512 4096 100000 refined,even,equal,sparse
 
 The cell is `tests/data/frozen_1e17_x1_thin_light` (ions frozen after a pre-bias, the case
 `validation/hard.py` varies), over four axes as a table of such cells has them: the absorber's
@@ -15,7 +16,8 @@ Three ways, each from five points per axis and none beyond a table of `max_size`
 "refined" (`refine_axes`), "even" (evenly spaced axes, each halved until the table passes the
 same test: the numbers per axis a careful hand would choose) and "equal" (the same number of
 evenly spaced points on every axis, doubled until the table's error at the test points is
-within the tolerance).
+within the tolerance); and "sparse" (`jaxdd.sparse.refine_sparse`, a spatially adaptive
+sparse grid from the same five points per axis, not a tensor product).
 
 Prints, for each, the axes' points, the table's size (the devices a table of it costs, two per
 point), its estimated error, and its error at `test_points` random points between its points,
@@ -35,6 +37,7 @@ from jaxdd.axes import in_chunks, interpolate, refine_axes
 from jaxdd.batch import device_tree, solve_batch
 from jaxdd.device import device_parameters
 from jaxdd.simss_input import read_setup
+from jaxdd.sparse import interpolate_sparse, refine_sparse
 
 CASE = Path(__file__).resolve().parents[1] / "tests" / "data" / "frozen_1e17_x1_thin_light"
 V = np.round(np.arange(-0.2, 1.2 + 1e-9, 0.05), 6)
@@ -114,7 +117,8 @@ def _memo(evaluate):
     return memo
 
 
-def main(tol: float = 5e-2, chunk: int = 512, n_test: int = 4096, max_size: int = 100000) -> None:
+def main(tol: float = 5e-2, chunk: int = 512, n_test: int = 4096, max_size: int = 100000,
+         ways: str = "refined,even,equal") -> None:  # fmt: skip
     print(f"JAX {jax.__version__} on {jax.devices()}; tol {tol}, chunk {chunk}", flush=True)
     chunked = in_chunks(eta, chunk)
 
@@ -142,12 +146,25 @@ def main(tol: float = 5e-2, chunk: int = 512, n_test: int = 4096, max_size: int 
               f"table error max {worst:.2e}, 99th pct {p99:.2e}", flush=True)  # fmt: skip
         return worst
 
+    ways = ways.split(",")
+    if "sparse" in ways:
+        print("sparse:", flush=True)
+        g = refine_sparse(evaluate, RANGES, tol, log=LOG, max_points=max_size)
+        gap = np.abs(interpolate_sparse(g, test) - truth)
+        print(f"sparse   {len(g.levels)} points ({2 * len(g.levels)} devices), {g.rounds} rounds, "
+              f"{g.stopped}; estimate {g.estimate:.1e}, NaN {g.nan}; error max "
+              f"{np.nanmax(gap):.2e}, 99th pct {np.nanpercentile(np.nanmax(gap, axis=1), 99):.2e}; "
+              f"levels per axis up to {g.levels.max(0).tolist()}", flush=True)  # fmt: skip
     for name, even in (("refined", False), ("even", True)):
+        if name not in ways:
+            continue
         print(f"{name}:", flush=True)
         r = refine_axes(evaluate, _even(5), tol, log=LOG, max_size=max_size, even=even)
         report(name, r)
         for n, a in zip(NAMES, r.axes, strict=True):
             print(f"    {n:9s}", np.array2string(a, precision=3, max_line_width=200))
+    if "equal" not in ways:
+        return
     print("equal: the same number of evenly spaced points on every axis", flush=True)
     n = 5
     while n**4 <= max_size:
@@ -159,4 +176,4 @@ def main(tol: float = 5e-2, chunk: int = 512, n_test: int = 4096, max_size: int 
 
 if __name__ == "__main__":
     args = sys.argv[1:]
-    main(float(args[0]) if args else 5e-2, *(int(a) for a in args[1:4]))
+    main(float(args[0]) if args else 5e-2, *(int(a) for a in args[1:4]), *args[4:5])

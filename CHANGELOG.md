@@ -14,6 +14,11 @@ the API, and says so here.
   potential at a constant mobility, the Scharfetter–Gummel flux with the excess chemical
   potential `−ln(1 − n/N_max)` beside the potential's (ChargeTransport.jl's scheme;
   docs/model.md). Without sites every transient is the same to the bit.
+- **Sparse grids.** `jaxdd.sparse.refine_sparse(evaluate, ranges, tol)`: a spatially adaptive
+  sparse grid (piecewise multilinear hierarchical basis, children where a surplus exceeds
+  `tol`, each round in one call) and `interpolate_sparse`. On a perovskite cell's table over
+  four axes within 5e-2 with 10 858 points where `jaxdd.axes.refine_axes` took 50 274
+  (docs/validation.md).
 - **Impedance in the frequency domain.** `jaxdd.solve_impedance(batch, frequencies, voltage)`:
   one complex linear solve per frequency at the steady state, with mobile ions (each region's
   number kept), the bulk traps' occupations at their own rates, a series resistance and a

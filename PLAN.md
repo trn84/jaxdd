@@ -32,12 +32,6 @@ about two A100s).
 
 ## 3 Later
 
-- **Samples that are not a tensor product**, sparse grids (Smolyak) or scattered samples with a
-  surrogate (a GP or a small network): a feature that lies across the axes costs a tensor
-  product its points everywhere ([docs/validation.md](docs/validation.md#a-table-with-refined-axes)),
-  and in 7–9 dimensions a table is out of reach. The price is a model evaluation instead of an
-  interpolation. **Done when** such a sample meets a table's tolerance with fewer devices than
-  `refine_axes`.
 - **TRPL, the SnO2 stack lit from the top.** With saturable interface states, the pulse's
   absorbed share by side and SnO2's band edge from 4.0 eV the eight decays of Kober-Czerny et
   al. fit to 0.091 decades rms; the SnO2 stack lit from the top stays at 0.20, the rest 0.04–0.07

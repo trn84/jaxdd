@@ -32,12 +32,20 @@ about two A100s).
 
 ## 3 Later
 
-- **Ions bounded by their sites in time.** The steady state has them (docs/model.md), a
-  transient refuses them: in time the ions need a flux of their own, nonlinear diffusion at a
-  constant mobility or a modified drift at a constant diffusivity (the same steady state,
-  different dynamics; Abdel, Courtier, Farrell 2023), a choice for its users. **Done when** one
-  (or both, switchable) is in `solve_transient`, against IonMonger's or ChargeTransport.jl's
-  transients where those exist.
+- **Ions bounded by their sites in time.** The steady state has them (docs/model.md) and
+  agrees with ChargeTransport.jl's (docs/validation.md); a transient refuses them: in time the
+  ions need a flux of their own. First ChargeTransport's, the flux of the electrochemical
+  potential at a constant mobility (nonlinear diffusion; a modified drift at a constant
+  diffusivity has the same steady state and other dynamics, Abdel, Courtier, Farrell 2023, and
+  waits for a reference). **Done when** it is in `solve_transient` and a voltage's step and a
+  scan on `tests/data/chargetransport_ions`' cell agree with ChargeTransport.jl's transients
+  (`validation/chargetransport/psc_ions.jl`).
+- **Many ions.** ChargeTransport's Ex103 cell with its own 1.6e25 m⁻³ of vacancies (1.6e19 cm⁻³,
+  four times `validation/hard.py`'s largest) has no steady state in jaxdd even in equilibrium, with
+  sites or Boltzmann's ions (to 4e24 it does), and with 4e24 a cold start below −0.2 V fails
+  where the scan from 0 V converges. A start that reaches them (a continuation in the ions'
+  density, say). **Done when** that cell converges at 1.6e25 with Ex103's sites, at every voltage
+  of its scan.
 - **Samples that are not a tensor product**, sparse grids (Smolyak) or scattered samples with a
   surrogate (a GP or a small network): a feature that lies across the axes costs a tensor
   product its points everywhere ([docs/validation.md](docs/validation.md#a-table-with-refined-axes)),

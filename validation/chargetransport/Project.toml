@@ -1,0 +1,8 @@
+[deps]
+ChargeTransport = "25c3eafe-d88c-11e9-3031-f396758f002a"
+ExtendableGrids = "cfc395e8-590f-11e8-1f13-43a2532b2fa8"
+
+[compat]
+ChargeTransport = "1.10"
+ExtendableGrids = "1.19"
+julia = "1.10"

@@ -19,3 +19,4 @@ benchmarks/*.log
 benchmarks/samples/
 # Data that may not be redistributed, kept beside the scripts that read them
 validation/data/local/
+validation/chargetransport/Manifest.toml

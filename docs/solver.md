@@ -574,9 +574,19 @@ model of the device anyway. Such a voltage stays not converged.
 With Fermi–Dirac's statistics (`statistics="fermi-dirac"`, docs/model.md) the density stays
 below the band's: on SIMsalabim's grid (`grid="simss"`) that stack converges at every voltage to
 −0.5 V (in 5–70 Newton steps from 0 V in 0.05 V steps), the holes there 0.2 eV within the band.
-On the graded grid (its smallest interval 1 pm at the contact, 26 pm SIMsalabim's) Newton stalls
-beyond −0.2 V at a floor of 1e-3 to 1e-2 in the bulk's potential, above `NOISE_FLOOR_CAP`
-(PLAN.md); with Blakemore's on SIMsalabim's grid most voltages to −0.4 V converge.
+On the graded grid with the contacts' 1 pm intervals (26 pm on SIMsalabim's) Newton stalled
+beyond −0.2 V at a floor of 1e-3 to 1e-2 in the bulk's potential, above `NOISE_FLOOR_CAP`: the
+round-off grows as `L/h`. With another statistics than Boltzmann's the graded grid therefore
+starts its spacing at a contact from the contact layer's Debye length at its band's density of
+states, `√(ε·V_T/(q·N_c))` (`device._contact_d0`; 0.3 and 0.7 nm on that stack), the shortest
+length an accumulation bounded by `N_c` varies on. Every voltage to −0.5 V then converges, in
+both solvers (`tests/test_free_surface.py`); with a `d0` of 30 pm those to −0.35 V, of 3 pm those
+to −0.25 V. With Blakemore's the single solver converges to −0.35 V and the batch to −0.25 V
+(on SIMsalabim's grid most voltages to −0.4 V): its density approaches `N_c/0.27`, where its
+excess potential is singular. Boltzmann's grid is unchanged, its accumulation unbounded.
+A device whose contacts block both carriers at both ends (`S` = 0 for all four) exchanges no
+carrier with either, and its equilibrium with a degenerate layer did not converge on the coarser
+contacts (it did on 1 pm, by the start); such a device is a free film with electrodes.
 
 ### Densities below the floor
 

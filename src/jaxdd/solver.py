@@ -474,6 +474,8 @@ BRANCH_TIE = 1e-13
 #: Newton's steps on a contact's density where the carriers' statistics is not Boltzmann's
 #: (`_robin`): from Boltzmann's density, quadratic.
 CONTACT_NEWTON_STEPS = 12
+#: The largest step of that Newton in `ln n` (a density step of e^5, as the device's `STEP_CAPS`).
+CONTACT_STEP_CAP = 5.0
 
 
 def _robin(first, last, z0, zN, s, Vt, B):
@@ -516,7 +518,10 @@ def _robin(first, last, z0, zN, s, Vt, B):
 
     def step(_, ln_c):
         r, dr = jax.jvp(residual, (ln_c,), (jnp.ones_like(ln_c),))
-        return ln_c - r / dr
+        # held where it is not finite (a slope of 0 far from any solution), at most e^5 a step
+        delta = r / jnp.where(dr != 0, dr, 1.0)
+        delta = jnp.where(jnp.isfinite(delta) & (dr != 0), delta, 0.0)
+        return ln_c - jnp.clip(delta, -CONTACT_STEP_CAP, CONTACT_STEP_CAP)
 
     # A loop, its body traced once (unrolled, each step's F_{1/2}⁻¹ cost its Newton steps to
     # compile, in every one of the contacts' derivatives too); its derivatives are the

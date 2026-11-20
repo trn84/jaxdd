@@ -170,6 +170,22 @@ def test_a_blocking_contact_under_bias_converges() -> None:
     assert np.log(d.p_right) + 0.5 / d.Vt > np.log(np.asarray(d.N_c)[-2]) + 10
 
 
+def test_a_blocking_contact_with_fermi_dirac_converges_to_minus_half_a_volt() -> None:
+    """With `F_{1/2}` the holes driven into the blocking contact (`W_R` 5.4 eV) accumulate up to
+    `N_v`, not beyond: a state exists at every voltage. On the graded grid the contacts' spacing
+    then starts from the contact layer's Debye length at `N_c` (`device._contact_d0`, 0.3 and
+    0.7 nm here, where it was 1 pm): every voltage to −0.5 V converges, in both solvers (on the
+    1 pm intervals only those to −0.25 V, the step's round-off `L/h` times larger; docs/solver.md,
+    "A floor above 1e-6")."""
+    d = build_device(stack_setup([HTL, {}], W_L=5.0, W_R=5.4, S=(-1, -1, 0, 0), G_frac=0),
+                     statistics="fermi-dirac")  # fmt: skip
+    h = np.diff(np.asarray(d.x))
+    assert h[0] > 1e-10 and h[-1] > 1e-10
+    V = np.round(np.arange(-0.5, 0.0001, 0.05), 3)
+    assert solve_jv(d, V, max_iter=200).converged.all()
+    assert np.asarray(solve_batch(prepare([d]), V, max_iter=200)[1]).all()
+
+
 def test_a_scan_starts_each_voltage_in_the_last_solution_branch() -> None:
     """Scanned up from −0.5 V in the dark with `W_R` 4.0 eV, each voltage's start (the last
     solution with the new contacts) showed the right contact's electrons extracted; with

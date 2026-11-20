@@ -41,7 +41,9 @@ the API, and says so here.
   current. Interface traps and free surfaces compare with each point's own equilibrium, so a
   degenerate layer's recombine nothing at a flat Fermi level. A steady state with `F_{1/2}`
   compiles in a sixth of the time it took (a contact's Newton on its density as a loop, the
-  assembly's excess potentials once).
+  assembly's excess potentials once). On the graded grid the contacts' spacing then starts from
+  the contact layer's Debye length at `N_c` (it was 1 pm): a blocking contact's accumulation
+  converges to −0.5 V where it stalled beyond −0.2 V. Boltzmann's grid is unchanged.
 
 ### Fixed
 

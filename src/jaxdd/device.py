@@ -145,6 +145,18 @@ GRADED_POINTS_PER_EFOLD = 6.0
 GRADED_SMALLEST = 3e-12
 
 
+def _contact_d0(layer, T: float) -> float:
+    """The graded grid's `d0` at a contact under another statistics than Boltzmann's: the
+    contact layer's Debye length at its band's density of states, `√(ε·V_T/(q·N_c))` (from the
+    input's values; the grid stays what they make it), and not below `GRADED_SMALLEST`. There a
+    carrier's accumulation is bounded by `N_c`, and that is the shortest length it varies on;
+    finer intervals only multiply the step's round-off at a blocking contact
+    (`ε·|ln p|·(p_layer/p_bulk)·(L/h)`, docs/solver.md "A floor above 1e-6")."""
+    eps = EPS_0 * float(layer.raw["eps_r"])
+    debye = np.sqrt(eps * K_B * T / Q / (Q * float(layer.raw["N_c"])))
+    return max(GRADED_SMALLEST, float(debye))
+
+
 def _graded_layout(thicknesses: Sequence[str | float], NP: int,
                    beta: float = GRADED_POINTS_PER_EFOLD, d0: float = GRADED_SMALLEST,
                    contact_d0: tuple[float, float] | None = None):  # fmt: skip
@@ -580,7 +592,11 @@ def device_parameters(
     if grid not in GRIDS:
         raise ValueError(f"grid {grid!r}: one of {GRIDS}")
     if grid == "graded":
-        i0, i1, lid, raw, norm = _graded_layout([ly.raw["L"] for ly in layers], NP)
+        contact_d0 = None
+        if statistics != "boltzmann":  # the accumulation at a contact bounded by N_c
+            contact_d0 = tuple(_contact_d0(layers[k], setup.f("T")) for k in (0, -1))
+        i0, i1, lid, raw, norm = _graded_layout([ly.raw["L"] for ly in layers], NP,
+                                                contact_d0=contact_d0)  # fmt: skip
     else:
         i0, i1, lid, raw, norm = _layout([ly.raw["L"] for ly in layers], NP, grad, grid_split)
 

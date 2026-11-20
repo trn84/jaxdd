@@ -38,6 +38,12 @@ so it is differentiable in the thicknesses as that one is, and its points per la
 by the input's thicknesses as SIMsalabim's are. Where a curve is compared with SimSS's point by
 point, SIMsalabim's grid is the one to take ([differences.md](differences.md) §12).
 
+With another statistics than Boltzmann's (`statistics=`, below) the graded grid's `d₀` at the
+two contacts is the contact layer's Debye length at its `N_c`, `√(ε·V_T/(q·N_c))`, not 3 pm:
+there an accumulation is bounded by the band's density of states and varies on no shorter a
+length, and finer intervals only multiply the round-off at a blocking contact
+([solver.md](solver.md), "A floor above 1e-6"). The interfaces keep 3 pm (the ions' fields).
+
 A layer's share of the points, `FLOOR((NP − n_thin·5)·L/(Ltot − L_thin))`, is taken in exact
 arithmetic from the input's decimal values (`device.layer_points`). Where it is a whole number,
 SimSS's own rounding can give one point less; `build_device(setup, grid_split="simss")`

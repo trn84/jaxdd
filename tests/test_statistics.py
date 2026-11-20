@@ -115,9 +115,8 @@ def test_equilibrium_is_flat_with_interface_traps_and_free_surfaces() -> None:
     interface traps (each point's equilibrium at its own quasi-Fermi level,
     `solver._interface_degenerate`) and a degenerate film's free surfaces (`_surface_srh`).
     Each carrier's quasi-Fermi level is flat to 1e-9 V where it is above `n_floor` (below it
-    its logarithm does not converge, nor count) and no current flows. With Boltzmann's `n_t0`,
-    `p_t0` at the interface traps the degenerate holes recombine in equilibrium: the holes'
-    level then bends by 1e-4 V and more."""
+    its logarithm does not converge, nor count) and no current flows. (The interface traps'
+    rates themselves: `test_interface_traps_balance_in_a_degenerate_equilibrium`.)"""
     from jaxdd.batch import prepare, solve_states
 
     def spread(dev, res):  # each carrier's quasi-Fermi level's spread, above `n_floor`
@@ -136,7 +135,9 @@ def test_equilibrium_is_flat_with_interface_traps_and_free_surfaces() -> None:
         return out
 
     devices = {
-        "interface": stack_setup([DEGENERATE_HTL, {}], W_L="sfb", W_R=4.275, G_frac=0),
+        "interface": stack_setup(
+            [DEGENERATE_HTL, {}], W_L="sfb", W_R=4.275, S=(-1, -1, -1, -1), G_frac=0
+        ),
         "film": stack_setup([{"N_A": "1.5e24"}], S=(1e2, 1e2, 1e2, 1e2), G_frac=0),
     }
     for name, setup in devices.items():
@@ -147,9 +148,29 @@ def test_equilibrium_is_flat_with_interface_traps_and_free_surfaces() -> None:
         assert spread(dev, res) < 1e-9, name
         if name == "interface":
             assert abs(float(res["J"][0, 0])) < 1e-9
-            ti = {k: v for k, v in batch["s"]["ti"].items() if k != "stat"}
-            res = solve_states(dict(batch, s=dict(batch["s"], ti=ti)), [0.0], max_iter=200)
-            assert spread(dev, res) > 1e-4
+
+
+def test_interface_traps_balance_in_a_degenerate_equilibrium() -> None:
+    """At one Fermi level 0.05 eV inside the degenerate HTL's valence band (`p` 2.8 `N_v` there,
+    the densities `F_{1/2}`'s), each of the interface traps' four processes, each carrier's
+    capture at either point, vanishes by itself, to 1e-15 of the holes' capture: each point's
+    equilibrium at its own quasi-Fermi level (`solver._interface_degenerate`). With Boltzmann's
+    `n_t0`, `p_t0` the holes cross the interface through the traps, 3.9e-4 of their capture."""
+    d = build_device(stack_setup([DEGENERATE_HTL, {}], W_L="sfb", W_R=4.275,
+                                 S=(-1, -1, -1, -1)), statistics="fermi-dirac")  # fmt: skip
+    ti = jax.tree_util.tree_map(jnp.asarray, sv._stencils(d)["ti"])
+    k = int(np.argmax(np.asarray(ti["Nt"])))
+    W = 5.45
+    Ec, Ev, Nc = np.asarray(d.E_c), np.asarray(d.E_v), np.asarray(d.N_c)
+    n = jnp.asarray(Nc * np.asarray(st.density(jnp.asarray((Ec - W) / d.Vt), "fermi-dirac")))
+    p = jnp.asarray(Nc * np.asarray(st.density(jnp.asarray((W - Ev) / d.Vt), "fermi-dirac")))
+    assert float(p[k] / Nc[k]) > 2
+    scale = float(ti["Nt"][k] * ti["Cp"][k] * (p[k] + p[k + 1]))
+    rates = sv._interface_edges(n[:-1], n[1:], p[:-1], p[1:], ti)[:4]
+    assert max(abs(float(r[k])) for r in rates) < 1e-15 * scale
+    boltzmann = {key: v for key, v in ti.items() if key != "stat"}
+    rates = sv._interface_edges(n[:-1], n[1:], p[:-1], p[1:], boltzmann)[:4]
+    assert max(abs(float(r[k])) for r in rates) > 1e-4 * scale
 
 
 def test_what_another_statistics_refuses() -> None:

@@ -704,6 +704,41 @@ transport layer. Newton steps those in the density, not its logarithm, so that t
 with the rest although they do not count for convergence (docs/solver.md, "When is a voltage
 converged?"); the QFLS is then the converged solution's at every step (docs/validation.md).
 
+## Impedance (jaxdd's, `solve_impedance`)
+
+ZimT measures an impedance in time, a transient per frequency. jaxdd solves it in the frequency
+domain (`jaxdd.impedance`): at the steady state `y₀` at a voltage (`solve_states`), a small
+voltage `δV·e^(iωt)` drives `(J + iω·M)·δy = −(∂F/∂V)·δV`, with `J` the steady residual's
+Jacobian and `M` the time terms that implicit Euler adds over a step (`−fac·n` in each continuity
+row's own `ln n`). That is one complex block-tridiagonal solve per frequency, by the steady
+state's sweep.
+
+- **Mobile ions** are unknowns of their own, as in a transient (`_assemble_ions` at `dti` = 1, its
+  time terms `mass=True`). Each slot's number is a constraint, trapezoidal over its region as ZimT's
+  `Rescale_Ion_Density` keeps it. That constraint also matters numerically: without it, only the
+  time term `iω·n` fixes the ions' electrochemical potential in a region, and the system's
+  condition grows as `1/(ωτ)`. With sites, the flux is the one `ion_flux` names.
+- **The bulk traps' occupations** have their own time constant, `df/dt = b − a·f`. They are
+  eliminated point by point, `δf = (∂b − f·∂a)·δy/(iω + a)`, which replaces the steady Jacobian's
+  instantaneous occupation in the rates and in the traps' charge.
+- **The current** is a transient's, `batch._current`: the integral form over each point's control
+  volume, the ions' current and the displacement current, averaged over the intervals. It is
+  affine in `dti`, so `δJ = J_y·δy + iω·(J_y(1) − J_y(0))·δy`, plus the traps' rates beyond their
+  steady response (`tr["dU"]`). A single interval's Scharfetter–Gummel flux would not do: in a
+  doped layer it is the difference of majority fluxes of 1e9–1e12 A/m², which loses the
+  current to round-off.
+
+`Y = δJ/δV_int` in SIMsalabim's sign, and the external `Z = 1/(Y + G_shunt) + R_series`.
+
+With `dt=` the response is what `solve_transient` sees through implicit Euler at steps of `dt`:
+`(1 − e^(−iωΔt))/Δt` in place of `iω`, and the traps over each step as `_trap_step` solves them
+(the occupation at the step's end in the charge, its mean in the rates). This is what ZimT's
+impedance from a sine would measure at that step, except for the sine's amplitude and settling,
+and it is how the solve is tested against the transients ([validation.md](validation.md)).
+
+Refused: a free end (there is no circuit through it), interface traps (their occupations'
+dynamics are not built), ions frozen at a pre-bias.
+
 ## Constants
 
 SIMsalabim's, not CODATA's: `q = 1.6022e-19 C`, `k = 1.3807e-23 J/K`, `ε₀ = 8.8542e-12 F/m`. A

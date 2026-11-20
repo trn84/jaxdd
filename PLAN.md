@@ -53,9 +53,11 @@ about two A100s).
   intervals at the contact; docs/solver.md, "A floor above 1e-6"). **Done when** the two are
   solved with another statistics, and that stack converges at `W_R` 5.4 eV and −0.5 V on the
   graded grid (a smallest interval no smaller than a Debye length, say).
-- **Impedance in the frequency domain**, from the steady state's Jacobian
-  (`(J + iω·M)·δx = b`, one complex solve per frequency) instead of a transient per frequency.
-  ZimT has no reference for it but its own time-domain response.
+- **Impedance with interface traps**: their occupations on each interface's edge have their
+  own dynamics (`solver._interface_occupation`), as the bulk traps' do (`jaxdd.impedance`,
+  point by point there); `solve_impedance` refuses them. **Done when** the frequency solve
+  with `dt` is `solve_transient`'s sine response with interface traps, as without them
+  (`tests/test_impedance.py`).
 
 ## 4 Not planned
 

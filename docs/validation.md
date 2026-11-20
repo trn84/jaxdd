@@ -497,6 +497,20 @@ so that the solver is never the larger error in what is computed from it.
   electrochemical flux against the modified drift's reference is 0.13–0.51 off and 21 mV at
   1 ms, so the comparison tells the two apart.
 
+**Impedance** (`solve_impedance`, docs/model.md; `tests/test_impedance.py`, the Ex103 cell at
+500 points with its 1e21 m⁻³ of bulk traps). No other code gives it in the frequency domain, so
+it is checked against jaxdd's own transients and against its limits:
+
+- **Against the transients.** With `dt=`, against `solve_transient`'s response to a 0.1 mV sine
+  at 0.6 V, 40 steps a period and the last 4 of 12 periods fitted: 1.2e-8 in the dark at
+  10 kHz, 1.0e-8 lit at 100 kHz (the traps' occupations included), 1.6e-7 with the vacancies
+  at 1e-12 m²/Vs at 100 Hz. What is left is the sine's amplitude and its settling. The
+  continuous response differs from these by implicit Euler's error, 4–8 % at 40 steps a period.
+- **At 1e-7 Hz** the admittance is the steady current's slope in the voltage (`solve_states` at
+  ±10 µV) to 1e-5, the accuracy of that difference itself, with and without ions.
+- **At 1e14 Hz** the capacitance is the layers' dielectrics in series, `1/∫dx/ε`, to 1e-6. At
+  1 MHz it is five times that, the depletion layers' capacitance.
+
 When jaxdd and SimSS disagree, check SimSS first: its `errJ` at that voltage, its log for "No
 convergence", and a rerun at tight tolerances. The cases where SimSS was wrong so far are all in
 [differences.md](differences.md).
@@ -793,6 +807,7 @@ jaxdd supports (JAX 0.4.31, NumPy 1.26, Python 3.11). The main ones:
 | `test_a_dark_scan_with_a_density_far_below_the_floor_converges` | a dark scan with densities far below the convergence floor: every voltage converges, the current monotone and zero at 0 V, SimSS's curve (the extrapolated start, [solver.md](solver.md)) |
 | `test_free_ions_keep_their_number` | the ions' constraint holds to round-off |
 | `tests/test_steric.py` | ions bounded by their sites: Boltzmann's curve to the bit without sites and to 1e-10 with 1e35 m⁻³; at 10–100× the mean density no density above the sites, one electrochemical potential over the layer, the number kept; the start's normalisation; the blocks against autodiff in saturation; batch against one device, frozen against free at the pre-bias; the gradient in `N_max`; a hard device that cycled from Poisson's start converges from Boltzmann's; in time with sites at 1e35 Boltzmann's transient to 1e-9 with either ion flux, with 1e26 not, the modified drift without sites Boltzmann's to the bit; refused below the mean density |
+| `tests/test_impedance.py` | impedance: at 1e-7 Hz the steady slope to 1e-5, with and without ions; at 1e14 Hz the geometric capacitance; with `dt` `solve_transient`'s response to a small sine to 1e-7 (ions 1e-6), dark and lit; the series resistance and the shunt; refused at a free end and with interface traps |
 | `tests/test_statistics.py` | the carriers' statistics: TeSCA's `F_{1/2}` within 1 % of the integral, its inverse and `w`'s derivative, Blakemore's; the Jacobian with them against autodiff, row by row to 1e-12, a blocking contact's Newton included; Boltzmann's the default; refused at a free end |
 | `tests/test_chargetransport.py` | ions bounded by their sites against ChargeTransport.jl's Ex103 cell (1e24 on 1e25 sites, 4e24 on 2e25, and Ex103's own 1.6e25 on 1e27): equilibrium, dark and lit steady states, the densities, ions, potential and current on its nodes; voltages' steps in time on its times, the current, three states and the steady end, with the electrochemical flux and the modified drift; degenerate transport layers with Fermi–Dirac's and Blakemore's statistics, steady and after a voltage's step |
 | `test_the_block_sweep_solves_the_block_tridiagonal_system` | the sweep against a dense solve |

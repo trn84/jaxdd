@@ -322,6 +322,27 @@ The kernel depends on the grid alone, so one serves every device of a batch on t
 in [model.md](model.md#photon-recycling-jaxdds-in-time); on the TRPL of Kober-Czerny et al. it
 slows the decays as a smaller `k_rad` would ([validation.md](validation.md#trpl-without-electrodes)).
 
+## Impedance
+
+The impedance at a voltage is one linear solve per frequency at the steady state there, not a
+transient per frequency as with ZimT:
+
+```python
+import numpy as np
+from jaxdd import solve_impedance
+
+f = np.logspace(-2, 7, 91)                         # Hz
+r = solve_impedance(prepare(devices), f, voltage=0.6)
+r.Z            # Ω·m², devices × frequencies: with each device's series resistance and shunt
+r.Y            # S/m², the internal admittance δJ/δV_int
+r.capacitance  # F/m², Im(Y)/ω
+```
+
+Mobile ions follow the voltage at their own pace, and the bulk traps' occupations at theirs.
+`dt=` gives instead what `solve_transient` would measure with steps of `dt`, for a comparison
+with a transient (a sine's response, ZimT's way). A free end and interface traps are refused
+([model.md](model.md), "Impedance").
+
 ## Building devices in code
 
 `build_device` takes a `Setup`, which is the parsed files as strings. To vary parameters

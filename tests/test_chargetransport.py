@@ -30,11 +30,13 @@ CASES = {"dark": (-0.3, -0.2, -0.1, 0.0, 0.6, 1.0), "light": (0.0, 0.9)}
 TRAPS = (1e21, 1 / (1e21 * 3e-9), 1 / (1e21 * 3e-7))
 
 
-def device(ions, sites, G_frac, mu=None, doping=None, statistics="boltzmann", trap_share=1.0):
+def device(ions, sites, G_frac, mu=None, doping=None, statistics="boltzmann", trap_share=1.0,
+           NP=None, extra=()):  # fmt: skip
     """The cell with `ions` on `sites` in the perovskite; `doping` the transport layers' (the
     ETL's donors and the HTL's acceptors, else 1e24 m⁻³), `statistics` the carriers'.
     `trap_share`: that share of the perovskite's traps at the same lifetimes (their capture
-    coefficients over it), so that what they hold in time is that share."""
+    coefficients over it), so that what they hold in time is that share. `NP` the grid's points
+    (the reference's 2000), `extra` more `(file, key, value)` changes."""
     files = {name: (DATA / name).read_text() for name in ("L1.txt", "L2.txt", "L3.txt")}
     changes = [("L2.txt", "N_anion", ions), ("L2.txt", "N_cation", ions),
                ("L2.txt", "N_max_cation", sites)]  # fmt: skip
@@ -45,14 +47,17 @@ def device(ions, sites, G_frac, mu=None, doping=None, statistics="boltzmann", tr
         changes += [("L2.txt", "N_t_bulk", Nt * trap_share),
                     ("L2.txt", "C_n_bulk", Cn / trap_share),
                     ("L2.txt", "C_p_bulk", Cp / trap_share)]  # fmt: skip
+    changes += list(extra)
     if doping is not None:
         changes += [("L1.txt", "N_D", doping), ("L3.txt", "N_A", doping)]
     for name, key, value in changes:
         files[name], k = re.subn(rf"^{key} = \S+", f"{key} = {value:g}", files[name], flags=re.M)
         assert k == 1, key
     setup = (DATA / "simulation_setup.txt").read_text()
-    files["simulation_setup.txt"] = re.sub(r"^G_frac = \S+", f"G_frac = {G_frac}", setup,
-                                           flags=re.M)  # fmt: skip
+    setup = re.sub(r"^G_frac = \S+", f"G_frac = {G_frac}", setup, flags=re.M)
+    if NP is not None:
+        setup = re.sub(r"^NP = \S+", f"NP = {NP}", setup, flags=re.M)
+    files["simulation_setup.txt"] = setup
     return build_device(setup_from_texts(files), statistics=statistics)
 
 

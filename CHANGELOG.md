@@ -14,6 +14,12 @@ the API, and says so here.
   potential at a constant mobility, the Scharfetter–Gummel flux with the excess chemical
   potential `−ln(1 − n/N_max)` beside the potential's (ChargeTransport.jl's scheme;
   docs/model.md). Without sites every transient is the same to the bit.
+- **Impedance in the frequency domain.** `jaxdd.solve_impedance(batch, frequencies, voltage)`:
+  one complex linear solve per frequency at the steady state, with mobile ions (each region's
+  number kept), the bulk traps' occupations at their own rates, a series resistance and a
+  shunt (`ImpedanceResult`: `Z`, `Y`, `capacitance`). With `dt=` it is what `solve_transient`
+  sees through implicit Euler at that step: against its response to a small sine to 1e-7
+  (docs/model.md, docs/validation.md). Interface traps and a free end are refused.
 - **The ions' other dynamics.** `solve_transient(..., ion_flux="modified-drift")`: ions bounded
   by their sites flow with the drift modified by the free sites' share at a constant
   diffusivity, Bessemoulin-Chatard's scheme as ChargeTransport.jl's

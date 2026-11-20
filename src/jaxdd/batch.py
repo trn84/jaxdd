@@ -336,8 +336,8 @@ def _current_parts(d, full, g_frac, B=bernoulli):
     width = h[: NP + 1] if tr is None else tr["width"]
     zimt = tr is not None and "zimt_current" in tr
 
-    def carrier(sn, Vg, dens, mu, R, R_i, before):
-        U = R + R_i - G * g_frac
+    def carrier(sn, Vg, dens, mu, R, R_i, before, dU=0.0):
+        U = R + R_i - G * g_frac + dU
         U = U.at[0].set(0.0).at[-1].set(0.0)
         if tr is not None:
             # ZimT's takes the left contact's change too (a finite surface recombination moves
@@ -373,9 +373,12 @@ def _current_parts(d, full, g_frac, B=bernoulli):
     if w is not None:  # another statistics: the excess potentials beside the potential
         # (`solver._current`)
         Vgn, Vgp = Vgn - Vt * w[0], Vgp + Vt * w[1]
+    # `tr["dU"]`: each carrier's rate beyond the steady traps' (`jaxdd.impedance`: their
+    # occupations' own dynamics), on every point
+    dUn, dUp = tr["dU"] if tr is not None and "dU" in tr else (0.0, 0.0)
     parts = {
-        "Jn": sign * carrier(-1.0, Vgn, n, mu_n, Rn, R_int[0], before_n),
-        "Jp": sign * carrier(1.0, Vgp, p, mu_p, Rp, R_int[1], before_p),
+        "Jn": sign * carrier(-1.0, Vgn, n, mu_n, Rn, R_int[0], before_n, dUn),
+        "Jp": sign * carrier(1.0, Vgp, p, mu_p, Rp, R_int[1], before_p, dUp),
     }
     if tr is not None and "ions" in tr:  # mobile ions in time (ZimT's Jnion, Jpion)
         Ja, Jc = _ion_currents(d, _ion_full(full, d["ion"], Vt, B, tr["dti"]), tr, B)

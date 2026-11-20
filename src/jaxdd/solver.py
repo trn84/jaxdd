@@ -1249,7 +1249,7 @@ def _ion_constraints_time(full, logs, ion):
     return jnp.where(totals > 0, number / jnp.where(totals > 0, totals, 1.0) - 1.0, 0.0)
 
 
-def _assemble_ions(full, s, Vt, g_frac, logs, ion, B=bernoulli):
+def _assemble_ions(full, s, Vt, g_frac, logs, ion, B=bernoulli, mass=False):
     """A time step with mobile ions as unknowns (`jaxdd.transient`): the residual (NP × 5), its
     blocks `A, B, C` (NP × 5 × 5) and its columns in the slots (NP × 5 × K), from `full` (NP + 2 ×
     5: `V, ln n, ln p, ln a, ln c`).
@@ -1260,7 +1260,10 @@ def _assemble_ions(full, s, Vt, g_frac, logs, ion, B=bernoulli):
     Euler with the density before the step scaled by its slot's `exp(logs)`, the factor ZimT's
     `Rescale_Ion_Density` applies after each solve (`_ion_constraints_time` its constraint).
     With `dti = 0` (the steady state) the row is Boltzmann's, `logs` its normalisations, as
-    `_assemble`'s. Outside its regions the unknown is held at 0."""
+    `_assemble`'s. Outside its regions the unknown is held at 0. With `mass` also each row's
+    time term on its own unknown per unit of `dti` (NP × 5, the rows' scales included; 0 in
+    Poisson's and outside the ions' regions): the step's Jacobian is the flux's plus `dti` times
+    it (`jaxdd.impedance`)."""
     tr = s["tr"]
     dti = tr["dti"][0]
     full = _ion_full(full, ion, Vt, B, dti)
@@ -1330,16 +1333,19 @@ def _assemble_ions(full, s, Vt, g_frac, logs, ion, B=bernoulli):
         value = r(*args)
         z = jnp.zeros(NP)
         d = [jax.jvp(r, args, tuple(one if j == k else z for j in range(7)))[1] for k in range(7)]
-        return value, d
+        # the time term's derivative in the ion's own logarithm, per unit of `dti`
+        m = jnp.where(m_i > 0, -fac * jnp.exp(full[1:-1, col]) * scale, 0.0)
+        return value, d, m
 
-    out = []
+    out, masses = [], []
     for sn, col, mfull, mu_m, mu_p, before, lslot, inv in (
         (-1.0, 3, ma, s["mua_m"], s["mua_p"], tr["ions"]["a"], la_pt,
          ion["a_inv"] if sites else None),
         (1.0, 4, mc, s["muc_m"], s["muc_p"], tr["ions"]["c"], lc_pt,
          ion["c_inv"] if sites else None),
     ):  # fmt: skip
-        value, d = species(sn, col, mfull, mu_m, mu_p, before, lslot, inv)
+        value, d, m = species(sn, col, mfull, mu_m, mu_p, before, lslot, inv)
+        masses.append(m)
         F5 = F5.at[:, col].set(value)
         A5 = A5.at[:, col, 0].set(d[0]).at[:, col, col].set(d[3])
         B5 = B5.at[:, col, 0].set(d[1]).at[:, col, col].set(d[4])
@@ -1347,6 +1353,11 @@ def _assemble_ions(full, s, Vt, g_frac, logs, ion, B=bernoulli):
         out.append(d[6])
     U5 = U5.at[:, 3, :ka].set(out[0][:, None] * ion["a_slots"][:, 1:-1].T)
     U5 = U5.at[:, 4, ka:].set(out[1][:, None] * ion["c_slots"][:, 1:-1].T)
+    if mass:  # the carriers' time terms as `_assemble` adds them, the ions' (`species`)
+        sC = s["sC"]
+        M5 = jnp.stack([jnp.zeros(NP), -fac * jnp.exp(full[1:-1, 1]) * sC,
+                        -fac * jnp.exp(full[1:-1, 2]) * sC, *masses], -1)  # fmt: skip
+        return F5, A5, B5, C5, U5, M5
     return F5, A5, B5, C5, U5
 
 

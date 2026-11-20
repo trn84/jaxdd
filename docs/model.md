@@ -742,6 +742,10 @@ state's sweep.
 - **The bulk traps' occupations** have their own time constant, `df/dt = b − a·f`. They are
   eliminated point by point, `δf = (∂b − f·∂a)·δy/(iω + a)`, which replaces the steady Jacobian's
   instantaneous occupation in the rates and in the traps' charge.
+- **The interface traps' occupations** likewise, one per edge with traps, from both of its
+  points' densities (`_interface_beyond`): through their four rates and their charge they
+  couple the edge's two points, in the blocks `A`, `B` and `C` (`_interface_blocks`), and they
+  enter the current through each point's interface rate (`tr["dRi"]`).
 - **The current** is a transient's, `batch._current`: the integral form over each point's control
   volume, the ions' current and the displacement current, averaged over the intervals. It is
   affine in `dti`, so `δJ = J_y·δy + iω·(J_y(1) − J_y(0))·δy`, plus the traps' rates beyond their
@@ -757,8 +761,7 @@ With `dt=` the response is what `solve_transient` sees through implicit Euler at
 impedance from a sine would measure at that step, except for the sine's amplitude and settling,
 and it is how the solve is tested against the transients ([validation.md](validation.md)).
 
-Refused: a free end (there is no circuit through it), interface traps (their occupations'
-dynamics are not built), ions frozen at a pre-bias.
+Refused: a free end (there is no circuit through it) and ions frozen at a pre-bias.
 
 ## Constants
 

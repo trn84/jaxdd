@@ -363,9 +363,9 @@ r.Y            # S/m², the internal admittance δJ/δV_int
 r.capacitance  # F/m², Im(Y)/ω
 ```
 
-Mobile ions follow the voltage at their own pace, and the bulk traps' occupations at theirs.
+Mobile ions follow the voltage at their own pace, and the traps' occupations, in the bulk and at the interfaces, at theirs.
 `dt=` gives instead what `solve_transient` would measure with steps of `dt`, for a comparison
-with a transient (a sine's response, ZimT's way). A free end and interface traps are refused
+with a transient (a sine's response, ZimT's way). A free end is refused
 ([model.md](model.md), "Impedance").
 
 ## Building devices in code

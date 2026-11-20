@@ -24,7 +24,7 @@ the API, and says so here.
   number kept), the bulk traps' occupations at their own rates, a series resistance and a
   shunt (`ImpedanceResult`: `Z`, `Y`, `capacitance`). With `dt=` it is what `solve_transient`
   sees through implicit Euler at that step: against its response to a small sine to 1e-7
-  (docs/model.md, docs/validation.md). Interface traps and a free end are refused.
+  (docs/model.md, docs/validation.md), with interface traps too. A free end is refused.
 - **The ions' other dynamics.** `solve_transient(..., ion_flux="modified-drift")`: ions bounded
   by their sites flow with the drift modified by the free sites' share at a constant
   diffusivity, Bessemoulin-Chatard's scheme as ChargeTransport.jl's

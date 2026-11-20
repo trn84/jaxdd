@@ -332,6 +332,9 @@ def _current_parts(d, full, g_frac, B=bernoulli):
     R_int = (jnp.zeros_like(Rn), jnp.zeros_like(Rn))
     if "ti" in d["s"]:
         R_int = _interface_points(n, p, d["s"]["ti"])[:2]
+        if tr is not None and "dRi" in tr:  # their rates beyond the steady occupation's
+            # (`jaxdd.impedance`), on every point
+            R_int = (R_int[0] + tr["dRi"][0], R_int[1] + tr["dRi"][1])
     dx = jnp.diff(x[: NP + 1])
     width = h[: NP + 1] if tr is None else tr["width"]
     zimt = tr is not None and "zimt_current" in tr

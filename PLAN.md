@@ -40,12 +40,6 @@ about two A100s).
   explained by SnO2 traps, a dipole (the same as SnO2's band edge) or photon recycling.
   **Done when** that decay is within the others' misfit with every parameter inside its bounds,
   or its misfit is traced to the measurement.
-- **Impedance with interface traps**: their occupations on each interface's edge have their
-  own dynamics (`solver._interface_occupation`), as the bulk traps' do (`jaxdd.impedance`,
-  point by point there); `solve_impedance` refuses them. **Done when** the frequency solve
-  with `dt` is `solve_transient`'s sine response with interface traps, as without them
-  (`tests/test_impedance.py`).
-
 ## 4 Not planned
 
 - **A fused CUDA kernel**: decided against for now; why, and when it comes back, is in

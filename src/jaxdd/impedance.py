@@ -33,6 +33,7 @@ from jaxdd.solver import (
     _assemble_ions,
     _block_thomas,
     _degenerate,
+    _interface_degenerate,
     _ion_constraints_time,
     _ion_full,
     _ion_membership,
@@ -99,14 +100,116 @@ def _beyond_steady(s, n, p, lap, dt=None):
     `dQ`."""
     a, drive, dR, dQ = _trap_terms(s, n, p)
     unit = drive / a[..., None]  # δf₀ per unit of the logarithms
+    h_rate, h_charge = _step_transfer(a, lap, dt)
+    return unit * h_rate[..., None], unit * h_charge[..., None], dR, dQ
+
+
+def _step_transfer(a, lap, dt):
+    """`(δf − δf₀)/δf₀` of a trap level of rate `a` at `iω` = `lap`, in the rates and in the
+    charge (`_beyond_steady`): continuous both `−iω/(iω + a)`; over implicit Euler's steps of
+    `dt` the mean over a step and its end."""
     if dt is None:
         h = -lap / (lap + a)
-        return unit * h[..., None], unit * h[..., None], dR, dQ
+        return h, h
     x = a * dt
     E, m = jnp.exp(-x), -jnp.expm1(-x) / x
     den = 1.0 - E * (1.0 - lap * dt)  # 1 − E·z⁻¹
-    return (unit * (-m * lap * dt / den)[..., None], unit * (-E * lap * dt / den)[..., None],
-            dR, dQ)  # fmt: skip
+    return -m * lap * dt / den, -E * lap * dt / den
+
+
+def _interface_beyond(ti, n, p, lap, dt=None):
+    """The interface traps' occupation on each edge (NP + 1, over its levels) beyond its steady
+    response, per unit of the four logarithms it follows (`ln n`, `ln p` at the edge's left and
+    right point, `solver._interface_edges`: `f = b/a` with `a = C_n·(n_L + n_R + n_t0) + C_p·(p_L +
+    p_R + p_t0)`, `b = C_n·(n_L + n_R) + C_p·p_t0`), in the rates and in the charge
+    (`_step_transfer`), and the occupation's part in the four point rates `(R_n,L, R_n,R, R_p,L,
+    R_p,R)` and the charge: `(rate, charge, dR)`, `rate` and `charge` edges × levels × 4, `dR`
+    5 × edges × levels."""
+    Nt = ti["Nt"]
+
+    def terms(nL, nR, pL, pR):
+        t = _interface_degenerate(ti, nL, nR, pL, pR)
+        nl, nr, pl, pr, Cn, Cp, iw, charge = _per_level(
+            Nt, nL, nR, pL, pR, t["Cn"], t["Cp"], t["iw"], t["charge"])  # fmt: skip
+        nt0, pt0 = t["nt0_lo"] + t["nt0_hi"], t["pt0_lo"] + t["pt0_hi"]
+        a = Cn * (nl + nr + nt0) + Cp * (pl + pr + pt0)
+        b = Cn * (nl + nr) + Cp * pt0
+        an, bp = Cn * Nt, Cp * Nt
+        dR = jnp.stack([-iw * an * (nl + t["nt0_lo"]), -iw * an * (nr + t["nt0_hi"]),
+                        iw * bp * (pl + t["pt0_lo"]), iw * bp * (pr + t["pt0_hi"]),
+                        -charge * 0.5 * Nt * iw])  # fmt: skip
+        return a, b, dR
+
+    args = (n[:-1], n[1:], p[:-1], p[1:])
+    zero = jnp.zeros_like(args[0])
+    a, b, dR = terms(*args)
+    drive = []
+    for j in range(4):
+        tangent = tuple(v if k == j else zero for k, v in enumerate(args))
+        _, (da, db, _) = jax.jvp(terms, args, tangent)
+        drive.append(db - b / jnp.where(a > 0, a, 1.0) * da)
+    traps = Nt > 0
+    a = jnp.where(traps, a, 1.0)
+    unit = jnp.stack(drive, -1) / a[..., None]  # edges × levels × 4
+    h_rate, h_charge = _step_transfer(a, lap, dt)
+    dR = jnp.where(traps, dR, 0.0)
+    return unit * h_rate[..., None], unit * h_charge[..., None], dR
+
+
+def _interface_blocks(s, n, p, lap, dt=None):
+    """The interface traps' correction to the blocks `(A, B, C)` (NP × 3 × 3 each, complex) at
+    `iω` = `lap`: each edge's occupation beyond its steady response (`_interface_beyond`) in
+    its two points' rates and charge, through their own and each other's logarithms, with the
+    rows' scales (`solver._assemble`: Poisson's `+Q·X`, the continuity rows' `−fac·R`)."""
+    ti = s["ti"]
+    rate, charge, dR = _interface_beyond(ti, n, p, lap, dt)
+    NP = n.shape[0] - 2
+
+    def summed(v):  # over the levels where a trap file has several
+        return _summed(ti["Nt"], v, n[:-1])
+
+    def block(side, cols):  # edges × 3 rows × 2 columns: the point `side`'s rows, the columns
+        # (ln n, ln p) of the point `cols` (0 left, 1 right)
+        jn, jp = (0, 2) if cols == 0 else (1, 3)
+        rows = [
+            (dR[4], charge),
+            (dR[0 if side == 0 else 1], rate),
+            (dR[2 if side == 0 else 3], rate),
+        ]
+        return jnp.stack([jnp.stack([summed(d * x[..., jn]), summed(d * x[..., jp])], -1)
+                          for d, x in rows], -2)  # fmt: skip
+
+    def scaled(b, k):  # the rows of interior point `k` (its scales)
+        rs = jnp.stack([Q * s["sP"][k], -s["fac"][k] * s["sC"][k], -s["fac"][k] * s["sC"][k]], -1)
+        return jnp.concatenate([jnp.zeros_like(b[..., :1]), b], -1) * rs[..., None]
+
+    e = jnp.arange(1, NP)  # edges with both points interior
+    dA = jnp.zeros((NP, 3, 3), dtype=rate.dtype)
+    dB = jnp.zeros((NP, 3, 3), dtype=rate.dtype)
+    dC = jnp.zeros((NP, 3, 3), dtype=rate.dtype)
+    dB = dB.at[e - 1].add(scaled(block(0, 0)[e], e - 1)).at[e].add(scaled(block(1, 1)[e], e))
+    dC = dC.at[e - 1].add(scaled(block(0, 1)[e], e - 1))
+    dA = dA.at[e].add(scaled(block(1, 0)[e], e))
+    return dA, dB, dC
+
+
+def _interface_rates(s, n, p, lap, dy3, dt=None):
+    """Each point's electron and hole rate (NP + 2) of the interface traps beyond their steady
+    occupation, at the response `dy3` (NP × 3, complex): `batch._current_parts`' `tr["dRi"]`."""
+    ti = s["ti"]
+    rate, _, dR = _interface_beyond(ti, n, p, lap, dt)
+    full = jnp.pad(dy3, ((1, 1), (0, 0)))  # the contacts' logarithms do not move with traps
+    logs = jnp.stack([full[:-1, 1], full[1:, 1], full[:-1, 2], full[1:, 2]], -1)  # edges × 4
+    df = jnp.sum(rate * (logs[:, None, :] if rate.ndim == 3 else logs), -1)  # edges × levels
+
+    def summed(v):
+        return _summed(ti["Nt"], v, n[:-1])
+
+    def points(lo, hi):  # point k is the right point of edge k − 1 and the left one of edge k
+        return jnp.concatenate([lo[:1], hi[:-1] + lo[1:], hi[-1:]])
+
+    return (points(summed(dR[0] * df), summed(dR[1] * df)),
+            points(summed(dR[2] * df), summed(dR[3] * df)))  # fmt: skip
 
 
 def _trap_blocks(s, n, p, lap, dt=None):
@@ -182,15 +285,21 @@ def _admittance(d, state, ions_grid, Vint, g_frac, laps, B, ions, drift=False, d
     # The voltage's drive: the residual's derivative in the internal voltage (the contacts).
     _, dF = jax.jvp(lambda v: blocks(v)[0], (Vint,), (jnp.ones_like(Vint),))
     n, p = jnp.exp(y3[:, 1]), jnp.exp(y3[:, 2])
+    n_full, p_full = jnp.exp(state[:, 1]), jnp.exp(state[:, 2])
     eye = jnp.eye(y.shape[-1])
 
     def solve(lap):
         Bl = Bb + ((lap + shift) * M)[..., None] * eye
         Bl = Bl.at[:, :3, :3].add(_trap_blocks(s, n, p, lap, dt))  # 0 without traps
+        Al, Cl = A.astype(Bl.dtype), C.astype(Bl.dtype)
+        if "ti" in s:  # interface traps: each edge's occupation couples its two points
+            dA, dB, dC = _interface_blocks(s, n_full, p_full, lap, dt)
+            Al, Bl, Cl = (Al.at[:, :3, :3].add(dA), Bl.at[:, :3, :3].add(dB),
+                          Cl.at[:, :3, :3].add(dC))  # fmt: skip
         rhs = (-dF).astype(Bl.dtype)[..., None]
         if U is not None:  # bordered by the slots (`solver._newton_step`'s Schur complement)
             rhs = jnp.concatenate([rhs, U.astype(Bl.dtype)], -1)
-        X = _block_thomas(A.astype(Bl.dtype), Bl, C.astype(Bl.dtype), rhs)
+        X = _block_thomas(Al, Bl, Cl, rhs)
         if U is None:
             return X[..., 0]
         XF, XU = X[..., 0], X[..., 1:]
@@ -212,15 +321,20 @@ def _admittance(d, state, ions_grid, Vint, g_frac, laps, B, ions, drift=False, d
         tr0["ions"] = {"a": jnp.exp(full0[:, 3]) * ma, "c": jnp.exp(full0[:, 4]) * mc}
         tr0["ion_last"] = jnp.asarray(0.0)
 
-    def total(y_, Vint_, dti, dU):
-        tr = dict(tr0, dti=jnp.asarray(dti), dU=dU)
+    zRi = (jnp.zeros(NP + 2), jnp.zeros(NP + 2))
+
+    def total(y_, Vint_, dti, dU, dRi=zRi):
+        tr = dict(tr0, dti=jnp.asarray(dti), dU=dU, dRi=dRi)
         return _current(dict(d, tr=tr), _full(_bounds(d, Vint_), y_), g_frac, B)
 
     def linear(dy_real, dV, dti):  # `J_y·δy + J_V·δV` at `dti`
         return jax.jvp(lambda y_, v_: total(y_, v_, dti, zU), (y, Vint), (dy_real, dV))[1]
 
-    def rates(dU_real):  # the current's response to the carriers' rates
-        return jax.jvp(lambda u: total(y, Vint, 0.0, u), (zU,), (dU_real,))[1]
+    def rates(dU_real, dRi_real):  # the current's response to the carriers' rates
+        def of(u, r):
+            return total(y, Vint, 0.0, u, r)
+
+        return jax.jvp(of, (zU, zRi), (dU_real, dRi_real))[1]
 
     def beyond(lap, dy_):  # each carrier's rate beyond the steady traps', on every point
         excess, _, dR, _ = _beyond_steady(s, n, p, lap, dt)
@@ -234,7 +348,12 @@ def _admittance(d, state, ions_grid, Vint, g_frac, laps, B, ions, drift=False, d
         J0 = linear(dy_.real, one, 0.0) + 1j * linear(dy_.imag, none, 0.0)
         J1 = linear(dy_.real, one, 1.0) + 1j * linear(dy_.imag, none, 1.0)
         dUn, dUp = beyond(lap, dy_)
-        Ju = rates((dUn.real, dUp.real)) + 1j * rates((dUn.imag, dUp.imag))
+        if "ti" in s:
+            dRn, dRp = _interface_rates(s, n_full, p_full, lap, dy_[:, :3], dt)
+        else:
+            dRn = dRp = jnp.zeros(NP + 2, dtype=dUn.dtype)
+        Ju = (rates((dUn.real, dUp.real), (dRn.real, dRp.real))
+              + 1j * rates((dUn.imag, dUp.imag), (dRn.imag, dRp.imag)))  # fmt: skip
         return J0 + lap * (J1 - J0) + Ju
 
     out = jax.vmap(current)(laps, dy)  # frequencies
@@ -261,17 +380,13 @@ def solve_impedance(batch, frequencies, voltage=0.0, tol=1e-10, max_iter=60,
     `transient.solve_transient` sees through implicit Euler at steps of `dt` (its time terms at
     `(1 − e^(−iωΔt))/Δt` for `iω`, the traps' occupations over each step as it solves them):
     what ZimT's impedance from a sine would measure at that step, but for the sine's amplitude
-    and settling. Refused: a free end (no circuit), interface traps, ions frozen at a
-    pre-bias."""
+    and settling. Refused: a free end (no circuit), ions frozen at a pre-bias."""
     frequencies = np.atleast_1d(np.asarray(frequencies, dtype=float))
     if ion_flux not in ION_FLUXES:
         raise ValueError(f"ion_flux {ion_flux!r}: one of {ION_FLUXES}")
     s = batch["s"]
     if "free" in s:
         raise NotImplementedError("impedance with a free end: there is no circuit through it")
-    if "ti" in s:
-        raise NotImplementedError("impedance with interface traps: their occupations' dynamics "
-                                  "are not built (PLAN.md)")  # fmt: skip
     ion = batch["ion"]
     ions = bool(np.any(np.asarray(ion["a_totals"]) > 0) or np.any(np.asarray(ion["c_totals"]) > 0))
     if ions and np.any((np.asarray(batch["pre_cond"]) > 0) & (np.asarray(batch["fix_ions"]) > 0)):

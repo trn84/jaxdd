@@ -83,6 +83,20 @@ def test_implicit_euler_steps_are_the_transients_response(ions, f, G_frac, tol) 
     assert abs(continuous / Y_t - 1) > 1e-2
 
 
+@pytest.mark.parametrize("f, G_frac", [(1e4, 0.0), (1e5, 1.0)])
+def test_interface_traps_follow_at_their_own_rates(f, G_frac) -> None:
+    """Interface traps (1e16 m⁻² at both of the cell's interfaces) are each edge's occupation,
+    coupling its two points (`impedance._interface_blocks`) and in the current through each
+    point's rate (`tr["dRi"]`): with `dt` `solve_transient`'s response to a 10 µV sine to 1e-7
+    (1.2e-8 dark at 10 kHz, 2.3e-8 lit at 100 kHz; at 0.1 mV the sine's own nonlinearity is
+    1e-6 here). With their occupation instantaneous instead it was 3e-2 and 7e-2 off."""
+    traps = [("L1.txt", "N_t_int", 1e16), ("L2.txt", "N_t_int", 1e16)]
+    b = prepare([device(0.0, 1e25, G_frac, NP=NP, extra=traps)])
+    Y_t, dt = _sine_response(b, 0.6, f, amp=1e-5)
+    discrete = solve_impedance(b, [f], voltage=0.6, dt=dt, tol=1e-12).Y[0, 0]
+    assert abs(discrete / Y_t - 1) < 1e-7
+
+
 def test_the_series_resistance_and_the_shunt() -> None:
     """`Z = 1/(Y + G_shunt) + R_series`, `Y` the internal admittance."""
     d = device(0.0, 1e25, 0.0, NP=NP, extra=())
@@ -96,13 +110,10 @@ def test_the_series_resistance_and_the_shunt() -> None:
 
 
 def test_what_impedance_refuses() -> None:
-    """A free end (no circuit), interface traps, an unknown ion flux."""
+    """A free end (no circuit), an unknown ion flux."""
     from jaxdd.device import build_device
 
     with pytest.raises(NotImplementedError, match="free end"):
         solve_impedance(prepare([build_device(stack_setup([HTL, {}], W_L=5.0))]), [1e3])
-    trapped = device(0.0, 1e25, 0.0, NP=NP, extra=[("L1.txt", "N_t_int", 1e15)])
-    with pytest.raises(NotImplementedError, match="interface traps"):
-        solve_impedance(prepare([trapped]), [1e3])
     with pytest.raises(ValueError, match="ion_flux"):
         solve_impedance(prepare([device(0.0, 1e25, 0.0, NP=NP)]), [1e3], ion_flux="drift")

@@ -723,7 +723,7 @@ The tests compare with SimSS's and ZimT's runs on their grid (`grid="simss"`, a 
 `build_device` and `device_parameters` in `tests/test_solver.py`), ZimT's with its sums in
 the integral current (`zimt_current=True`, the wrapper `zimt_transient`); the graded grid's
 own tests name it. `pytest` runs on whatever JAX has (CPU or GPU), in parallel, one worker per physical core
-(pytest-xdist; `-n 0` for one process): on a 16-core desktop about 75 s, and 30 s once JAX's
+(pytest-xdist; on a GPU at most one per 2 GB of its memory, `tests/conftest.py`; `-n 0` for one process): on a 16-core desktop about 75 s, and 30 s once JAX's
 compilation cache (`.pytest_cache/jax`, `tests/conftest.py`) holds the programs; in one process
 it was 400 s. What is left is tracing, which JAX does not cache, and the gradients' finite
 differences, about 12 s each for the slowest. The CI (`.github/workflows/ci.yml`) runs them on

@@ -19,8 +19,8 @@ from jaxdd.transient import solve_transient
 DATA = Path(__file__).parent / "data" / "chargetransport_ions"
 #: Each layer's conduction band edge (eV): which of jaxdd's points are the layer's.
 E_C = (4.0, 3.7, 3.4)
-#: The voltages solved, from the pre-bias at 0 V outwards (from a cold start at −0.3 V with 4e24
-#: ions Newton does not converge: PLAN.md); those without a reference are steps on the way.
+#: The voltages solved, from the pre-bias at 0 V outwards; those without a reference are steps on
+#: the way.
 CASES = {"dark": (-0.3, -0.2, -0.1, 0.0, 0.6, 1.0), "light": (0.0, 0.9)}
 
 
@@ -43,7 +43,7 @@ def reference(name, case):
     return J, np.genfromtxt(path, delimiter=",", names=True, skip_header=1)
 
 
-@pytest.mark.parametrize("ions, sites", [(1e24, 1e25), (4e24, 2e25)])
+@pytest.mark.parametrize("ions, sites", [(1e24, 1e25), (4e24, 2e25), (1.6e25, 1e27)])
 def test_steady_states_with_sites_are_chargetransport_jl(ions, sites) -> None:
     """On the reference's nodes, within each layer's own points: `ln n`, `ln p` to 0.04 (spiro's,
     the rest to 0.01; with both grids refined spiro's falls to 3e-3), the ions' `ln` to 4e-3, the
@@ -51,7 +51,7 @@ def test_steady_states_with_sites_are_chargetransport_jl(ions, sites) -> None:
     1e-3 of itself where it is above 1e-3 A/m² (below, both are 0 to their accuracy). Densities
     below `n_floor` (1e-12 of the largest `N_c`: a doped transport layer's minority carriers in
     the dark, 1e-3 m⁻³ and less) do not count for convergence (docs/solver.md), nor here."""
-    name = f"ions{ions:.0e}_sites{sites:.0e}".replace("+", "")
+    name = f"ions{ions:g}_sites{sites:g}".replace("+", "")
     for kind, voltages in CASES.items():
         d = device(ions, sites, 1.0 if kind == "light" else 0.0)
         floor = 1e-12 * float(np.max(d.N_c))  # `n_floor`
@@ -85,23 +85,24 @@ def test_steady_states_with_sites_are_chargetransport_jl(ions, sites) -> None:
 
 
 #: The voltage steps: ions, sites, the step (V); the ions' mobility the reference's 1e-12 m²/Vs.
-#: With 4e24 m⁻³ of ions the transients agree as well (docs/validation.md), but on a GPU the
-#: steady state they start from fails in about one run of two, round-off deciding (PLAN.md,
-#: "Many ions"); 1e24 converges in every run.
-STEPS = ((1e24, 1e25, 1.0),)
+#: 1.6e25 on 1e27 sites is Ex103's own cell, which needs the start's stages in the ions' density
+#: (`batch._start`).
+STEPS = ((1e24, 1e25, 1.0), (4e24, 2e25, 0.6), (4e24, 2e25, 1.0), (1.6e25, 1e27, 1.0))
 
 
 def test_transients_with_sites_are_chargetransport_jl() -> None:
     """A voltage's step from equilibrium in the dark, 100 s on ChargeTransport's own 122 times
     (implicit Euler both, so what is left is the grids'), the vacancies at 1e-12 m²/Vs: the
     flux of the electrochemical potential at a constant mobility (`solver._excess`). The
-    current to 2e-2 of itself in the first microsecond (the field's relaxation over the grids),
-    1e-2 to 1 ms and 3e-3 after, while the ions move and when they have settled (with Boltzmann's
-    flux, sites 1e35, 1.6e-2 there); the states at 1e-6, 1e-3 and 1 s, `ln n`, `ln p` to 0.1, the
-    potential to 0.5 mV. The last step is the steady state at the voltage (`solve_states`)."""
+    current to 2e-2 of itself to 1 ms (the field's relaxation over the grids, and with Ex103's
+    1.6e25 m⁻³ of ions their fastest motion, 1.5e-2 at most there whether jaxdd's grid is 2000
+    points or 4000; the median 3e-3) and 3e-3 after, while the ions move and when they have
+    settled (with Boltzmann's flux, sites 1e35, 1.6e-2 there); the states at 1e-6, 1e-3 and
+    1 s, `ln n`, `ln p` to 0.1, the potential to 0.5 mV. The last step is the steady state at
+    the voltage (`solve_states`)."""
     devices, tvgs, refs = [], [], []
     for ions, sites, V in STEPS:
-        name = f"ions{ions:.0e}_sites{sites:.0e}".replace("+", "")
+        name = f"ions{ions:g}_sites{sites:g}".replace("+", "")
         ref = np.genfromtxt(DATA / name / f"tstep_dark_{V}_J.csv", delimiter=",", names=True)
         t = np.concatenate([[0.0], ref["t"]])
         n = len(t)
@@ -116,7 +117,7 @@ def test_transients_with_sites_are_chargetransport_jl() -> None:
     for b, (name, V, ref, t) in enumerate(refs):
         J = np.asarray(r.J)[b, 1:]
         rel = np.abs(J - ref["J"]) / np.abs(ref["J"])
-        for hi, tol in ((1e-6, 2e-2), (1e-3, 1e-2), (np.inf, 3e-3)):
+        for hi, tol in ((1e-6, 2e-2), (1e-3, 2e-2), (np.inf, 3e-3)):
             lo = {1e-6: 0.0, 1e-3: 1e-6, np.inf: 1e-3}[hi]
             m = (ref["t"] > lo) & (ref["t"] <= hi)
             assert rel[m].max() < tol, (name, V, hi)

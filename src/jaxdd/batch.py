@@ -30,6 +30,7 @@ from jaxdd.device import Device, Structure, device_arrays
 from jaxdd.solver import (
     BERNOULLI,
     BRANCH_FLIP_SIZE,
+    ION_DENSITY_STAGES,
     ION_LOG_CAP,
     ROUND_OFF_FLOOR,
     STALL_STEPS,
@@ -57,6 +58,7 @@ from jaxdd.solver import (
     _poisson_jac,
     _poisson_val,
     _recombination,
+    _scaled_ions,
     _slot_columns,
     _slots,
     _stencils,
@@ -603,14 +605,19 @@ def _apply(blocks, x, z):
 
 
 def _newton_solve(y, logs, d, s, ion, Vint, g_frac, B, tol, max_iter, strict=False, vint=False,
-                  branch=None):  # fmt: skip
+                  branch=None, skip=None):  # fmt: skip
     """Newton at one voltage until converged (module docstring) or `max_iter`:
     `(y, logs, J, converged, iterations)`. Differentiable in everything but the start: the
     derivatives are those of the converged solution (`_converged_jvp`), not of the iterations.
     With `vint` the internal voltage is an unknown, the last of `logs` (its start), and `Vint`
     the target `(oc, Vext)` of its row (`_vint_row`). `branch`: the contacts' branches to start
-    from (`_solution_branch`), else those at the start."""
-    guess = jax.lax.stop_gradient((y, logs) if branch is None else (y, logs, branch))
+    from (`_solution_branch`), else those at the start. `skip` (> 0): no step, the start
+    returned as converged (its current not computed): under `vmap` a device that needs no
+    solve costs none, and where none does the loop takes no step."""
+    extra = {} if branch is None else {"branch0": branch}
+    if skip is not None:
+        extra["skip"] = jnp.asarray(skip, dtype=float)
+    guess = jax.lax.stop_gradient((y, logs, extra))
     y, logs, J, done, it = _converged(B, max_iter, strict, vint, guess,
                                       (d, s, ion, Vint, g_frac), tol)  # fmt: skip
     return y, logs, J, done > 0, it.astype(int)
@@ -622,8 +629,8 @@ def _converged(B, max_iter, strict, vint, guess, params, tol):
     floats, so that their tangents are zeros in every JAX (an integer output's tangent is
     `float0` in newer JAX and of the output's own type in older)."""
     d, s, ion, Vint, g_frac = params
-    y, logs, J, done, it = _newton_loop(*guess[:2], d, s, ion, Vint, g_frac, B, tol, max_iter,
-                                        strict, vint, *guess[2:])  # fmt: skip
+    y, logs, J, done, it = _newton_loop(guess[0], guess[1], d, s, ion, Vint, g_frac, B, tol,
+                                        max_iter, strict, vint, **guess[2])  # fmt: skip
     return y, logs, J, done.astype(float), jnp.asarray(it, dtype=float)
 
 
@@ -707,7 +714,7 @@ def _tangent(B, vint, valid, y, logs, params, params_dot):
 
 
 def _newton_loop(y, logs, d, s, ion, Vint, g_frac, B, tol, max_iter, strict, vint=False,
-                 branch0=None):  # fmt: skip
+                 branch0=None, skip=None):  # fmt: skip
     """Newton's iterations of `_newton_solve`. With `vint` the internal voltage the last of
     `logs`, its step held to the potential's cap; the current's settling is then no stop (the
     voltage's last digits are what the open circuit wants). `branch0`: the contacts' branches
@@ -811,7 +818,7 @@ def _newton_loop(y, logs, d, s, ion, Vint, g_frac, B, tol, max_iter, strict, vin
     elif branch0 is None:
         branch0 = _contact_branch(full_of(y, logs), s, Vt, B)
     y, logs, _, J_hist, it, done, _ = jax.lax.while_loop(
-        cond, body, (y, logs, hist0, J0, 0, jnp.array(False), branch0)
+        cond, body, (y, logs, hist0, J0, 0, jnp.array(False) if skip is None else skip > 0, branch0)
     )
     return y, logs, J_hist[-1], done, it
 
@@ -841,43 +848,56 @@ def _freeze(s, ion, y, logs, Vt, flag):
 
 
 def _start(d0, s0, ion0, first0, g_frac, B, tol, start_iter, strict=False):
-    """A steady state's start at the voltage `first0`, without derivatives: Poisson's solution,
-    with charged bulk traps from the solution with them neutral (`solver.solve_jv`), with ions
-    bounded by their sites from the solution with Boltzmann's, else solved from Poisson's with the
-    bounded ions; `(y, logs)`, to be solved from (`_solve_one`, `transient._solve_one`)."""
+    """A steady state's start at the voltage `first0`, without derivatives: `(y, logs, ok)`, to
+    be solved from (`_solve_one`, `transient._solve_one`), `ok` where it is the solution
+    already. Poisson's solution; with charged bulk traps from there the solution with them
+    neutral (`solver.solve_jv`); Boltzmann's ions' solution, and where that does not converge
+    and the device has mobile ions, the same through `ION_DENSITY_STAGES` (from Poisson's start
+    a share of the ions, each stage from the last; a device with many ions cycles from Poisson's
+    start, docs/solver.md); with ions bounded by their sites from there the bounded ions'
+    solution, else solved from Poisson's with the bounded ions. A device that converges at once
+    takes no stage: they skip (`_newton_solve`)."""
     bounds = _bounds(d0, first0)
 
     def poisson_start(s_, ion_):
         y = _poisson_solve(_initial(d0, first0)[1:-1], d0, s_, ion_, first0, start_iter)
         return y, _ion_logs(jnp.concatenate([bounds[0][:1], y[:, 0], bounds[1][:1]]), ion_)
 
+    def solve(y, logs, s_, ion_, skip=None):
+        return _newton_solve(y, logs, d0, s_, ion_, first0, g_frac, B, tol, start_iter, strict,
+                             skip=skip)  # fmt: skip
+
     sb, ionb = s0, ion0
     s0, ion0 = _unbounded(s0, ion0) if "a_inv" in s0 else (s0, ion0)
     y, logs = poisson_start(s0, ion0)
     if "tq" in s0:  # charged bulk traps: from the solution with them neutral
-        neutral = dict(s0, tq=jnp.zeros_like(s0["tq"]))
-        y_n, logs_n, _, ok_n, _ = _newton_solve(
-            y, logs, d0, neutral, ion0, first0, g_frac, B, tol, start_iter, strict
-        )
+        y_n, logs_n, _, ok_n, _ = solve(y, logs, dict(s0, tq=jnp.zeros_like(s0["tq"])), ion0)
         y, logs = jnp.where(ok_n, y_n, y), jnp.where(ok_n, logs_n, logs)
+    # Boltzmann's ions at once, else through a share of them.
+    y_f, logs_f, _, ok_f, _ = solve(y, logs, s0, ion0)
+    mobile = jnp.any(jnp.concatenate([ion0["a_totals"], ion0["c_totals"]]) > 0)
+    done = ok_f | ~mobile
+    y_c, logs_c, before = y, logs, 1.0
+    for share in ION_DENSITY_STAGES:
+        s_k, ion_k = _scaled_ions(s0, ion0, share)
+        logs_c = logs_c + jnp.log(share / before)  # Boltzmann's normalisations, with the number
+        y_c, logs_c, _, ok_c, _ = solve(y_c, logs_c, s_k, ion_k, skip=done)
+        before = share
+    staged = ~done & ok_c  # converged through the stages (a skipping device reports so too)
+    y = jnp.where(staged, y_c, y_f)
+    logs = jnp.where(staged, logs_c, logs_f)
+    ok = ok_f | staged
     if "a_inv" in sb:
-        # From Boltzmann's iterate whether or not it converged, and where that bounded solve
-        # fails, from Poisson's with the bounded ions: a bounded solution that converges either
-        # way is the start (where the first did, the second takes no step).
-        y_b, logs_b, _, _, _ = _newton_solve(
-            y, logs, d0, s0, ion0, first0, g_frac, B, tol, start_iter, strict
-        )
-        y_b, logs_b, _, ok_b, _ = _newton_solve(
-            y_b, logs_b, d0, sb, ionb, first0, g_frac, B, tol, start_iter, strict
-        )
+        # From Boltzmann's solution or last iterate, and where that bounded solve fails, from
+        # Poisson's with the bounded ions: a bounded solution that converges either way is the
+        # start.
+        y_b, logs_b, _, ok_b, _ = solve(y, logs, sb, ionb)
         y_d, logs_d = poisson_start(sb, ionb)
-        y_p, logs_p, _, ok_p, _ = _newton_solve(
-            jnp.where(ok_b, y_b, y_d), jnp.where(ok_b, logs_b, logs_d), d0, sb, ionb, first0,
-            g_frac, B, tol, start_iter, strict,
-        )  # fmt: skip
+        y_p, logs_p, _, ok_p, _ = solve(y_d, logs_d, sb, ionb, skip=ok_b)
         y = jnp.where(ok_b, y_b, jnp.where(ok_p, y_p, y_d))
         logs = jnp.where(ok_b, logs_b, jnp.where(ok_p, logs_p, logs_d))
-    return y, logs
+        ok = ok_b | ok_p
+    return y, logs, ok
 
 
 def _solve_one(d, voltages, B, tol, max_iter, start_iter, strict, states=False):
@@ -892,9 +912,11 @@ def _solve_one(d, voltages, B, tol, max_iter, start_iter, strict, states=False):
     # The start: no derivatives (`_newton_solve` has them, of its converged solution; reverse
     # mode has none through a while loop).
     d0, s0, ion0, first0 = jax.lax.stop_gradient((d, s, ion, first))
-    y, logs = _start(d0, s0, ion0, first0, d0["g_frac"], B, tol, start_iter, strict)
+    y, logs, solved = _start(d0, s0, ion0, first0, d0["g_frac"], B, tol, start_iter, strict)
+    # Where the start is the solution, no step: the derivatives are the solution's
+    # (`_converged_jvp`), whatever the iterations.
     y, logs, _, pre_ok, _ = _newton_solve(
-        y, logs, d, s, ion, first, g_frac, B, tol, start_iter, strict
+        y, logs, d, s, ion, first, g_frac, B, tol, start_iter, strict, skip=solved
     )
     frozen = (d["pre_cond"] > 0) & (d["fix_ions"] > 0)
     s, ion = _freeze(s, ion, y, logs, Vt, frozen)

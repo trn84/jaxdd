@@ -117,15 +117,31 @@ first solved at its first voltage with Boltzmann's ions, then with the bounded o
 Where the bound changes the solution much (ions piled by Boltzmann's 50–80 times beyond their
 sites, at a few times their mean density in sites) that second solve may not converge; it is
 then solved again from Poisson's solution with the bounded ions, which is closer. The bounded
-solve starts from Boltzmann's last iterate whether or not that converged, and a bounded
-solution that converges either way is the start: on ChargeTransport.jl's Ex103 cell
-(`tests/test_chargetransport.py`) with 1e24 m⁻³ of ions Boltzmann's needed about 60 Newton
-steps and on a GPU was sometimes just short, round-off deciding, and the bounded solve from its
-iterate converged; with 4e24 Boltzmann's wanders off in about one GPU run of two and neither
-way converges (PLAN.md, "Many ions"). Devices without sites skip all of it, to the bit. The
-normalisations of a start (`_ion_logs`) are the bounded ions' too, by a few Newton steps on
-their number from Boltzmann's closed form. `solve_states`, `solve_batch` and
-`solve_transient`'s steady state at its first step take the same start (`batch._start`).
+solve starts from Boltzmann's solution, or its last iterate where that did not converge, and a
+bounded solution that converges either way is the start. Devices without sites skip all of it,
+to the bit. The normalisations of a start (`_ion_logs`) are the bounded ions' too, by a few
+Newton steps on their number from Boltzmann's closed form. `solve_states`, `solve_batch` and
+`solve_transient`'s steady state at its first step take the same start (`batch._start`; the
+single-device solver its own, `_scan`, the same steps).
+
+**Many ions.** Where the mobile ions far outnumber the doping (ChargeTransport.jl's Ex103 cell,
+1.6e25 m⁻³ of vacancies against 1e24 of doping, `tests/test_chargetransport.py`), Newton from
+Poisson's start does not converge even in equilibrium, with Boltzmann's ions or bounded ones:
+the ions' normalisation steps by its cap, +5 and −5 in turn, and the potential by its 10 `V_T`
+at every step, a cycle (a step in `ln C` multiplies the ions' charge, which the potential
+overshoots). With a sixty-fourth of them it converges, and from there with four times as many,
+and so on (`ION_DENSITY_STAGES`: 1/64, 1/16, 1/4, 1 of every ion's density, mobile and fixed
+alike, so that each layer stays neutral; each stage from the last, its normalisations raised
+with the number): Ex103's cell in 21, 22, 7 and 4 steps, then 3 to its sites. A device takes
+the stages only where Boltzmann's ions do not converge at once and it has mobile ions; the
+others skip them (`_newton_solve(..., skip=)`: under `vmap` a skipping device costs nothing, and
+where every device skips the loop takes no step). Where the start is the solution already the
+pre-bias's solve takes no step either (its derivatives are the solution's, `_converged_jvp`), so
+that a batch that needs no stage pays what it paid before, to the step: on `validation/hard.py
+4096 4096` (RTX 4070 Ti SUPER) 585 curves/s and 5.23 Newton steps per voltage, before and
+after. With 4e24 m⁻³ of ions (Boltzmann's needs 30–70 steps there) the start used to fail on a
+GPU in about one run of two, round-off deciding where Boltzmann's Newton ended; the stages
+converge in every run, and a cold start at −0.3 V does too.
 
 **Why extrapolate.** Along a J-V curve the solution changes smoothly with the voltage. Starting
 each voltage from the linear extrapolation of the last two solutions (SIMsalabim's

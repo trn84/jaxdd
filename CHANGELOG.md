@@ -32,6 +32,13 @@ the API, and says so here.
   `solve_transient`'s first step, now one code, `batch._start`) takes a bounded solution that
   converges from Boltzmann's iterate whether or not Boltzmann's converged, else solves again from
   Poisson's with the bounded ions.
+- **Many ions.** Where the mobile ions far outnumber the doping Newton cycled from Poisson's
+  start (ChargeTransport.jl's Ex103 cell, 1.6e25 m⁻³ of vacancies: no steady state even in
+  equilibrium; with 4e24 a cold start below −0.2 V, and on a GPU the start in about one run of
+  two). A start that does not converge at once now goes through a share of the ions, 1/64, 1/16,
+  1/4 and all of them (`ION_DENSITY_STAGES`); the others skip the stages, and a batch that needs
+  none pays what it paid before (docs/solver.md, "Many ions"). Ex103's cell agrees with
+  ChargeTransport.jl in equilibrium, dark, lit and in time.
 
 ### Changed
 

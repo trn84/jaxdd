@@ -1709,6 +1709,18 @@ def _inverse_sites(n_max, size, xp=np):
     return 1.0 / n_max
 
 
+#: The ions' density in the stages of a start that does not converge at once (`_scan`,
+#: `batch._start`), each a share of the device's, its mobile and immobile ions alike: from
+#: Poisson's start Newton cycles on a device with many ions (docs/solver.md, "Many ions").
+ION_DENSITY_STAGES = (1 / 64, 1 / 16, 1 / 4, 1.0)
+
+
+def _scaled_ions(s: dict, ion: dict, share) -> tuple[dict, dict]:
+    """`s` and `ion` with every ion's density, mobile and fixed, `share` of its own."""
+    s = dict(s, a_fix=s["a_fix"] * share, c_fix=s["c_fix"] * share)
+    return s, dict(ion, a_totals=ion["a_totals"] * share, c_totals=ion["c_totals"] * share)
+
+
 def _unbounded(s: dict, ion: dict) -> tuple[dict, dict]:
     """`s` and `ion` with the ions' sites removed: Boltzmann's ions, the start of a solve with
     bounded ones (`solve_jv`, `batch._solve_one`)."""
@@ -1883,11 +1895,30 @@ def _scan(dev: Device, voltages, g_frac, tol, max_iter, bernoulli_name):
         y_n, logs_n, ok, _ = settle(y, logs, neutral, ion_free, first)
         if ok:
             y, logs = y_n, logs_n
-    if "a_inv" in s:
-        y_b, logs_b, ok, _ = settle(y, logs, s_free, ion_free, first)
-        if ok:
-            y_b, logs_b, ok, _ = settle(y_b, logs_b, s, ion, first)
-        y, logs = (y_b, logs_b) if ok else poisson_start(y0, s, ion)
+    mobile = bool(
+        np.any(np.asarray(ion["a_totals"]) > 0) or np.any(np.asarray(ion["c_totals"]) > 0)
+    )
+    if mobile or "a_inv" in s:
+        # Boltzmann's ions at once, else through a share of them (`ION_DENSITY_STAGES`: from
+        # Poisson's start a device with many ions cycles, docs/solver.md, "Many ions").
+        y_f, logs_f, ok, _ = settle(y, logs, s_free, ion_free, first)
+        if not ok and mobile:
+            y_c, logs_c, before = y, logs, 1.0
+            for share in ION_DENSITY_STAGES:
+                s_k, ion_k = _scaled_ions(s_free, ion_free, share)
+                logs_c = logs_c + np.log(share / before)
+                y_c, logs_c, ok, _ = settle(y_c, logs_c, s_k, ion_k, first)
+                before = share
+                if not ok:
+                    break
+            if ok:
+                y_f, logs_f = y_c, logs_c
+        if "a_inv" in s:
+            if ok:
+                y_f, logs_f, ok, _ = settle(y_f, logs_f, s, ion, first)
+            y, logs = (y_f, logs_f) if ok else poisson_start(y0, s, ion)
+        elif ok:
+            y, logs = y_f, logs_f
     # Each voltage's contacts start in the branches of the last converged solution, not in those
     # its start shows: that is the last solution with the new voltage's contacts, the change of
     # voltage across the contact's interval alone, which can show a carrier extracted that is

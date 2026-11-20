@@ -231,7 +231,7 @@ def _solve_one(d, t, V, oc, G_frac, track, ctl, recycle, B, tol, max_iter, ions,
     d0, s0, ion0, V0 = jax.lax.stop_gradient((d, s, ion, V_first))
     # The steady state at the first step (t = 0), from `batch._solve_one`'s start (`_start`).
     # The first step then starts from it.
-    y, logs = _start(d0, s0, ion0, V0, G_frac[0], B, tol, max_iter)
+    y, logs, _ = _start(d0, s0, ion0, V0, G_frac[0], B, tol, max_iter)  # solved again: its current
     y_s, logs_s, J_s, ok_s, _ = _newton_solve(y, logs, d0, s0, ion0, V0, G_frac[0], B, tol,
                                               max_iter)  # fmt: skip
     y, logs = jnp.where(ok_s, y_s, y), jnp.where(ok_s, logs_s, logs)

@@ -37,10 +37,9 @@ from jaxdd.batch import (
     _caps,
     _current_parts,
     _full,
-    _initial,
     _newton_solve,
-    _poisson_solve,
     _quiet,
+    _start,
     _sum_widths,
     _traced,
 )
@@ -60,6 +59,7 @@ from jaxdd.solver import (
     _time_terms,
     _volumes,
     _with_contacts,
+    occupancy,
 )
 
 __all__ = ["TransientResult", "solve_transient", "tj_columns"]
@@ -229,16 +229,9 @@ def _solve_one(d, t, V, oc, G_frac, track, ctl, recycle, B, tol, max_iter, ions,
     s, ion = d["s"], d["ion"]
     V_first = jnp.where(oc[0] > 0, OC_GUESS, V[0])
     d0, s0, ion0, V0 = jax.lax.stop_gradient((d, s, ion, V_first))
-    y = _poisson_solve(_initial(d0, V0)[1:-1], d0, s0, ion0, V0, max_iter)
-    bounds = _bounds(d0, V0)
-    logs = _ion_logs(jnp.concatenate([bounds[0][:1], y[:, 0], bounds[1][:1]]), ion0)
-    # The steady state at the first step (t = 0), as `batch._solve_one` finds it: with charged
-    # bulk traps from the solution with them neutral. The first step then starts from it.
-    if "tq" in s0:
-        neutral = dict(s0, tq=jnp.zeros_like(s0["tq"]))
-        y_n, logs_n, _, ok_n, _ = _newton_solve(y, logs, d0, neutral, ion0, V0, G_frac[0], B,
-                                                tol, max_iter)  # fmt: skip
-        y, logs = jnp.where(ok_n, y_n, y), jnp.where(ok_n, logs_n, logs)
+    # The steady state at the first step (t = 0), from `batch._solve_one`'s start (`_start`).
+    # The first step then starts from it.
+    y, logs = _start(d0, s0, ion0, V0, G_frac[0], B, tol, max_iter)
     y_s, logs_s, J_s, ok_s, _ = _newton_solve(y, logs, d0, s0, ion0, V0, G_frac[0], B, tol,
                                               max_iter)  # fmt: skip
     y, logs = jnp.where(ok_s, y_s, y), jnp.where(ok_s, logs_s, logs)
@@ -246,8 +239,12 @@ def _solve_one(d, t, V, oc, G_frac, track, ctl, recycle, B, tol, max_iter, ions,
     if ions:  # the ions' densities as unknowns: their steady profiles, 0 outside their regions
         la, lc = _point_logs(logs, ion)
         Vm = y[:, 0]
-        y = jnp.concatenate([y, jnp.stack([jnp.where(s["a_mask"] > 0, la + Vm / Vt, 0.0),
-                                           jnp.where(s["c_mask"] > 0, lc - Vm / Vt, 0.0)], -1)],
+        za, zc = la + Vm / Vt, lc - Vm / Vt
+        if "a_inv" in s:  # bounded by their sites: the occupancy's logarithm
+            za = jnp.log(occupancy(za, s["a_inv"])[0])
+            zc = jnp.log(occupancy(zc, s["c_inv"])[0])
+        y = jnp.concatenate([y, jnp.stack([jnp.where(s["a_mask"] > 0, za, 0.0),
+                                           jnp.where(s["c_mask"] > 0, zc, 0.0)], -1)],
                             -1)  # fmt: skip
     caps = _caps(Vt, y.shape[-1])
     v_cap = STEP_CAPS[0] * Vt
@@ -439,17 +436,6 @@ def solve_transient(batch, tvg: TVG | list[TVG], tol=1e-10, max_iter=200, bernou
         ion = batch["ion"]
         ions = bool(np.any(np.asarray(ion["a_totals"]) > 0)
                     or np.any(np.asarray(ion["c_totals"]) > 0))  # fmt: skip
-    s = batch["s"]
-
-    def bounded():  # a mobile ion with sites (`solver.occupancy`); traced, any batch with them
-        return traced or any(np.any(np.asarray(s[f"{k}_inv"]) * np.asarray(s[f"{k}_mask"]) > 0)
-                             for k in ("a", "c"))  # fmt: skip
-
-    if ions and "a_inv" in s and bounded():
-        raise NotImplementedError(
-            "mobile ions bounded by their sites (N_max_anion, N_max_cation) in time: the "
-            "steric limit is solved in the steady state only (docs/model.md)"
-        )
     if vint is None:
         vint = bool(oc.any() or np.any(np.asarray(batch["R_series"]) > 0))
     if recycle is not None:

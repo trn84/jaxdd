@@ -11,7 +11,9 @@
 #
 # CA the vacancies' mean density, NA their sites (m^-3; Ex103's are 1.6e25 and 1e27, where
 # jaxdd's steady state does not converge: PLAN.md). Cases: eq (thermodynamic equilibrium),
-# dark:V and light:V (uniform generation in the perovskite), V at the acceptor (spiro) side.
+# dark:V and light:V (uniform generation in the perovskite), V at the acceptor (spiro) side;
+# tstep:dark:V a transient after the voltage's step from equilibrium (below; a lit step from the
+# dark ChargeTransport does not take).
 # Writes OUTDIR/<case>.csv (region, x, psi, n, p, na on each region's nodes, an interface's
 # node in both; m, V, m^-3; the first line the terminal current and the vacancies' mean) and
 # OUTDIR/params.txt.
@@ -73,7 +75,7 @@ function coordinates(p::P; hmin = 1.0e-10)
     return coord
 end
 
-function build(p::P, lit::Bool)
+function build(p::P)
     coord = coordinates(p)
     grid = simplexgrid(coord)
     edges = cumsum([0.0; p.h])
@@ -91,10 +93,9 @@ function build(p::P, lit::Bool)
         bulk_recomb_Auger = false, bulk_recomb_radiative = true, bulk_recomb_SRH = true)
     data.boundaryType[p.bregionAcceptor] = OhmicContact
     data.boundaryType[p.bregionDonor] = OhmicContact
-    # Uniform generation in the perovskite for the lit system. Its equilibrium solve generates
-    # too, whatever λ2 (in time λ2 = 0 switches it off); set after the system is built, the
-    # model gives NaN. So two systems: the dark one for equilibrium and the dark voltages.
-    data.generationModel = lit ? GenerationUniform : GenerationNone
+    # Uniform generation, its rate switched (`lit!`): the equilibrium solve generates whenever
+    # the rate is not 0, whatever λ2, and the model set after the system is built gives NaN.
+    data.generationModel = GenerationUniform
     enable_ionic_carrier!(data, ionicCarrier = p.iphia, regions = [p.regionIntrinsic])
 
     params = Params(p.numberOfRegions, p.numberOfBoundaryRegions, p.numberOfCarriers)
@@ -118,7 +119,7 @@ function build(p::P, lit::Bool)
         params.recombinationSRHLifetime[p.iphip, r] = p.τp[r]
         params.recombinationSRHTrapDensity[p.iphin, r] = trap_density(p.iphin, r, params, p.EI[r], ChargeTransport.constants)
         params.recombinationSRHTrapDensity[p.iphip, r] = trap_density(p.iphip, r, params, p.EI[r], ChargeTransport.constants)
-        params.generationUniform[r] = p.G[r]
+        params.generationUniform[r] = 0.0  # dark; `lit!`
     end
     params.doping[p.iphin, p.regionDonor] = p.Cn
     params.doping[p.iphip, p.regionAcceptor] = p.Cp
@@ -152,33 +153,30 @@ function main(dir, cases)
     Ca = parse(Float64, get(ENV, "CA", "1.6e25"))
     Na = parse(Float64, get(ENV, "NA", "1e27"))
     p = P(Ca = Ca, Na = [0.0, Na, 0.0])
-    dark = filter(c -> !startswith(c, "light"), cases)
-    lit = filter(c -> startswith(c, "light"), cases)
-    run(dir, p, Na, dark, false)
-    isempty(lit) || run(dir, p, Na, lit, true)
+    run(dir, p, Na, cases)
     print(read(joinpath(dir, "params.txt"), String))
 end
 
-function run(dir, p::P, Na, cases, lit)
-    ctsys, coord = build(p, lit)
-    data = ctsys.fvmsys.physics.data
-    control = SolverControl()
-    control.max_round = 5
-    control.damp_initial = 0.1
-    control.damp_growth = 1.21
-    mean_of(s) = integrated_density(ctsys, sol = s, icc = p.iphia, ireg = p.regionIntrinsic) / data.regionVolumes[p.regionIntrinsic]
+"""The generation in the perovskite on (`true`) or off."""
+function lit!(ctsys, p::P, on)
+    for params in (ctsys.fvmsys.physics.data.params, ctsys.data.params)
+        params.generationUniform .= on ? p.G : 0.0 .* p.G
+    end
+end
 
-    # Equilibrium. From Boltzmann's start the solve does not converge (its homotopy from the
-    # linear Poisson problem); from Fermi–Dirac 1/2's solution it does.
+"""ChargeTransport's equilibrium, the vacancies' number exact: from Fermi–Dirac 1/2's solution
+(from Boltzmann's start the solve does not converge, its homotopy from the linear Poisson
+problem), the vacancies' energy refined by secants on ln(mean) to 1e-12 (ChargeTransport rounds
+it to 0.1 meV and stops at a relative 1e-4 of the mean; jaxdd holds the number exactly, and
+4e-5 of 4e24 m^-3 moved the potential by a millivolt). With the generation on it generates too
+(its ramp of λ2): no equilibrium, but a start with the vacancies' number."""
+function equilibrium!(ctsys, data, p::P, control, mean_of)
     data.F[p.iphin] = FermiDiracOneHalfTeSCA
     data.F[p.iphip] = FermiDiracOneHalfTeSCA
     sol = equilibrium_solve!(ctsys, control = control, vacancyEnergyCalculation = true)
     data.F[p.iphin] = Boltzmann
     data.F[p.iphip] = Boltzmann
     sol = equilibrium_solve!(ctsys, inival = sol, control = control, vacancyEnergyCalculation = true)
-    # ChargeTransport rounds the vacancy energy to 0.1 meV and stops at a relative 1e-4 of the
-    # mean density; jaxdd holds the number of ions exactly, and 4e-5 of 4e24 m^-3 moved the
-    # potential by a millivolt. The energy refined by secants on ln(mean) to 1e-12.
     function solved_at(E)
         data.params.bandEdgeEnergy[p.iphia, p.regionIntrinsic] = E * q
         s = equilibrium_solve!(ctsys, inival = sol, control = control, vacancyEnergyCalculation = false)
@@ -195,26 +193,49 @@ function run(dir, p::P, Na, cases, lit)
         s1, m1 = solved_at(E2)
         E1 = E2
     end
-    sol = s1
-    if !lit
-        open(joinpath(dir, "params.txt"), "w") do io
-            println(io, "ChargeTransport $(pkgversion(ChargeTransport)), CA = $(p.Ca), NA = $(Na)")
-            println(io, "vacancy energy E_a = $(data.params.bandEdgeEnergy[p.iphia, p.regionIntrinsic] / q) eV")
-            println(io, "mean vacancy density = $(mean_of(sol)) m^-3")
-            println(io, "nodes = $(length(coord)), smallest interval = $(minimum(diff(coord))) m")
-        end
+    return s1
+end
+
+function run(dir, p::P, Na, cases)
+    ctsys, coord = build(p)
+    data = ctsys.fvmsys.physics.data
+    control = SolverControl()
+    control.max_round = 5
+    control.damp_initial = 0.1
+    control.damp_growth = 1.21
+    mean_of(s) = integrated_density(ctsys, sol = s, icc = p.iphia, ireg = p.regionIntrinsic) / data.regionVolumes[p.regionIntrinsic]
+
+    sol = equilibrium!(ctsys, data, p, control, mean_of)
+    open(joinpath(dir, "params.txt"), "w") do io
+        println(io, "ChargeTransport $(pkgversion(ChargeTransport)), CA = $(p.Ca), NA = $(Na)")
+        println(io, "vacancy energy E_a = $(data.params.bandEdgeEnergy[p.iphia, p.regionIntrinsic] / q) eV")
+        println(io, "mean vacancy density = $(mean_of(sol)) m^-3")
+        println(io, "nodes = $(length(coord)), smallest interval = $(minimum(diff(coord))) m")
     end
     "eq" in cases && write_case(dir, "eq", ctsys, sol, p, 0.0, mean_of(sol))
+    # Dark from equilibrium. Lit, ChargeTransport does not take the generation's step from the
+    # dark (NaN at every step size, from 1e-3 of it): its steady states start from its
+    # equilibrium solve with the generation on, which ramps it, the vacancies' number held.
+    dark = filter(c -> !occursin("light", c), cases)
+    lit = filter(c -> occursin("light", c), cases)
+    transients(dir, p, ctsys, data, sol, dark, mean_of)
+    if !isempty(lit)
+        lit!(ctsys, p, true)
+        transients(dir, p, ctsys, data, equilibrium!(ctsys, data, p, control, mean_of), lit, mean_of)
+    end
+end
 
+"""A system's steady states at a voltage and its transients, from equilibrium `eqsol`."""
+function transients(dir, p::P, ctsys, data, eqsol, cases, mean_of)
     # Steady states at a voltage, dark or lit: from equilibrium the voltage stepped and held
     # until nothing moves. ChargeTransport has no stationary solve with mobile ions (their
     # quasi-Fermi potential is fixed by their number only in time), so the steady state is the
     # transient's end, at 1e4 s; the ions' mobility raised to 1e-12 m^2/Vs (it sets how fast
     # they settle, not where).
-    eqsol = sol
-    data.params.mobility[p.iphia, p.regionIntrinsic] = 1.0e-12
     for case in cases
         case == "eq" && continue
+        startswith(case, "tstep") && continue
+        data.params.mobility[p.iphia, p.regionIntrinsic] = 1.0e-12
         _, V = split(case, ":")
         set_contact!(ctsys, p.bregionAcceptor, Δu = parse(Float64, V))
         tc = SolverControl()
@@ -233,6 +254,46 @@ function run(dir, p::P, Na, cases, lit)
         change < 1.0e-10 || error("$(case): not settled, last step's change $(change)")
         write_case(dir, replace(case, ":" => "_"), ctsys, last, p, J, mean_of(last))
         println(case, ": J = $(J) A/m^2, last step's largest change $(change)")
+    end
+
+    # Transients: from equilibrium the voltage stepped at t = 0 and held to TEND (s; 100), the
+    # ions' mobility MUA (m^2/Vs; 1e-12, about 6 s to settle over the perovskite). Writes the
+    # current at each of ChargeTransport's own times (implicit Euler, its steps grown by 1.3
+    # from 1e-12 s, at most 10 s) and the states nearest 1e-6, 1e-3 and 1 s.
+    for case in cases
+        startswith(case, "tstep") || continue
+        _, _, V = split(case, ":")
+        data.params.mobility[p.iphia, p.regionIntrinsic] = parse(Float64, get(ENV, "MUA", "1e-12"))
+        tend = parse(Float64, get(ENV, "TEND", "100"))
+        set_contact!(ctsys, p.bregionAcceptor, Δu = parse(Float64, V))
+        tc = SolverControl()
+        tc.max_round = 5
+        tc.damp_initial = 0.5
+        tc.damp_growth = 1.21
+        tc.Δt = 1.0e-12
+        tc.Δt_min = 1.0e-16
+        tc.Δt_grow = 1.3
+        tc.Δt_max = 10.0
+        tc.Δu_opt = 100.0
+        tsol = ChargeTransport.solve(ctsys, inival = eqsol, times = (0.0, tend), control = tc)
+        name = replace(case, ":" => "_")
+        open(joinpath(dir, "$(name)_J.csv"), "w") do io
+            println(io, "t,J,mean")
+            for k in 2:length(tsol.t)
+                J = get_current_val(ctsys, tsol.u[k], tsol.u[k - 1], tsol.t[k] - tsol.t[k - 1])
+                @printf(io, "%.17e,%.12e,%.12e\n", tsol.t[k], J, mean_of(tsol.u[k]))
+            end
+        end
+        for (j, at) in enumerate((1.0e-6, 1.0e-3, 1.0))
+            at > tend && continue
+            k = argmin(abs.(log.(max.(tsol.t, 1.0e-300)) .- log(at)))
+            J = get_current_val(ctsys, tsol.u[k], tsol.u[k - 1], tsol.t[k] - tsol.t[k - 1])
+            write_case(dir, "$(name)_at$(j)", ctsys, tsol.u[k], p, J, mean_of(tsol.u[k]))
+            open(joinpath(dir, "$(name)_at$(j)_t.txt"), "w") do io
+                @printf(io, "%.17e\n", tsol.t[k])
+            end
+        end
+        println(case, ": ", length(tsol.t), " times to ", tsol.t[end], " s")
     end
 end
 

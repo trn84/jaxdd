@@ -203,20 +203,28 @@ def test_the_curve_is_differentiable_in_the_sites() -> None:
     assert np.max(np.abs(fd)) > 1e-3
 
 
-def test_bounded_mobile_ions_in_time_are_refused() -> None:
-    """The steric limit is the steady state's: a transient with bounded mobile ions is refused
-    by name."""
+def test_bounded_mobile_ions_in_time_with_far_sites_are_boltzmanns() -> None:
+    """In time the ions' flux is the electrochemical potential's (`solver._excess`): with sites
+    far above their densities (1e35 m⁻³) ZimT's ion case is Boltzmann's transient, to 1e-9 of
+    its current; with 1e26 it is not (ChargeTransport.jl's transients: test_chargetransport)."""
     from jaxdd.simss_input import read_tvg
     from jaxdd.transient import solve_transient
 
     case = "zimt_ions_fast_light"
-    texts = {f.name: f.read_text() for f in (DATA / case).iterdir() if f.suffix == ".txt"}
-    for name in [k for k in texts if k.startswith("L") and k.endswith("_parameters.txt")]:
-        texts[name] += "N_max_anion = 1e30\nN_max_cation = 1e30\n"
-    setup = setup_from_texts(texts)
-    tvg = read_tvg(setup)
-    with pytest.raises(NotImplementedError, match="N_max"):
-        solve_transient(prepare([_build_device(setup, grid="simss")]), tvg)
+    base = {f.name: f.read_text() for f in (DATA / case).iterdir() if f.suffix == ".txt"}
+    currents = {}
+    for sites in (None, "1e35", "1e26"):
+        texts = dict(base)
+        if sites is not None:
+            for name in [k for k in texts if k.startswith("L") and k.endswith("_parameters.txt")]:
+                texts[name] += f"N_max_anion = {sites}\nN_max_cation = {sites}\n"
+        setup = setup_from_texts(texts)
+        r = solve_transient(prepare([_build_device(setup, grid="simss")]), read_tvg(setup))
+        assert np.asarray(r.converged).all(), sites
+        currents[sites] = np.asarray(r.J)[0]
+    scale = np.max(np.abs(currents[None]))
+    assert np.max(np.abs(currents["1e35"] - currents[None])) < 1e-9 * scale
+    assert np.max(np.abs(currents["1e26"] - currents[None])) > 1e-5 * scale
 
 
 def test_ions_must_fit_into_their_sites() -> None:

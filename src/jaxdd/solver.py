@@ -1070,6 +1070,20 @@ def _ion_membership(ion):
     return jnp.sum(ion["a_slots"], 0), jnp.sum(ion["c_slots"], 0)
 
 
+#: The largest share of its sites a density takes in `_excess`: a Newton step past them would
+#: leave the logarithm undefined.
+EXCESS_SHARE_CAP = 1.0 - 1e-12
+
+
+def _excess(ln_n, inv):
+    """The excess chemical potential of ions bounded by their sites, `w = −ln(1 − n/N_max)`
+    (in V_T; 0 where `inv` = 1/N_max is 0): the electrochemical potential of the Fermi–Dirac
+    integral of order −1 is `ln n + w ± V/V_T`, Boltzmann's with `w` beside the potential. Its
+    flux at a constant mobility is the Scharfetter–Gummel flux with `w`'s difference added to the
+    potential's (nonlinear diffusion; ChargeTransport.jl's excess chemical potential scheme)."""
+    return -jnp.log1p(-jnp.minimum(jnp.exp(ln_n) * inv, EXCESS_SHARE_CAP))
+
+
 def _ion_full(full, ion, Vt, B, dti):
     """`full` (NP + 2 × 5: `V, ln n, ln p, ln a, ln c`) with each contact's ion densities where a
     region reaches it, from its neighbour: no flux through the contact's interval (ZimT's
@@ -1084,6 +1098,22 @@ def _ion_full(full, ion, Vt, B, dti):
 
     left = jnp.stack([full[1, 3] + ratio(x0), full[1, 4] - ratio(x0)])
     right = jnp.stack([full[-2, 3] - ratio(xN), full[-2, 4] + ratio(xN)])
+    if "a_inv" in ion:  # bounded by their sites: the same step in `ln n + w` (`_excess`), the
+        # contact's density from it, `n = 1/(exp(−η) + 1/N_max)` (exact for the exact B)
+        def bounded(eta, inv):
+            safe = jnp.where(inv > 0, inv, 1.0)
+            return jnp.where(inv > 0, -jnp.logaddexp(-eta, jnp.log(safe)), eta)
+
+        for k, at, nb, step in ((0, 0, 1, (ratio(x0), -ratio(x0))),
+                                (-1, -1, -2, (-ratio(xN), ratio(xN)))):  # fmt: skip
+            invs = jnp.stack([ion["a_inv"][at], ion["c_inv"][at]])
+            inv_nb = jnp.stack([ion["a_inv"][nb], ion["c_inv"][nb]])
+            eta = full[nb, 3:] + _excess(full[nb, 3:], inv_nb) + jnp.stack(step)
+            value = bounded(eta, invs)
+            if k == 0:
+                left = value
+            else:
+                right = value
     full = full.at[0, 3:].set(jnp.where(jnp.stack([ma[0], mc[0]]) > 0, left, 0.0))
     return full.at[-1, 3:].set(jnp.where(jnp.stack([ma[-1], mc[-1]]) > 0, right, 0.0))
 
@@ -1120,9 +1150,12 @@ def _assemble_ions(full, s, Vt, g_frac, logs, ion, B=bernoulli):
     full = _ion_full(full, ion, Vt, B, dti)
     V, Vm = full[:, 0], full[1:-1, 0]
     a_m, c_m = s["a_mask"] * jnp.exp(full[1:-1, 3]), s["c_mask"] * jnp.exp(full[1:-1, 4])
-    # The carriers' rows, the ions' densities as Boltzmann's of the normalisations that give them.
+    # The carriers' rows, the ions' densities as Boltzmann's of the normalisations that give them
+    # (with sites too: the densities are the unknowns, the sites enter the ions' own rows).
     la, lc = full[1:-1, 3] - Vm / Vt, full[1:-1, 4] + Vm / Vt
-    F3, A3, B3, C3, U3 = _assemble(full[:, :3], s, Vt, g_frac, la, lc, B)
+    s_carriers, _ = _unbounded(s, {}) if "a_inv" in s else (s, None)
+    F3, A3, B3, C3, U3 = _assemble(full[:, :3], s_carriers, Vt, g_frac, la, lc, B)
+    sites = "a_inv" in ion
     NP = Vm.shape[0]
 
     def grow(m):
@@ -1144,7 +1177,7 @@ def _assemble_ions(full, s, Vt, g_frac, logs, ion, B=bernoulli):
     hm, hp, fac = s["hm"], s["hp"], s["fac"]
     one = jnp.ones(NP)
 
-    def species(sn, col, mfull, mu_m, mu_p, before, lslot):
+    def species(sn, col, mfull, mu_m, mu_p, before, lslot, inv):
         m_i = mfull[1:-1]
         el = (mfull[:-2] * m_i).at[0].set(0.0)  # the left interval inside a region, not a contact's
         er = (m_i * mfull[2:]).at[-1].set(0.0)
@@ -1154,6 +1187,12 @@ def _assemble_ions(full, s, Vt, g_frac, logs, ion, B=bernoulli):
 
         def r(Vl, Vc, Vr, ll, lc_, lr, ls):
             xl, xr = (Vc - Vl) / Vt, (Vr - Vc) / Vt
+            wc = 0.0
+            if inv is not None:  # bounded by their sites: the flux of the electrochemical
+                # potential, its excess part `w` beside the potential (`_excess`)
+                wl, wc, wr = (_excess(ll, inv[:-2]), _excess(lc_, inv[1:-1]),
+                              _excess(lr, inv[2:]))  # fmt: skip
+                xl, xr = xl + sn * (wc - wl), xr + sn * (wr - wc)
             nl, nc, nr = jnp.exp(ll), jnp.exp(lc_), jnp.exp(lr)
             if sn < 0:  # anions, as electrons: F = c·(B(x)·n₁ − B(−x)·n₀)
                 Fl, Fr = cl * (B(xl) * nc - B(-xl) * nl), cr * (B(xr) * nr - B(-xr) * nc)
@@ -1162,7 +1201,8 @@ def _assemble_ions(full, s, Vt, g_frac, logs, ion, B=bernoulli):
                 Fl, Fr = cl * (B(xl) * nl - B(-xl) * nc), cr * (B(xr) * nc - B(-xr) * nr)
                 flux = el * hp * Fl - er * hm * Fr
             moving = (flux + fac * dti * (jnp.exp(ls) * before - nc)) * scale
-            steady = lc_ - ls + sn * Vc / Vt
+            # with sites `occupancy`'s profile: ln n + w is Boltzmann's
+            steady = (lc_ if inv is None else lc_ + wc) - ls + sn * Vc / Vt
             return jnp.where(m_i > 0, jnp.where(dti > 0, moving, steady), lc_)
 
         args = (V[:-2], Vm, V[2:], full[:-2, col], full[1:-1, col], full[2:, col], lslot)
@@ -1172,11 +1212,13 @@ def _assemble_ions(full, s, Vt, g_frac, logs, ion, B=bernoulli):
         return value, d
 
     out = []
-    for sn, col, mfull, mu_m, mu_p, before, lslot in (
-        (-1.0, 3, ma, s["mua_m"], s["mua_p"], tr["ions"]["a"], la_pt),
-        (1.0, 4, mc, s["muc_m"], s["muc_p"], tr["ions"]["c"], lc_pt),
-    ):
-        value, d = species(sn, col, mfull, mu_m, mu_p, before, lslot)
+    for sn, col, mfull, mu_m, mu_p, before, lslot, inv in (
+        (-1.0, 3, ma, s["mua_m"], s["mua_p"], tr["ions"]["a"], la_pt,
+         ion["a_inv"] if sites else None),
+        (1.0, 4, mc, s["muc_m"], s["muc_p"], tr["ions"]["c"], lc_pt,
+         ion["c_inv"] if sites else None),
+    ):  # fmt: skip
+        value, d = species(sn, col, mfull, mu_m, mu_p, before, lslot, inv)
         F5 = F5.at[:, col].set(value)
         A5 = A5.at[:, col, 0].set(d[0]).at[:, col, col].set(d[3])
         B5 = B5.at[:, col, 0].set(d[1]).at[:, col, col].set(d[4])

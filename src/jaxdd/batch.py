@@ -39,6 +39,7 @@ from jaxdd.solver import (
     _balanced_logs,
     _bulk_rates,
     _contact_branch,
+    _excess,
     _field_mobilities,
     _free_ends,
     _held,
@@ -413,13 +414,17 @@ def _ion_currents(d, full, tr, B):
     for k in range(masks.shape[0]):
         anion = k < ka
         sn = -1.0 if anion else 1.0
-        dens = jnp.exp(full[:, 3] if anion else full[:, 4])
+        ln_dens = full[:, 3] if anion else full[:, 4]
+        dens = jnp.exp(ln_dens)
+        # bounded by their sites: the electrochemical potential's excess part beside the
+        # potential's (`solver._excess`), as their rows have it
+        w = _excess(ln_dens, ion["a_inv" if anion else "c_inv"]) if "a_inv" in ion else 0.0
         before = tr["ions"]["a"] if anion else tr["ions"]["c"]
         mu = d["mu_a"] if anion else d["mu_c"]
         mask = masks[k]
         pair = mask[1:] * mask[:-1]
         U = tr["dti"] * (dens - before)
-        ev = jnp.exp(sn * V / Vt)
+        ev = jnp.exp(sn * V / Vt + w) if "a_inv" in ion else jnp.exp(sn * V / Vt)
         mu_ = jnp.where(mu > 0, mu, 1.0)
         int_u = jnp.concatenate([jnp.zeros(1), jnp.cumsum(0.5 * dx * (U[:-1] + U[1:]) * pair)])
         single = jnp.sum(0.5 * dx * (ev[:-1] / mu_[:-1] + ev[1:] / mu_[1:]) * pair)
@@ -434,7 +439,7 @@ def _ion_currents(d, full, tr, B):
         step = jnp.where(e > first, sn * Q * L * width * U[: NP + 1], 0.0) * pair
         J = Q * K + jnp.cumsum(step)
         if "curr_diff" in d:
-            dV = sn * jnp.diff(V) / Vt
+            dV = sn * jnp.diff(V) / Vt + (jnp.diff(w) if "a_inv" in ion else 0.0)
             flux = sn * Q * mu[: NP + 1] * Vt * (dens[1:] * B(-dV) - dens[:-1] * B(dV)) / (L * hh)
             J = jnp.where(d["curr_diff"] > 0, flux, J)
         J = jnp.where(d["iface"], jnp.roll(J, 1), J)
@@ -835,6 +840,46 @@ def _freeze(s, ion, y, logs, Vt, flag):
     return s, ion
 
 
+def _start(d0, s0, ion0, first0, g_frac, B, tol, start_iter, strict=False):
+    """A steady state's start at the voltage `first0`, without derivatives: Poisson's solution,
+    with charged bulk traps from the solution with them neutral (`solver.solve_jv`), with ions
+    bounded by their sites from the solution with Boltzmann's, else solved from Poisson's with the
+    bounded ions; `(y, logs)`, to be solved from (`_solve_one`, `transient._solve_one`)."""
+    bounds = _bounds(d0, first0)
+
+    def poisson_start(s_, ion_):
+        y = _poisson_solve(_initial(d0, first0)[1:-1], d0, s_, ion_, first0, start_iter)
+        return y, _ion_logs(jnp.concatenate([bounds[0][:1], y[:, 0], bounds[1][:1]]), ion_)
+
+    sb, ionb = s0, ion0
+    s0, ion0 = _unbounded(s0, ion0) if "a_inv" in s0 else (s0, ion0)
+    y, logs = poisson_start(s0, ion0)
+    if "tq" in s0:  # charged bulk traps: from the solution with them neutral
+        neutral = dict(s0, tq=jnp.zeros_like(s0["tq"]))
+        y_n, logs_n, _, ok_n, _ = _newton_solve(
+            y, logs, d0, neutral, ion0, first0, g_frac, B, tol, start_iter, strict
+        )
+        y, logs = jnp.where(ok_n, y_n, y), jnp.where(ok_n, logs_n, logs)
+    if "a_inv" in sb:
+        # From Boltzmann's iterate whether or not it converged, and where that bounded solve
+        # fails, from Poisson's with the bounded ions: a bounded solution that converges either
+        # way is the start (where the first did, the second takes no step).
+        y_b, logs_b, _, _, _ = _newton_solve(
+            y, logs, d0, s0, ion0, first0, g_frac, B, tol, start_iter, strict
+        )
+        y_b, logs_b, _, ok_b, _ = _newton_solve(
+            y_b, logs_b, d0, sb, ionb, first0, g_frac, B, tol, start_iter, strict
+        )
+        y_d, logs_d = poisson_start(sb, ionb)
+        y_p, logs_p, _, ok_p, _ = _newton_solve(
+            jnp.where(ok_b, y_b, y_d), jnp.where(ok_b, logs_b, logs_d), d0, sb, ionb, first0,
+            g_frac, B, tol, start_iter, strict,
+        )  # fmt: skip
+        y = jnp.where(ok_b, y_b, jnp.where(ok_p, y_p, y_d))
+        logs = jnp.where(ok_b, logs_b, jnp.where(ok_p, logs_p, logs_d))
+    return y, logs
+
+
 def _solve_one(d, voltages, B, tol, max_iter, start_iter, strict, states=False):
     """One device's J-V curve: the pre-bias stage, then the scan outwards from it. `voltages`
     ascending; `max_iter` caps Newton per voltage of the scan, `start_iter` Poisson and Newton
@@ -847,33 +892,7 @@ def _solve_one(d, voltages, B, tol, max_iter, start_iter, strict, states=False):
     # The start: no derivatives (`_newton_solve` has them, of its converged solution; reverse
     # mode has none through a while loop).
     d0, s0, ion0, first0 = jax.lax.stop_gradient((d, s, ion, first))
-    bounds = _bounds(d0, first0)
-
-    def poisson_start(s_, ion_):
-        y = _poisson_solve(_initial(d0, first0)[1:-1], d0, s_, ion_, first0, start_iter)
-        return y, _ion_logs(jnp.concatenate([bounds[0][:1], y[:, 0], bounds[1][:1]]), ion_)
-
-    # Ions bounded by their sites: from the solution with Boltzmann's, else from Poisson's
-    # with the bounded ions (`solver.solve_jv`).
-    sb, ionb = s0, ion0
-    s0, ion0 = _unbounded(s0, ion0) if "a_inv" in s0 else (s0, ion0)
-    y, logs = poisson_start(s0, ion0)
-    if "tq" in s0:  # charged bulk traps: from the solution with them neutral (`solver.solve_jv`)
-        neutral = dict(s0, tq=jnp.zeros_like(s0["tq"]))
-        y_n, logs_n, _, ok_n, _ = _newton_solve(
-            y, logs, d0, neutral, ion0, first0, d0["g_frac"], B, tol, start_iter, strict
-        )
-        y, logs = jnp.where(ok_n, y_n, y), jnp.where(ok_n, logs_n, logs)
-    if "a_inv" in s:
-        y_b, logs_b, _, ok_b, _ = _newton_solve(
-            y, logs, d0, s0, ion0, first0, d0["g_frac"], B, tol, start_iter, strict
-        )
-        y_b, logs_b, _, ok_s, _ = _newton_solve(
-            y_b, logs_b, d0, sb, ionb, first0, d0["g_frac"], B, tol, start_iter, strict
-        )
-        y_d, logs_d = poisson_start(sb, ionb)
-        ok_b = ok_b & ok_s
-        y, logs = jnp.where(ok_b, y_b, y_d), jnp.where(ok_b, logs_b, logs_d)
+    y, logs = _start(d0, s0, ion0, first0, d0["g_frac"], B, tol, start_iter, strict)
     y, logs, _, pre_ok, _ = _newton_solve(
         y, logs, d, s, ion, first, g_frac, B, tol, start_iter, strict
     )

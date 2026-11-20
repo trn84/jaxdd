@@ -443,6 +443,20 @@ so that the solver is never the larger error in what is computed from it.
   voltage's step, at 1e4 s with the ions' mobility raised to 1e-12 m²/Vs (where they settle does
   not depend on it), the number kept to 1e-13.
 
+  **In time** (2026-11-20, the flux of the electrochemical potential at a constant mobility,
+  docs/model.md): the voltage stepped from equilibrium in the dark to 0.6 and 1.0 V (4e24 on
+  2e25 sites) and to 1.0 V (1e24 on 1e25), the vacancies at 1e-12 m²/Vs, 100 s on
+  ChargeTransport's own 122 times (implicit Euler both: what is left is the grids'), jaxdd at
+  2000 points. The current agrees to 1 % in the first microsecond (the field's relaxation) and
+  then to 4e-4–2e-3 in the median, through the ions' motion (at 1.0 V it falls from 2.78 to
+  1.20 A/m² by 1 ms and settles at 2.92 by 1 s); the states at 1 µs, 1 ms and 1 s to a few
+  percent in `n` and `p` and 0.4 mV in the potential; the last step is `solve_states`'
+  steady state to 1e-6. With Boltzmann's flux instead (sites at 1e35) the current is 1.6 % off
+  once the ions have moved. ChargeTransport does not take a lit step from the dark (NaN at every
+  step size, from 1e-3 of the generation), so the transients are dark ones; the lit states are
+  the steady ones above. With 4e24 ions the steady state the transient starts from fails on a
+  GPU in about one run of two (PLAN.md), so the test steps 1e24.
+
 When jaxdd and SimSS disagree, check SimSS first: its `errJ` at that voltage, its log for "No
 convergence", and a rerun at tight tolerances. The cases where SimSS was wrong so far are all in
 [differences.md](differences.md).
@@ -738,8 +752,8 @@ jaxdd supports (JAX 0.4.31, NumPy 1.26, Python 3.11). The main ones:
 | `test_batch_matches_the_one_device_solver` | `solve_batch` against `solve_jv` |
 | `test_a_dark_scan_with_a_density_far_below_the_floor_converges` | a dark scan with densities far below the convergence floor: every voltage converges, the current monotone and zero at 0 V, SimSS's curve (the extrapolated start, [solver.md](solver.md)) |
 | `test_free_ions_keep_their_number` | the ions' constraint holds to round-off |
-| `tests/test_steric.py` | ions bounded by their sites: Boltzmann's curve to the bit without sites and to 1e-10 with 1e35 m⁻³; at 10–100× the mean density no density above the sites, one electrochemical potential over the layer, the number kept; the start's normalisation; the blocks against autodiff in saturation; batch against one device, frozen against free at the pre-bias; the gradient in `N_max`; a hard device that cycled from Poisson's start converges from Boltzmann's; refused in time, and below the mean density |
-| `tests/test_chargetransport.py` | ions bounded by their sites against ChargeTransport.jl's Ex103 cell (1e24 on 1e25 sites, 4e24 on 2e25): equilibrium, dark and lit steady states, the densities, ions, potential and current on its nodes |
+| `tests/test_steric.py` | ions bounded by their sites: Boltzmann's curve to the bit without sites and to 1e-10 with 1e35 m⁻³; at 10–100× the mean density no density above the sites, one electrochemical potential over the layer, the number kept; the start's normalisation; the blocks against autodiff in saturation; batch against one device, frozen against free at the pre-bias; the gradient in `N_max`; a hard device that cycled from Poisson's start converges from Boltzmann's; in time with sites at 1e35 Boltzmann's transient to 1e-9, with 1e26 not; refused below the mean density |
+| `tests/test_chargetransport.py` | ions bounded by their sites against ChargeTransport.jl's Ex103 cell (1e24 on 1e25 sites, 4e24 on 2e25): equilibrium, dark and lit steady states, the densities, ions, potential and current on its nodes; a voltage's step in time on its times, the current, three states and the steady end |
 | `test_the_block_sweep_solves_the_block_tridiagonal_system` | the sweep against a dense solve |
 | `test_short_circuit_current_never_exceeds_the_generation` | an invariant |
 | `test_bernoulli_*` | finite value and derivative at 0, `B(−x) = B(x) + x`, SimSS's series within its own error |
@@ -800,7 +814,7 @@ as arguments. SimSS itself is built by [`simss/`](../simss/README.md).
 | `validation/bench.py [N] [batch]` | curves per second ([hardware.md](hardware.md)) |
 | `validation/breakdown.py [batch]` | one Newton step's time, part by part |
 | `validation/hard.py [N] [batch] [N_max]` | a hard workload, frozen ions over a wide range ([batching.md](batching.md)); with `N_max` the ions bounded by their sites, against Boltzmann's |
-| `validation/chargetransport/psc_ions.jl OUTDIR [eq\|dark:V\|light:V …]` (Julia, `CA`, `NA` in the environment) | ChargeTransport.jl's reference for the ions bounded by their sites (`tests/data/chargetransport_ions`, [above](#what-the-comparisons-show)); `julia --project=validation/chargetransport` |
+| `validation/chargetransport/psc_ions.jl OUTDIR [eq\|dark:V\|light:V\|tstep:dark:V …]` (Julia, `CA`, `NA`, `MUA`, `TEND` in the environment) | ChargeTransport.jl's reference for the ions bounded by their sites (`tests/data/chargetransport_ions`, [above](#what-the-comparisons-show)); `julia --project=validation/chargetransport` |
 | `validation/fit_measured.py [SAMPLE …] [--start cold\|paper] [--device mirrored\|anode] [--nk FILE] [--back FILE] [--starts N]` | a fit to the measured curves of Heester et al. (2025), five intensities at once; the absorber's and back electrode's n,k data from files outside the repository; from N starts at once |
 | `validation/sample_measured.py [SAMPLE] [--move de\|stretch] [--walkers W] [--steps S] [--sigma F] [--out FILE] [--from-multistart]` | the fit's posterior by an ensemble sampler over the batch; the chain to an `.npz`; around the best of `fit_measured.py --starts N` |
 | `validation/axes.py [tol] [chunk] [test_points] [max_size]` | a table of a perovskite cell over four axes: refined axes against even ones, the error at random points |

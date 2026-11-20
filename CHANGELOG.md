@@ -7,6 +7,36 @@ the API, and says so here.
 
 ## [Unreleased]
 
+### Added
+
+- **Ions bounded by their sites in time.** `solve_transient` takes mobile ions with
+  `N_max_anion`, `N_max_cation` (it refused them): they flow down their electrochemical
+  potential at a constant mobility, the Scharfetter–Gummel flux with the excess chemical
+  potential `−ln(1 − n/N_max)` beside the potential's (ChargeTransport.jl's scheme;
+  docs/model.md). Without sites every transient is the same to the bit.
+- **ChargeTransport.jl as a reference** (`validation/chargetransport/psc_ions.jl`,
+  `tests/test_chargetransport.py`): its Ex103 perovskite cell with vacancies bounded by their
+  sites, in equilibrium, dark and lit steady states and a voltage's step in time; jaxdd agrees to
+  the grids' difference (docs/validation.md).
+
+### Fixed
+
+- **Blocking contacts under bias.** Each voltage of a scan starts in the contacts' branches of
+  the last converged solution, not in those its start shows (with `S` = 0 the start could block
+  a carrier at both ends and Newton left the solution); `solve_jv` and `solve_state` accept a
+  step at the problem's own round-off floor where an accumulation layer puts it above 1e-6
+  (docs/solver.md, "A floor above 1e-6").
+- **A batch without a pre-bias** no longer fails its whole curve where the first solve, at the
+  lowest voltage, fails: only frozen ions make that solve the scan's.
+- **The start of a solve with ions bounded by their sites** (`solve_states`, `solve_batch`,
+  `solve_transient`'s first step, now one code, `batch._start`) takes a bounded solution that
+  converges from Boltzmann's iterate whether or not Boltzmann's converged, else solves again from
+  Poisson's with the bounded ions.
+
+### Changed
+
+- The tests take on a GPU at most a worker per 2 GB of its memory (`tests/conftest.py`).
+
 ## [0.3.0] – 2026-11-19
 
 Films and half-stacks without electrodes (free surfaces), in the steady state and in time, each

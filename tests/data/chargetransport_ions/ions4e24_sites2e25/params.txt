@@ -1,4 +1,4 @@
 ChargeTransport 1.10.0, CA = 4.0e24, NA = 2.0e25
-vacancy energy E_a = -4.38155774191319 eV
-mean vacancy density = 3.99999999999999e24 m^-3
+vacancy energy E_a = -4.381557741912832 eV
+mean vacancy density = 4.000000000000105e24 m^-3
 nodes = 275, smallest interval = 9.999999999999428e-11 m

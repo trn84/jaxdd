@@ -461,9 +461,18 @@ defect each of SimSS's species stands for is the input's to say: the halide vaca
 are its cations; its anions, negative, cation vacancies or halide interstitials, each with its
 own sites.
 
-In time the ions would need a flux of their own (nonlinear diffusion at a constant mobility,
-or a modified drift at a constant diffusivity: the same steady state, different transients;
-Abdel et al.); `solve_transient` refuses mobile ions bounded by their sites by name. Newton
+**In time** (`solve_transient`) a bounded species flows down its electrochemical potential at a
+constant mobility, `j = −μ·n·∇(ln n + w ± V/V_T)·V_T` with the excess chemical potential
+`w = −ln(1 − n/N_max)`: nonlinear diffusion, whose zero flux is the steady state's occupancy
+(`solver._excess`). Discretised, the Scharfetter–Gummel flux with `w`'s difference over the
+interval added to the potential's, `x + sign·Δw` (ChargeTransport.jl's excess chemical
+potential scheme; with `w` = 0, no sites, the flux is Boltzmann's to the bit); the same `w` in
+the ion's steady row (`ln n + w` Boltzmann's), at a contact's point (zero flux over its
+interval: `ln n = −ln(e^(−η) + 1/N_max)`, `η` the neighbour's `ln n + w` and the step, exact for
+the exact `B`) and in the ions' current (its Slotboom variable `n·e^(±V/V_T + w)`). A modified
+drift at a constant diffusivity has the same steady state and other transients (Abdel,
+Courtier, Farrell 2023); it is not built. The transients agree with ChargeTransport.jl's
+([validation.md](validation.md)). Newton
 starts from the solution with Boltzmann's ions ([solver.md](solver.md)) and converges at their
 steps on the hard devices with the sites of the lattice or the codes
 ([validation.md](validation.md)); where the ions fill much of their layer (sites a few times
@@ -568,7 +577,8 @@ anions:  h_{i−1}·F_r − h_i·F_l + fac·dti·(e^{l_k}·a_prev − a) = 0,   
 (`Rescale_Ion_Density`, the trapezoid rule over the region); its converged state is therefore
 the discrete equation's with the density before the step scaled by a factor per region,
 `e^{l_k}`, which is a slot (one unknown per region, its constraint the total; Stage B's). With
-`dti = 0` the row is Boltzmann's and `l_k` its normalisation, as in the steady state. Outside
+`dti = 0` the row is Boltzmann's (bounded by their sites the occupancy's, above) and `l_k` its
+normalisation, as in the steady state. Outside
 its regions an ion's unknown is held. The ions' currents (each region by the integral form with
 the densities' change as its integrand, or by its fluxes with `currDiffInt = 1`, the current
 across a layer interface the one before it) join the carriers' and the displacement current in

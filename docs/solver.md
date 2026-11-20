@@ -115,10 +115,17 @@ answers the potential, and Newton can cycle with every step at its cap: on 1024 
 pre-bias, where Boltzmann's ions reach a thousandth of the sites. So a device with sites is
 first solved at its first voltage with Boltzmann's ions, then with the bounded ones from there.
 Where the bound changes the solution much (ions piled by Boltzmann's 50–80 times beyond their
-sites, at a few times their mean density in sites) that second solve may not converge; it then
-starts from Poisson's solution with the bounded ions, which is closer. Devices without sites
-skip both, to the bit. The normalisations of a start (`_ion_logs`) are the bounded ions' too,
-by a few Newton steps on their number from Boltzmann's closed form.
+sites, at a few times their mean density in sites) that second solve may not converge; it is
+then solved again from Poisson's solution with the bounded ions, which is closer. The bounded
+solve starts from Boltzmann's last iterate whether or not that converged, and a bounded
+solution that converges either way is the start: on ChargeTransport.jl's Ex103 cell
+(`tests/test_chargetransport.py`) with 1e24 m⁻³ of ions Boltzmann's needed about 60 Newton
+steps and on a GPU was sometimes just short, round-off deciding, and the bounded solve from its
+iterate converged; with 4e24 Boltzmann's wanders off in about one GPU run of two and neither
+way converges (PLAN.md, "Many ions"). Devices without sites skip all of it, to the bit. The
+normalisations of a start (`_ion_logs`) are the bounded ions' too, by a few Newton steps on
+their number from Boltzmann's closed form. `solve_states`, `solve_batch` and
+`solve_transient`'s steady state at its first step take the same start (`batch._start`).
 
 **Why extrapolate.** Along a J-V curve the solution changes smoothly with the voltage. Starting
 each voltage from the linear extrapolation of the last two solutions (SIMsalabim's

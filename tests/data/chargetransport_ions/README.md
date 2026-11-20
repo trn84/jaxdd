@@ -18,3 +18,6 @@ order −1 (docs/validation.md, "Ions bounded by their sites, against ChargeTran
   (likewise with `CA=4e24 NA=2e25`). Each `<case>.csv` holds region, x, ψ, n, p and the
   vacancies on each region's nodes (an interface's node in both), its first line the terminal
   current; `params.txt` the vacancies' energy found and the grid.
+- `ions1e24_sites1e25/tstep_dark_1.0_*`: the voltage's step to 1.0 V in time (`tstep:dark:1.0`,
+  the vacancies at 1e-12 m²/Vs): `_J.csv` the current at each of ChargeTransport's times,
+  `_at1`–`_at3` the states nearest 1 µs, 1 ms and 1 s (`_t.txt` their times).

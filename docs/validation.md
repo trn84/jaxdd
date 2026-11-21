@@ -777,6 +777,47 @@ leaves about 0.78), the mobility 38 cm²/Vs, `k_rad` 1.2e-10 cm³/s, the glass s
 the photodoping falls to 5e14 cm⁻³ and Spiro's doping by 1.7 decades (undetermined before). The
 model is unchanged: the misfit was the measurement's.
 
+**The posterior without the background** (`trpl_sample.py --outcoupling --neutral --background`,
+26 parameters, 256 walkers, 1500 steps, two chains on the hub's two A100s, 9.2 and 11.7 h over
+two sessions, the second going on from steps 1275 and 725 with `--resume`; acceptance 3 %). σ is
+0.0562 decades, from the hub's refit: from the rounded best values it reaches the same minimum
+(0.0562 against 0.0563; SnO2's SRV 7.7e4 against 5.5e4 cm/s). The chains come in from a median
+log-probability of −451 over the first 100 steps and still rise by 0.5–1 per 100 steps until
+about step 1200, so steps 1000–1500 are kept (256 000 samples): against those kept from step 500
+the medians move by at most 0.21 half-widths and the widths by at most 18 %. The two chains agree
+in every median within 0.31 half-widths and every half-width within 24 %; with an
+autocorrelation of 103–118 steps (over the last 1000) that is about 2200 independent samples
+between them. Median and 16–84 %, both chains:
+
+| | without the background | with it (above) | Kober-Czerny et al. |
+|---|---|---|---|
+| mobility FAPbI3 | 38 (35–41) cm²/Vs | 42 (36–48) | 0.41 (film), 2.2 (SnO2 stack) |
+| k_rad | 1.29 (1.21–1.43)·10⁻¹⁰ cm³/s | 1.37 (1.19–1.60)·10⁻¹⁰ | 0.75·10⁻¹⁰ |
+| photodoping | 4.7 (3.2–6.1)·10¹⁴ cm⁻³ | 2.1 (1.9–2.3)·10¹⁵ | 2.1·10¹⁵ |
+| SRV FAPbI3/Spiro | 10 (2–23) cm/s | 53 (38–79) | 100 (60–120) |
+| SRV glass/FAPbI3 | 17.6 (16.5–18.6) cm/s | 10 (7–13) | 7.2 |
+| SRV FAPbI3/air | 0.04 (0.003–0.5) cm/s | 1.3·10⁻³ cm/s, at its lower bound | 3.6 |
+| SRV SnO2/FAPbI3 | 5.9 (2.9–8.6)·10⁴ cm/s, at its upper bound in 37 % | 8.2 (6.3–9.5)·10⁴ cm/s, at its upper bound | 9 (4–17) |
+| absorption at 806 nm | 2.3 (1.8–2.8)·10⁴ cm⁻¹ | 3.0 (2.4–3.7)·10⁴ | 4.4–6.2·10⁴ (ellipsometry) |
+| absorbed share, glass side / top | 0.94 (0.84–0.98) / 0.71 (0.64–0.76) | 0.93 (0.84–0.98) / 0.55 (0.49–0.59) | – |
+| interface states `N_t` | 4.5 (0.6–12)·10⁹ cm⁻² | 2.4 (0.6–5.5)·10¹⁰ | – |
+| their `C_n` | 3.2 (0.9–24)·10⁻¹⁷ m³/s | 2.1 (0.8–8.4)·10⁻¹⁸ | – |
+| boost, reach | 46 (31–60), 141 (121–160) nm | 50 (26–82), 46 (27–73) nm | – |
+
+The bounds no longer carry the fit. SnO2's doping sits at its upper bound in a fifth of the
+samples (from 93 %), its band edge at 4.06 (4.04–4.08) eV, and the two are no longer −0.99
+correlated. The interface's SRV reaches its bound in 37 % (from four fifths). The air side
+leaves its lower bound but spans two decades, and its −1.00 correlation with the top side's
+absorbed share is gone. That share comes to 0.71, near the 0.78 the reflection at
+perovskite/air leaves, and is now tied to the glass side's (+0.94) and to `k_rad` (−0.9): the
+number of carriers against their radiative rate. The mobility stays within the 27–40 cm²/Vs the
+authors cite from OPTP, and `k_rad` stays 1.3·10⁻¹⁰ cm³/s. Three values move away from the
+authors': the glass side's SRV is now narrow at 2.4 times their 7.2 cm/s, Spiro's interface
+falls to a tenth of theirs and the photodoping to a quarter. `N_t` and `C_n` are still −0.90
+correlated (their product the capture rate), the states' level spans 4.73–5.12 eV, and the deep
+traps have only an upper bound. Spiro's doping and mobility and the far side's reflection stay
+the prior's. The summaries are `validation/trpl_sample_bg_s0.json` and `_s1.json`.
+
 **The posterior with outcoupling** (`trpl_sample.py --outcoupling`, 21 parameters, 256 walkers,
 1000 steps on an A100, two chains of 4.5–4.8 h; σ 0.119 decades, autocorrelation about 70
 steps, acceptance 5 %). The two chains agree in every median within a tenth of its width:

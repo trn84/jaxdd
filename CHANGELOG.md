@@ -7,6 +7,20 @@ the API, and says so here.
 
 ## [Unreleased]
 
+### Changed
+
+- **The TRPL posterior with the SnO2 decays' background taken off**: `validation/trpl_sample.py
+  --outcoupling --neutral --background` (chains `trpl_bg_chain_s<seed>.npz`); where its best fit
+  is missing it is refitted first from the fit without the background, and
+  `benchmarks/apptainer.sh`'s trpl step does so once before its chains (`--fit-only`) and
+  uploads the TRPL fits and summaries with the chains.
+
+### Fixed
+
+- `trpl_sample.py --outcoupling` without `--neutral` wrote `trpl_chain.npz` and
+  `trpl_sample.json`, so two seeds side by side overwrote each other's chain; again
+  `trpl_out_chain_s<seed>.npz` and `trpl_sample_out_s<seed>.json`.
+
 ## [0.4.0] – 2026-11-21
 
 Impedance in the frequency domain, the carriers' statistics beyond Boltzmann's (Blakemore's,

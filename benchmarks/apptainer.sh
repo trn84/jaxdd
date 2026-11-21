@@ -75,14 +75,21 @@
 #              `--neutral` in TRPL_ARGS samples the fit with saturable SnO2 interface states
 #              instead (26 parameters; trpl_neutral_chain_s<seed>.npz):
 #                STEPS=trpl TRPL_ARGS="--neutral --walkers 256 --steps 1000 --every 25" ...
+#              and with the SnO2 decays' background taken off (`--neutral --background`,
+#              trpl_bg_chain_s<seed>.npz; the fit refitted once before the chains on a clone
+#              without validation/trpl_joint_..._ec4_bg.json):
+#                STEPS=trpl TRPL_ARGS="--neutral --background --walkers 256 --steps 1500 \
+#                    --every 25" UPLOAD=https://HOST/s/TOKEN benchmarks/apptainer.sh
+#              Before the chains, the best fit once (trpl_sample.py --fit-only).
 #
 # STEPS=all runs every step of a full measurement: info tests breakdown bench hard steric slots
 # transient run (about 40 min on an A100; not gpus, grid, chunk, sample, trpl).
 #
 # Settings (environment): STEPS; CHUNK, the batch file of the chunk step; SAMPLES and SAMPLE_ARGS
 # for the sample step; TRPL_SEEDS, TRPL_ARGS and TRPL_MEM for the trpl step; UPLOAD, a public
-# share link of a Nextcloud or ownCloud folder with upload rights (https://HOST/s/TOKEN): the log
-# and the chains of the sample and trpl steps are uploaded to it every UPLOAD_EVERY seconds
+# share link of a Nextcloud or ownCloud folder with upload rights (https://HOST/s/TOKEN): the log,
+# the chains of the sample and trpl steps and the TRPL fits and summaries (validation/trpl_*.json)
+# are uploaded to it every UPLOAD_EVERY seconds
 # (default 600) while the run lives, and once at its end; LABEL, the machine's name in the plot
 # (default: the GPU's name and "apptainer"); SIF, the image file (default cuda129.sif in the
 # repository); IMAGE, where it is pulled from. Everything is appended to benchmarks/apptainer.log
@@ -105,7 +112,7 @@ say() { printf '\n== %s  %s\n' "$(date '+%F %T')" "$*"; }
 upload() {
     local base="${UPLOAD%%/s/*}" token="${UPLOAD##*/s/}" f
     token="${token%%[/?#]*}"
-    for f in "$LOG" "$ROOT"/benchmarks/samples/*.npz; do
+    for f in "$LOG" "$ROOT"/benchmarks/samples/*.npz "$ROOT"/validation/trpl_*.json; do
         [ -f "$f" ] || continue
         curl -sS -f -u "$token:" -T "$f" "$base/public.php/webdav/$(basename "$f")" ||
             echo "!! upload of $(basename "$f") failed"
@@ -206,6 +213,13 @@ if [ "${1:-}" = "--inside" ]; then
                 [ "$gpus" -ge 1 ] || gpus=1
                 mem=0.75  # JAX's own share where a chain has its GPU alone
                 [ "$gpus" -lt "${#seeds[@]}" ] && mem="${TRPL_MEM:-0.45}"
+                # The best fit once before the chains, which would each refit it where it is
+                # missing (--background on a fresh clone).
+                # shellcheck disable=SC2086
+                (cd validation && CUDA_VISIBLE_DEVICES=0 XLA_PYTHON_CLIENT_MEM_FRACTION=0.75 \
+                    "$py" -u trpl_sample.py --outcoupling ${TRPL_ARGS:-} --fit-only 2>&1 |
+                    grep --line-buffered -v Warning) ||
+                    echo "!! the trpl fit failed (exit $?)"
                 for k in "${!seeds[@]}"; do
                     seed=${seeds[$k]}
                     echo "chain of seed $seed on GPU $(( k % gpus )) with $mem of its memory"

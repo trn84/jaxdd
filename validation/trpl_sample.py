@@ -18,15 +18,21 @@ with the pulse's absorbed share by side and the SnO2 interface's states with the
 and capture, neutral (saturable), at physical bounds with SnO2's conduction band at least 4.0 eV
 (`trpl_joint.py ... --outcoupling film --absorbed --neutral-interface --physical --ec-min 4`,
 26 parameters, from `trpl_joint_detect_same_out_film_absorbed_neutral_physical_ec4.json`, else
-the best fit written below).
+the best fit written below). With `--neutral --background`, that fit with the SnO2 stack's
+decays without their background (`trpl_joint.py ... --background`), from
+`..._ec4_bg.json`; where there is none, refitted first from the fit without the background (one
+start, 60 evaluations, as `trpl_joint.py --background --start-from` it) and written there, so
+that the next start and the other chains take the same one. `--fit-only` makes sure of the
+best fit and stops (benchmarks/apptainer.sh does so once before its chains run side by side).
 
-    .venv/bin/python validation/trpl_sample.py [--outcoupling [--neutral]] [--walkers W]
-        [--steps S] [--sigma F] [--seed N] [--resume]
+    .venv/bin/python validation/trpl_sample.py [--outcoupling [--neutral [--background]]]
+        [--walkers W] [--steps S] [--sigma F] [--seed N] [--resume] [--fit-only]
 
 writes the summary (validation/trpl_sample.json, with `--outcoupling`
-validation/trpl_sample_out_s<seed>.json, with `--neutral` trpl_sample_neutral_s<seed>.json) and
-the chain (benchmarks/samples/trpl_chain.npz, trpl_out_chain_s<seed>.npz,
-trpl_neutral_chain_s<seed>.npz), the chain also every `--every` steps; `--resume` goes on from the
+validation/trpl_sample_out_s<seed>.json, with `--neutral` trpl_sample_neutral_s<seed>.json,
+with `--background` trpl_sample_bg_s<seed>.json) and the chain (benchmarks/samples/
+trpl_chain.npz, trpl_out_chain_s<seed>.npz, trpl_neutral_chain_s<seed>.npz,
+trpl_bg_chain_s<seed>.npz), the chain also every `--every` steps; `--resume` goes on from the
 chain saved, up to `--steps` in all. Prints its progress as it goes.
 """
 
@@ -65,11 +71,41 @@ NEUTRAL_BEST = [
 ]  # fmt: skip
 NEUTRAL_RMS = 0.0912
 NEUTRAL_FILE = "trpl_joint_detect_same_out_film_absorbed_neutral_physical_ec4.json"
+NEUTRAL_BG_FILE = NEUTRAL_FILE.replace(".json", "_bg.json")
 BOOST, REACH = 19, 20
 
 
-def best_fit(outcoupling, neutral=False):
-    """The best fit's parameters and rms misfit."""
+def refit(prob, theta0):
+    """The fit of `prob` from `theta0` (one start, 60 evaluations, as `trpl_joint.py` with
+    `--start-from`), written to validation/NEUTRAL_BG_FILE in `trpl_joint.py`'s form."""
+    from lm_batch import least_squares_many
+
+    t0 = time.time()
+    print(f"no validation/{NEUTRAL_BG_FILE}: refitting with the background taken off", flush=True)
+    fits, _ = least_squares_many(prob.residuals_many, [np.clip(theta0, tj.LO, tj.HI)], tj.LO,
+                                 tj.HI)  # fmt: skip
+    R, _ = prob.residuals_many([np.array(f["theta"]) for f in fits])
+    for f, r in zip(fits, R, strict=True):
+        f["per_decay"] = prob.per_decay_rms(r)
+    path = REPO / "validation" / NEUTRAL_BG_FILE
+    path.write_text(json.dumps({"names": tj.NAMES, "fits": fits, "solves": prob.solves}))
+    f = fits[0]
+    print(f"rms {f['rms']:.4f} decades in {time.time() - t0:.0f} s; per decay "
+          + " ".join(f"{v:.3f}" for v in f["per_decay"]))  # fmt: skip
+    print("theta", [round(v, 4) for v in f["theta"]])
+    print("wrote", path.relative_to(REPO), flush=True)
+    return np.array(f["theta"]), f["rms"]
+
+
+def best_fit(outcoupling, neutral=False, background=False, prob=None):
+    """The best fit's parameters and rms misfit; with `background` refitted by `prob` from the
+    fit without it where no result file is at hand."""
+    if background:
+        path = REPO / "validation" / NEUTRAL_BG_FILE
+        if path.exists():
+            f = min(json.loads(path.read_text())["fits"], key=lambda f: f["rms"])
+            return np.array(f["theta"]), f["rms"]
+        return refit(prob, best_fit(outcoupling, neutral)[0])
     found = []
     if neutral:
         names = [NEUTRAL_FILE]
@@ -122,6 +158,10 @@ def main():
     ap.add_argument("--neutral", action="store_true",
                     help="with --outcoupling: the absorbed share by side and saturable SnO2 "
                          "interface states, at physical bounds (26 parameters)")  # fmt: skip
+    ap.add_argument("--background", action="store_true",
+                    help="with --neutral: the SnO2 decays without their background")  # fmt: skip
+    ap.add_argument("--fit-only", action="store_true",
+                    help="make sure of the best fit (refit it where needed) and stop")  # fmt: skip
     ap.add_argument("--walkers", type=int, default=48)
     ap.add_argument("--steps", type=int, default=300, help="steps in all, with --resume too")
     ap.add_argument("--sigma", type=float, default=1.0, help="× the fit's rms misfit")
@@ -131,23 +171,29 @@ def main():
     a = ap.parse_args()
     if a.neutral and not a.outcoupling:
         raise SystemExit("--neutral goes with --outcoupling")
+    if a.background and not a.neutral:
+        raise SystemExit("--background goes with --outcoupling --neutral")
+    out_npz = REPO / "benchmarks" / "samples" / "trpl_chain.npz"
+    out_json = REPO / "validation" / "trpl_sample.json"
     if a.outcoupling:
         tj.use_detection("same", 24)
         tj.use_outcoupling(["film"])
-        out_npz = REPO / "benchmarks" / "samples" / f"trpl_out_chain_s{a.seed}.npz"
-        out_json = REPO / "validation" / f"trpl_sample_out_s{a.seed}.json"
+        kind = "out"
     if a.neutral:  # in trpl_joint.py's order of the parameters
         tj.use_absorbed()
         tj.use_charged_interface(0)
         tj.use_physical_bounds(4.0)
-        out_npz = REPO / "benchmarks" / "samples" / f"trpl_neutral_chain_s{a.seed}.npz"
-        out_json = REPO / "validation" / f"trpl_sample_neutral_s{a.seed}.json"
-    else:
-        out_npz = REPO / "benchmarks" / "samples" / "trpl_chain.npz"
-        out_json = REPO / "validation" / "trpl_sample.json"
+        kind = "bg" if a.background else "neutral"
+    if a.outcoupling:
+        out_npz = REPO / "benchmarks" / "samples" / f"trpl_{kind}_chain_s{a.seed}.npz"
+        out_json = REPO / "validation" / f"trpl_sample_{kind}_s{a.seed}.json"
     out_npz.parent.mkdir(parents=True, exist_ok=True)
     NAMES, LO, HI, to_theta, from_theta = coordinates(a.outcoupling)
-    prob = tj.Problem()
+    prob = tj.Problem(background=a.background)
+    if a.fit_only:
+        th_best, rms = best_fit(a.outcoupling, a.neutral, a.background, prob)
+        print(f"the best fit: rms {rms:.4f} decades")
+        return
 
     def log_prob(points):
         th = to_theta(points)
@@ -170,7 +216,7 @@ def main():
         rng = np.random.default_rng([a.seed, len(before)])
         print(f"going on from step {len(before)} of {out_npz.relative_to(REPO)}")
     else:
-        th_best, rms = best_fit(a.outcoupling, a.neutral)
+        th_best, rms = best_fit(a.outcoupling, a.neutral, a.background, prob)
         theta = np.clip(from_theta(th_best), LO + 1e-9, HI - 1e-9)
         sigma = a.sigma * rms
         rng = np.random.default_rng(a.seed)

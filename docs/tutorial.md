@@ -194,6 +194,41 @@ device whose pre-bias did not converge is flagged at every voltage. Mask by the 
 using the curves (for a table, a fit or a training set). The `iterations` show where a batch
 spends its time ([batching.md](batching.md)).
 
+### A posterior by sampling
+
+`validation/sample_measured.py` (and `validation/trpl_sample.py` for the TRPL decays) samples
+the posterior of a fit's parameters: the prior uniform in the fitted coordinates (logarithms
+where the fit takes them) within the bounds, the likelihood Gaussian per point with σ the best
+fit's rms misfit. The walkers start around the best fit, drawn from the linearised posterior.
+Each step moves the two halves of the walkers in turn, each by differential evolution relative
+to the other (ter Braak 2006: along the difference of two walkers of the other half, scaled by
+2.38/√(2d), by one in a tenth of the moves), so a step is two calls of the batched model:
+
+```mermaid
+flowchart LR
+    F["best fit<br/>(fit_measured.py --starts N)"] --> W["W walkers around it,<br/>from σ²(JᵀJ + P)⁻¹"]
+    W --> P
+    subgraph S["one step, repeated"]
+        P["half A: x' = x + γ(x_j − x_k),<br/>x_j, x_k from half B"] --> J["one batch: W/2 × 5 curves<br/>(TRPL: W/2 × 8 transients)"]
+        J --> M["Metropolis: accept with<br/>min(1, p(x') / p(x))"]
+        M -- "then half B against A" --> P
+    end
+    M --> R["burn-in discarded; autocorrelation<br/>time, two chains; median, 16–84 %"]
+```
+
+The move is invariant under affine maps of the parameters, so the Jacobian's singular values
+over seven to nine decades cost it nothing where the posterior is close to Gaussian.
+
+**Reading a parameter's histogram.** A walker stays where its proposal is rejected and counts
+again, so each parameter set is visited in proportion to its posterior probability,
+`exp(−Σr²/2σ²)` within the bounds: a set that fits a little worse is visited far less often,
+since the sum runs over hundreds of points. The histogram of one parameter is every sample
+projected on its axis, whatever the others are; a value is frequent where many combinations of
+the others fit with it, so the peak need not be the best fit's value. A narrow peak is a
+parameter the data determine; a flat histogram one they do not (the prior shows through); one
+piled against a bound one the bound holds, where the data would go further. The widths scale
+with σ, and with a systematic misfit they are a lower bound ([validation.md](validation.md)).
+
 ## A table over parameters
 
 A table of curves over several parameters, interpolated between its points, needs each axis's

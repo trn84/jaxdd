@@ -15,14 +15,34 @@ a Newton step of a few hundred kFLOP. SimSS does it in a fraction of a second to
 and a faster single-device code would not change much. What costs time is the *sweep*: a table
 of J-V curves over a parameter grid (absorber thickness, diffusion length, doping, ion density,
 ...) is hundreds of thousands to millions of devices, each another SimSS process. On all cores
-of a 16-core desktop SimSS manages about 45 J-V curves per second; a million curves take six
-hours, and every further axis multiplies that.
+of a 16-core desktop SimSS manages about 33 J-V curves per second (the README's benchmark); a
+million curves take eight and a half hours, and every further axis multiplies that.
 
 The devices of a sweep are independent. Stacked along a batch axis, 10⁴–10⁵ of them form one
 large computation: a block-tridiagonal Newton system per device, sequential along the grid,
 parallel across the batch. That is the shape a GPU (and, differently, a CPU with many cores)
 handles well. jaxdd writes the solver once, for one device, as a pure JAX function, and lets
 `jax.vmap` turn it into the batched one.
+
+```mermaid
+flowchart LR
+    subgraph A["one process per device (SimSS, ZimT): at most one per core at a time"]
+        direction TB
+        a1["device 1 → voltages × iterations → J(V)"]
+        a2["device 2 → voltages × iterations → J(V)"]
+        a3["…"]
+        a4["device N → voltages × iterations → J(V)"]
+    end
+    subgraph B["jaxdd: one compiled program for the batch"]
+        direction LR
+        b0["B devices stacked<br/>along a batch axis<br/>(one pytree)"] --> b1["jit(vmap(solve_one)):<br/>every Newton step and its<br/>linear solve on all B at once"]
+        b1 --> b2["J, converged<br/>(B × voltages)"]
+    end
+```
+
+No branch of the program depends on a device's data, so every device runs the same
+instructions, and the same program runs on a CPU, on one GPU or on several; what it does inside
+is in [batching.md](batching.md).
 
 **FP64 throughout.** Carrier densities span some 20 orders of magnitude, and the
 Scharfetter–Gummel fluxes subtract nearly equal exponentials. jaxdd runs with `jax_enable_x64`

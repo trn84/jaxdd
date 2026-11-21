@@ -823,6 +823,10 @@ against the Ryzen 9 5950X's cores): jaxdd 0.18 s for one, 32 ms each in a batch 
 iteration of a fit), after compilation; ZimT 8.9 s for one run, 2.4 s each with four at once.
 ZimT's time is its Gummel iterations' and depends on the case: on the film with the fitted
 parameters at the open circuit one run took 98 s (7.5 s each with 16 at once), jaxdd 0.24 s.
+The posterior with the saturable states (above) solved 4.1 million transients (two chains of
+256 walkers × 1000 steps × eight decays) in 5.2 and 5.3 h on two A100s; at 7.5 s each on the
+desktop's sixteen cores ZimT would take about a year for as many, an estimate, as ZimT solves
+them only with electrodes.
 
 ## The tests
 

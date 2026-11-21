@@ -32,14 +32,8 @@ about two A100s).
 
 ## 3 Later
 
-- **TRPL, the SnO2 stack lit from the top.** With saturable interface states, the pulse's
-  absorbed share by side and SnO2's band edge from 4.0 eV the eight decays of Kober-Czerny et
-  al. fit to 0.091 decades rms; the SnO2 stack lit from the top stays at 0.20, the rest 0.04–0.07
-  ([docs/validation.md](docs/validation.md#trpl-without-electrodes)), and the fit then holds the
-  SnO2 interface's SRV at its bound and the top side's absorbed share at 0.57 (0.78 expected). Not
-  explained by SnO2 traps, a dipole (the same as SnO2's band edge) or photon recycling.
-  **Done when** that decay is within the others' misfit with every parameter inside its bounds,
-  or its misfit is traced to the measurement.
+Nothing at present.
+
 ## 4 Not planned
 
 - **A fused CUDA kernel**: decided against for now; why, and when it comes back, is in

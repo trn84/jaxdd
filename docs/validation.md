@@ -762,6 +762,21 @@ side's reflection stay the prior's. The photodoping comes to the authors' value,
 third and the mobility to just above the 27–40 cm²/Vs the authors cite from OPTP; SnO2's
 two bounds and the air side's still carry the fit.
 
+**The SnO2 stack lit from the top carries the measurement's background** (`--background`, the
+same fit from its best values). That decay has a fifth of the others' counts at its peak (780
+against 3100–3600), so its dark counts are 1.75e-3 of its peak, flat from 8 to 20 µs, where the
+others' are 1.3e-4 and 2.9e-4; between 1 and 2.7 µs they are 15–60 % of what the fit sees above
+its floor of 3e-3, and the model has no background. `sno2_data(background=True)` takes from each
+of the SnO2 stack's three decays its mean over 15–20 µs, beyond the fitted times (the 20 bins
+before the pulse show the same level, too few to measure it); the film's decays still fall at
+20 µs and stay as measured, Spiro's has its background taken off already. With the fit's values
+unchanged that alone gives 0.072 decades rms; refitted, 0.056, every decay 0.046–0.070, the
+SnO2 stack's 0.05, 0.06 and 0.06 (from 0.07, 0.07 and 0.20). The SnO2 interface's SRV leaves its
+bound (5.5e4 cm/s), the top side's absorbed share comes to 0.76 (the reflection at perovskite/air
+leaves about 0.78), the mobility 38 cm²/Vs, `k_rad` 1.2e-10 cm³/s, the glass side's SRV 18 cm/s;
+the photodoping falls to 5e14 cm⁻³ and Spiro's doping by 1.7 decades (undetermined before). The
+model is unchanged: the misfit was the measurement's.
+
 **The posterior with outcoupling** (`trpl_sample.py --outcoupling`, 21 parameters, 256 walkers,
 1000 steps on an A100, two chains of 4.5–4.8 h; σ 0.119 decades, autocorrelation about 70
 steps, acceptance 5 %). The two chains agree in every median within a tenth of its width:
@@ -903,7 +918,7 @@ as arguments. SimSS itself is built by [`simss/`](../simss/README.md).
 | `validation/trpl_halfstacks.py` | TRPL of two half-stacks without electrodes: free ends against SIMsalabim's electrodes and their best case ([above](#trpl-without-electrodes)) |
 | `validation/trpl_zimt.py [--cap S] [--workdir DIR]` | ZimT 5.36 on a decay with an exact answer and on the half-stacks' best case (Docker, each run stopped after `S` seconds) |
 | `validation/trpl_fit.py` | the SnO2 half-stack's measured decays fitted with free ends |
-| `validation/trpl_joint.py [--starts N] [--from-best] [--start-mu LOG10] [--bottom-zone NM] [--detect same\|opposite] [--outcoupling STACKS] [--recycling] [--physical [--ec-min EV]] [--absorbed] [--sno2-traps] [--charged-interface\|--neutral-interface] [--profile I=V,…] [--start-from FILE] [--optimizer batched\|scipy]` | all eight measured decays fitted together, one perovskite, every end free; with `--bottom-zone` a defective zone at the perovskite's bottom, with `--detect` the PL as a detector at 806 nm sees it, `--outcoupling` its light leaving better near the glass; `--recycling` photon recycling, `--physical` physical bounds on the SnO2 interface, `--absorbed` the pulse's absorbed share by side, `--sno2-traps` a level in the SnO2, `--charged-interface`/`--neutral-interface` the SnO2 interface states' own density and capture, `--profile` one parameter held at each value; from all starts at once (`validation/lm_batch.py`: scipy's `least_squares` per start in a thread, their evaluations gathered into one batch: the same fits to the bit, four starts in 788 s instead of 1156) |
+| `validation/trpl_joint.py [--starts N] [--from-best] [--start-mu LOG10] [--bottom-zone NM] [--detect same\|opposite] [--outcoupling STACKS] [--recycling] [--physical [--ec-min EV]] [--absorbed] [--sno2-traps] [--charged-interface\|--neutral-interface] [--profile I=V,…] [--start-from FILE] [--background] [--optimizer batched\|scipy]` | all eight measured decays fitted together, one perovskite, every end free; with `--bottom-zone` a defective zone at the perovskite's bottom, with `--detect` the PL as a detector at 806 nm sees it, `--outcoupling` its light leaving better near the glass; `--recycling` photon recycling, `--physical` physical bounds on the SnO2 interface, `--absorbed` the pulse's absorbed share by side, `--sno2-traps` a level in the SnO2, `--charged-interface`/`--neutral-interface` the SnO2 interface states' own density and capture, `--profile` one parameter held at each value, `--background` the SnO2 stack's decays without their background; from all starts at once (`validation/lm_batch.py`: scipy's `least_squares` per start in a thread, their evaluations gathered into one batch: the same fits to the bit, four starts in 788 s instead of 1156) |
 | `validation/trpl_sample.py [--outcoupling [--neutral]] [--walkers W] [--steps S] [--sigma F] [--seed N] [--resume]` | the joint fit's posterior by the ensemble sampler over the batch; the chain to `benchmarks/samples/trpl_chain.npz` (with `--outcoupling` `trpl_out_chain_s<seed>.npz`, with `--neutral` the fit with saturable SnO2 interface states, `trpl_neutral_chain_s<seed>.npz`); on the hub `STEPS=trpl benchmarks/apptainer.sh` |
 | `validation/trpl_robust.py scatter\|profiles` | the outcoupling fit refitted from scattered starts, and profiles of its boost and mobility (`trpl_robust.json`) |
 | `validation/trpl_timing.py [--batches N …] [--parallel P]` | the same transient's wall time in jaxdd and in ZimT |

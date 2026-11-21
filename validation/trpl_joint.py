@@ -288,11 +288,11 @@ def device(theta, stack, glass, fluence):
 class Problem:
     """The eight decays binned (log-spaced, the model the same way), and the model's residuals."""
 
-    def __init__(self):
+    def __init__(self, background=False):
         self.t = fine_times()
         self.tm = self.t[1:] - T_PULSE
         self.data = []  # per decay: (t, its points, which bin each point is in, binned data)
-        for td, y in (film_data(), sno2_data(), spiro_data()):
+        for td, y in (film_data(), sno2_data(background=background), spiro_data()):
             which = log_bins(td, td.max(), 60)
             for row in y:
                 yb = binned(row[None], which)[0]
@@ -420,6 +420,8 @@ def main():
                     help="hold parameter I (its index) at each value, one start each")  # fmt: skip
     ap.add_argument("--start-from", metavar="FILE",
                     help="start from validation/FILE's best fit (the same parameters)")  # fmt: skip
+    ap.add_argument("--background", action="store_true",
+                    help="the SnO2 decays without their background (the flat tail)")  # fmt: skip
     ap.add_argument("--from-best", action="store_true",
                     help="start from the best fit in validation/trpl_joint.json")  # fmt: skip
     a = ap.parse_args()
@@ -461,8 +463,10 @@ def main():
         out = out.replace(".json", "_dipole.json")
     if a.charged_interface or a.neutral_interface:
         use_charged_interface(0 if a.neutral_interface else -1)
+        given = len(first) > CHARGED  # a start from --start-from has its own
         first = np.r_[first, START[len(first) :]]
-        first[CHARGED] = np.clip(first[NAMES.index("log10 S SnO2/FAPbI3 (m/s)")] + 14, 12, 18)
+        if not given:
+            first[CHARGED] = np.clip(first[NAMES.index("log10 S SnO2/FAPbI3 (m/s)")] + 14, 12, 18)
         out = out.replace(".json", "_neutral.json" if a.neutral_interface else "_charged.json")
     if len(first) != len(START):
         raise SystemExit(f"the start has {len(first)} parameters, this fit {len(START)}")
@@ -479,7 +483,9 @@ def main():
         first = first.copy()
         first[0] += np.log10(1.0 / (1.0 - share))  # the same light leaving at first
         out = out.replace(".json", "_recycling.json")
-    prob = Problem()
+    if a.background:
+        out = out.replace(".json", "_bg.json")
+    prob = Problem(background=a.background)
     rng = np.random.default_rng(a.seed)
     starts = [np.clip(first, LO, HI)] + [
         np.clip(first + rng.uniform(-a.spread, a.spread, len(first)), LO, HI)

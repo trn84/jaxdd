@@ -236,12 +236,19 @@ def film_data(t_max=1.5e-5):
     return a[m, 1] * 1e-9, a[m, 2:].T
 
 
-def sno2_data(t_max=1.5e-5):
+def sno2_data(t_max=1.5e-5, background=False):
     """The SnO2 half-stack's decays: t (s) and 3 × points (glass 4.8e11, glass 1.5e11, film 4.8e11
-    photons/cm²)."""
+    photons/cm²). With `background` each decay's background taken off: its mean over 15–20 µs,
+    beyond the fitted times, where all three are flat (the 20 bins before the pulse show the same
+    level, too few to measure it: 1.2e-3 ± 0.4e-3 against 1.75e-3 lit from the film, which has a
+    fifth of the others' counts at its peak, 780 against 3100–3600)."""
     a = np.genfromtxt(DATA / "Seo_SnO2_Glass_0_processed_ode.txt", delimiter="\t", skip_header=1)
+    y = a[:, 2:5].T
+    if background:
+        tail = a[:, 1] * 1e-9 >= 1.5e-5
+        y = y - np.nanmean(y[:, tail], axis=1, keepdims=True)
     m = (a[:, 1] >= 0) & (a[:, 1] * 1e-9 < t_max)
-    return a[m, 1] * 1e-9, a[m, 2:5].T
+    return a[m, 1] * 1e-9, y[:, m]
 
 
 def spiro_data(t_max=4.5e-6):

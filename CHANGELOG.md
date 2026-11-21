@@ -7,6 +7,14 @@ the API, and says so here.
 
 ## [Unreleased]
 
+## [0.4.0] – 2026-11-21
+
+Impedance in the frequency domain, the carriers' statistics beyond Boltzmann's (Blakemore's,
+Fermi–Dirac's), mobile ions bounded by their sites in time with two flux schemes, adaptive sparse
+grids for tables, and ChargeTransport.jl as a second reference. Nothing of 0.3.0's API is removed;
+with Boltzmann's statistics and ions without sites every result is the same, except where the
+fixes below let a solve converge that failed before.
+
 ### Added
 
 - **Ions bounded by their sites in time.** `solve_transient` takes mobile ions with
@@ -34,7 +42,6 @@ the API, and says so here.
   `tests/test_chargetransport.py`): its Ex103 perovskite cell with vacancies bounded by their
   sites, in equilibrium, dark and lit steady states and a voltage's step in time; jaxdd agrees to
   the grids' difference (docs/validation.md).
-
 - **The carriers' statistics**: `build_device(..., statistics=)` takes
   Blakemore's (`"blakemore"`) or Fermi–Dirac's `F_{1/2}` (`"fermi-dirac"`, TeSCA's
   approximation) beside Boltzmann's, the default and SIMsalabim's (`jaxdd.statistics`): the fluxes
@@ -241,7 +248,8 @@ of devices on CPUs and NVIDIA GPUs, differentiable in the input's parameters.
   depletion zones; ZimT's `varFile` is not written. A transient is not split across several GPUs.
 - AMD GPUs: prepared for the MI50 (gfx906, JAX 0.4.31 in a ROCm image), not yet measured.
 
-[Unreleased]: https://github.com/trn84/jaxdd/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/trn84/jaxdd/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/trn84/jaxdd/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/trn84/jaxdd/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/trn84/jaxdd/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/trn84/jaxdd/releases/tag/v0.1.0

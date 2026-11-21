@@ -7,7 +7,7 @@ handbook or the commit message, not here.
 
 ## 1 Next
 
-0.3.0 is released (CHANGELOG.md). Nothing is next until one of the items below is taken up.
+0.4.0 is released (CHANGELOG.md). Nothing is next until one of the items below is taken up.
 
 ## 2 Waiting
 

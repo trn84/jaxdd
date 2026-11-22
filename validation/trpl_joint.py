@@ -129,7 +129,7 @@ def use_absorbed():
     """The share of the pulse the perovskite absorbs, by side: lit through the glass (and SnO2)
     and from the top, each a factor on the fluence (log10, from 0.3 to 1: reflection at the
     stack's faces, absorption in its other layers); two more parameters. Not above 1: the decays
-    are normalised, so only the fluence sets the carriers' number against k_rad and the captures."""
+    are normalised, so a larger share can trade against a smaller k_rad and smaller captures."""
     global NAMES, START, LO, HI, ABSORBED
     ABSORBED = len(NAMES)
     NAMES = (*NAMES, "log10 absorbed share, glass side", "log10 absorbed share, top side")

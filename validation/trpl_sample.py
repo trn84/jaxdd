@@ -16,15 +16,16 @@ from near the glass leaving the film better (`trpl_joint.py --detect same --subl
 are sampled as log10(boost × reach) and log10 reach, along the valley the decays leave them
 (docs/validation.md), the boost kept within its bounds. With `--outcoupling --neutral`, that fit
 with the pulse's absorbed share by side and the SnO2 interface's states with their own density
-and capture, neutral (saturable), at physical bounds with SnO2's conduction band at least 3.9 eV
+and capture, neutral (saturable), at physical bounds but for SnO2's conduction band, from 3.9 eV
 (`trpl_joint.py ... --outcoupling film --absorbed --neutral-interface --physical --ec-min 3.9`,
 26 parameters, from the fit at 4.0 eV,
 `trpl_joint_detect_same_out_film_absorbed_neutral_physical_ec4.json`, else the best fit written
 below). With `--neutral --background`, that fit with the SnO2 stack's
 decays without their background (`trpl_joint.py ... --background`), from
 `..._ec3.9_bg.json`; where there is none, refitted first from the fit without the background (one
-start, 200 evaluations, as `trpl_joint.py --background --start-from` it) and written there, so
-that the next start and the other chains take the same one (one outside the bounds is refused).
+start, 200 evaluations, as `trpl_joint.py --background --max-nfev 200 --start-from` it) and
+written there, so that the next start and the other chains take the same one (one outside the
+bounds is refused).
 `--fit-only` makes sure of the best fit and stops (benchmarks/apptainer.sh does so once before
 its chains run side by side).
 
@@ -80,7 +81,8 @@ BOOST, REACH = 19, 20
 
 def refit(prob, theta0):
     """The fit of `prob` from `theta0` (one start, 200 evaluations, as `trpl_joint.py` with
-    `--start-from`), written to validation/NEUTRAL_BG_FILE in `trpl_joint.py`'s form."""
+    `--max-nfev 200 --start-from`), written to validation/NEUTRAL_BG_FILE in `trpl_joint.py`'s
+    form."""
     from lm_batch import least_squares_many
 
     t0 = time.time()

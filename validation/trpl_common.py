@@ -239,9 +239,10 @@ def film_data(t_max=1.5e-5):
 def sno2_data(t_max=1.5e-5, background=False):
     """The SnO2 half-stack's decays: t (s) and 3 × points (glass 4.8e11, glass 1.5e11, film 4.8e11
     photons/cm²). With `background` each decay's background taken off: its mean over 15–20 µs,
-    beyond the fitted times, where all three are flat (the 20 bins before the pulse show the same
-    level, too few to measure it: 1.2e-3 ± 0.4e-3 against 1.75e-3 lit from the film, which has a
-    fifth of the others' counts at its peak, 780 against 3100–3600)."""
+    beyond the fitted times, where all three are flat (the second only from about 12 µs; the 19
+    bins before the pulse's rise show the same level, too few to measure it: 1.4e-3 ± 0.3e-3
+    against 1.73e-3 lit from the film, which has a fifth to a quarter of the others' counts at
+    its peak, 780 against 3100–3600)."""
     a = np.genfromtxt(DATA / "Seo_SnO2_Glass_0_processed_ode.txt", delimiter="\t", skip_header=1)
     y = a[:, 2:5].T
     if background:

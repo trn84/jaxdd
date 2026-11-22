@@ -735,7 +735,9 @@ samples): against those kept from step 333 the medians move by at most 0.13 half
 widths by at most 11 %, but the interface states' `N_t` and `C_n` widen from 0.40 to 0.49 and
 0.55 decades (kept from 333, 600, 800), and theirs are a lower bound. The two chains agree in
 every median within 0.19 half-widths and every half-width within 36 % (`N_t`, `C_n`; the others
-within 20 %), 4200 independent samples between them. Median and 16–84 %, both chains:
+within 20 %). The steps kept hold about 2500 independent samples between them, a rough number:
+400 steps are only about five autocorrelation times (4200, given here up to 0.4.0, is what steps
+333–1000 would hold). Median and 16–84 %, both chains:
 
 | | with the saturable states | with outcoupling (above) | Kober-Czerny et al. |
 |---|---|---|---|
@@ -762,32 +764,35 @@ side's reflection stay the prior's. The photodoping comes to the authors' value,
 third and the mobility to just above the 27–40 cm²/Vs the authors cite from OPTP; SnO2's
 two bounds and the air side's still carry the fit.
 
-**The SnO2 stack lit from the top carries the measurement's background** (`--background`, the
-same fit from its best values). That decay has a fifth of the others' counts at its peak (780
-against 3100–3600), so its dark counts are 1.75e-3 of its peak, flat from 8 to 20 µs, where the
-others' are 1.3e-4 and 2.9e-4; between 1 and 2.7 µs they are 15–60 % of what the fit sees above
-its floor of 3e-3, and the model has no background. `sno2_data(background=True)` takes from each
-of the SnO2 stack's three decays its mean over 15–20 µs, beyond the fitted times (the 20 bins
-before the pulse show the same level, too few to measure it); the film's decays still fall at
-20 µs and stay as measured, Spiro's has its background taken off already. With the fit's values
-unchanged that alone gives 0.072 decades rms; refitted, 0.056, every decay 0.046–0.070, the
-SnO2 stack's 0.05, 0.06 and 0.06 (from 0.07, 0.07 and 0.20). The SnO2 interface's SRV leaves its
-bound (5.5e4 cm/s), the top side's absorbed share comes to 0.76 (the reflection at perovskite/air
-leaves about 0.78), the mobility 38 cm²/Vs, `k_rad` 1.2e-10 cm³/s, the glass side's SRV 18 cm/s;
-the photodoping falls to 5e14 cm⁻³ and Spiro's doping by 1.7 decades (undetermined before). The
-model is unchanged: the misfit was the measurement's.
+**The SnO2 stack lit from the top carries the measurement's background** (`--background`, the same
+fit from its best values). That decay has a fifth to a quarter of the others' counts at its peak
+(780 against 3100–3600) and two to three times their background per bin (1.35 counts against 0.43
+and 0.75): over 15–20 µs its background is 1.73e-3 of its peak, the others' 1.19e-4 and 2.42e-4. It
+is flat from 8 µs, as is the first decay's to within a quarter; the second's only from about 12 µs.
+Between 1 and 2.7 µs it is 15–57 % of what the fit sees above its floor of 3e-3, and the model has
+no background. `sno2_data(background=True)` takes from each of the SnO2 stack's three decays its
+mean over 15–20 µs, beyond the fitted times (the 19 bins before the pulse's rise show the same
+level within two standard errors, too few to measure it); the film's decays still fall at 20 µs and
+stay as measured, Spiro's has its background taken off already. With the fit's values unchanged
+that alone gives 0.072 decades rms; refitted, 0.056, every decay 0.046–0.070, the SnO2 stack's
+0.05, 0.06 and 0.06 (from 0.07, 0.07 and 0.20). The SnO2 interface's SRV leaves its bound (5.5e4
+cm/s), the top side's absorbed share comes to 0.76 (the reflection at perovskite/air leaves about
+0.78), the mobility 38 cm²/Vs, `k_rad` 1.2e-10 cm³/s, the glass side's SRV 18 cm/s; the photodoping
+falls to 5e14 cm⁻³ and Spiro's doping by 1.7 decades (undetermined before). The model is unchanged:
+the misfit was the measurement's.
 
-**The posterior without the background** (`trpl_sample.py --outcoupling --neutral --background`,
-26 parameters, 256 walkers, 1500 steps, two chains on the hub's two A100s, 9.2 and 11.7 h over
-two sessions, the second going on from steps 1275 and 725 with `--resume`; acceptance 3 %). σ is
-0.0562 decades, from the hub's refit: from the rounded best values it reaches the same minimum
-(0.0562 against 0.0563; SnO2's SRV 7.7e4 against 5.5e4 cm/s). The chains come in from a median
-log-probability of −451 over the first 100 steps and still rise by 0.5–1 per 100 steps until
-about step 1200, so steps 1000–1500 are kept (256 000 samples): against those kept from step 500
-the medians move by at most 0.21 half-widths and the widths by at most 18 %. The two chains agree
-in every median within 0.31 half-widths and every half-width within 24 %; with an
-autocorrelation of 103–118 steps (over the last 1000) that is about 2200 independent samples
-between them. Median and 16–84 %, both chains:
+**The posterior without the background** (`trpl_sample.py --outcoupling --neutral --background`, 26
+parameters, 256 walkers, 1500 steps, two chains on the hub's two A100s, 9.2 and 11.7 h over two
+sessions, the second going on from steps 1275 and 725 with `--resume`; acceptance 3 %). σ is 0.0562
+decades, from the hub's refit: from the rounded best values it reaches the local fit's misfit
+(0.0562 against 0.0563), not shown to be the same minimum (SnO2's SRV 7.7e4 against 5.5e4 cm/s).
+The chains come in from a median log-probability of −451 over the first 100 steps and still rise by
+0.5–1 per 100 steps until about step 1200, so steps 1000–1500 are kept (256 000 samples): against
+those kept from step 500 the medians move by at most 0.21 half-widths and the widths by at most 18
+%. The two chains agree in every median within 0.31 half-widths and every half-width within 24 %;
+with an autocorrelation of 103–118 steps (over the last 1000) that is about 2200 independent
+samples between them, a rough number: the 500 steps kept are only four to five autocorrelation
+times. Median and 16–84 %, both chains:
 
 | | without the background | with it (above) | Kober-Czerny et al. |
 |---|---|---|---|
@@ -815,14 +820,14 @@ SnO2's band edge is at 4.06 (4.04–4.08) eV and no longer −0.99 correlated wi
 side's SRV has only an upper bound, about 2 cm/s (its interval depends on the lower bound), and its
 −1.00 correlation with the top side's absorbed share is gone. That share comes to 0.71, near the
 0.78 the reflection at perovskite/air leaves, and is now tied to the glass side's (+0.94) and to
-`k_rad` (−0.9): the number of carriers against their radiative rate. The mobility stays within the
-27–40 cm²/Vs the authors cite from OPTP, and `k_rad` stays 1.3·10⁻¹⁰ cm³/s. Three values move away
-from the authors': the glass side's SRV is now narrow at 2.4 times their 7.2 cm/s, Spiro's
-interface falls to a tenth of theirs and the photodoping to a quarter. `N_t` and `C_n` are still
-−0.90 correlated (their product the capture rate), the states' level spans 4.73–5.12 eV (cut below
-by its bound at 4.65), and the deep traps have only an upper bound. Spiro's doping and mobility and
-the far side's reflection stay the prior's. The summaries are `validation/trpl_sample_bg_s0.json`
-and `_s1.json`.
+`k_rad` (−0.9): the number of carriers against their radiative rate. The mobility's median stays
+within the 27–40 cm²/Vs the authors cite from OPTP (its interval reaches 41), and `k_rad` stays
+1.3·10⁻¹⁰ cm³/s. Three values move away from the authors': the glass side's SRV is now narrow at
+2.4 times their 7.2 cm/s, Spiro's interface falls to a tenth of theirs and the photodoping to a
+quarter. `N_t` and `C_n` are still −0.90 correlated (their product the capture rate), the states'
+level spans 4.73–5.12 eV (cut below by its bound at 4.65), and the deep traps have only an upper
+bound. Spiro's doping and mobility and the far side's reflection stay the prior's. The summaries
+are `validation/trpl_sample_bg_s0.json` and `_s1.json`.
 
 **The bounds widened after it** (2026-11-22; not yet sampled, and the solver's convergence there
 not yet measured). The TRPL fits and posteriors on this page have the former bounds, as at commit
@@ -835,30 +840,34 @@ not yet measured). The TRPL fits and posteriors on this page have the former bou
 | log10 boost × reach (m), sampled | −9 – −5 | −9 – −3.5 | piled; now the two bounds' product |
 | `E_v` Spiro (eV) | 5.0 – 5.5 | 4.8 – 5.5 | piled; stays above the level at 4.765 |
 | `E_t` SnO2/FAPbI3 (eV) | 4.65 – 5.5 | 4.35 – 5.5 | flat to a bound that was not physical |
-| `E_c` SnO2 (eV), with these states | 4.0 – 4.6 | 3.9 – 4.3 | tied to `N_D`; stays below `E_t` |
+| `E_c` SnO2 (eV), with these states | 4.0 – 4.6 | 3.9 – 4.3 | 3.9: opened with `N_D`'s bound; 4.3: stays below `E_t` |
 
 The lower bound of 3.9 eV is the sampler's (`--ec-min 3.9` in `trpl_joint.py`), beyond the 30 meV
-photoemission finds. Some values in the widened ranges would not be physical: a large SRV with
-few states needs a hole capture `C_p = S/N_t` beyond any cross-section. The deep traps' and the
-air side's lower bounds stay (there they change the decays by less than 1e-3 decades), as does
+photoemission finds. It was opened for a tie to the doping that the posterior above no longer
+shows, and stayed when the doping's bound was closed again. Some values in the widened ranges would
+not be physical: a large SRV with few states needs a hole capture `C_p = S/N_t` beyond any
+cross-section. The deep traps' and the air side's lower bounds stay (there, estimated from their
+rates `C·N` and `S/d`, not simulated, they change the decays by less than 1e-3 decades), as does
 the reflection's range of 0–1.
 
 Two bounds the posterior piles against stay where they were. Commit ba4917b had opened both, and
 the hub's refit there (0.0552 decades rms, stopped at 60 evaluations) went to both new bounds:
 
 - **The absorbed shares stay at most 1.** Opened to 1.6 they went to 1.58 and 1.18, their ratio
-  kept (0.74 from 0.76), `k_rad` down to 0.84e-10 from 1.21e-10 cm³/s, the captures down and the
-  shallow traps up with it. The decays are normalised: more carriers with a smaller `k_rad` and
-  smaller captures decay nearly alike, and only the fluence sets their number. The bound at 1 is
-  the physics that determines `k_rad`.
+  kept (0.74 from the local fit's 0.76), `k_rad` down to 0.84e-10 from that fit's 1.21e-10 cm³/s,
+  the captures down and the shallow traps up with it. The decays are normalised, so more carriers
+  with a smaller `k_rad` and smaller captures can decay nearly alike: `k_rad`'s value then rests
+  on the bound at 1, which is physical. That is one refit, not converged; no posterior was
+  sampled above 1.
 - **SnO2's doping stays at most 10^25.5 m⁻³.** Opened to 1e26 it went there. It is an effective
   one already: at the median 7 times its `N_c`, where Boltzmann's statistics put the Fermi level
   0.06 eV from Fermi–Dirac's (0.11 at the bound, 0.29 at 1e26), more than the band edge's
   interval. To go further needs the other statistics, not another bound.
 
 In that refit the deep traps' density, the air side's SRV, the far side's reflection and the
-states' level stayed within 0.005 of their start: the fit inherits their places near the bounds
-from the fits before it, it is not driven there.
+states' level stayed within 0.005 of their start: that refit took their places near the bounds
+over from its start. One refit does not show that they have no effect, nor where others would
+take them.
 
 **The posterior with outcoupling** (`trpl_sample.py --outcoupling`, 21 parameters, 256 walkers,
 1000 steps on an A100, two chains of 4.5–4.8 h; σ 0.119 decades, autocorrelation about 70

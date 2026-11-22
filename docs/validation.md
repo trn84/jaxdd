@@ -723,7 +723,7 @@ FA-rich perovskites on SnO2 finds the conduction bands within 30 meV (Energy Env
 fit with the neutral states takes 4.07 eV and comes to 0.091 decades, the SnO2 stack's decays
 0.07, 0.07 and 0.20 (`--ec-min 4`); its interface's SRV then sits at its bound (1e5 cm/s), with
 3e10 cm⁻² states of slow electron capture (`C_n` 1.5e-18 m³/s), and the far side's reflection at
-1. This is the fit `trpl_sample.py --outcoupling --neutral` samples.
+1. This is the fit the posterior with the saturable states (below) samples.
 
 **The posterior with the saturable states** (`trpl_sample.py --outcoupling --neutral`, 26
 parameters, 256 walkers, 1000 steps, two chains on the hub's two A100s, 5.2 and 5.3 h; σ 0.091
@@ -804,19 +804,49 @@ between them. Median and 16–84 %, both chains:
 | their `C_n` | 3.2 (0.9–24)·10⁻¹⁷ m³/s | 2.1 (0.8–8.4)·10⁻¹⁸ | – |
 | boost, reach | 46 (31–60), 141 (121–160) nm | 50 (26–82), 46 (27–73) nm | – |
 
-The bounds no longer carry the fit. SnO2's doping sits at its upper bound in a fifth of the
-samples (from 93 %), its band edge at 4.06 (4.04–4.08) eV, and the two are no longer −0.99
-correlated. The interface's SRV reaches its bound in 37 % (from four fifths). The air side
-leaves its lower bound but spans two decades, and its −1.00 correlation with the top side's
-absorbed share is gone. That share comes to 0.71, near the 0.78 the reflection at
-perovskite/air leaves, and is now tied to the glass side's (+0.94) and to `k_rad` (−0.9): the
-number of carriers against their radiative rate. The mobility stays within the 27–40 cm²/Vs the
-authors cite from OPTP, and `k_rad` stays 1.3·10⁻¹⁰ cm³/s. Three values move away from the
-authors': the glass side's SRV is now narrow at 2.4 times their 7.2 cm/s, Spiro's interface
-falls to a tenth of theirs and the photodoping to a quarter. `N_t` and `C_n` are still −0.90
-correlated (their product the capture rate), the states' level spans 4.73–5.12 eV, and the deep
-traps have only an upper bound. Spiro's doping and mobility and the far side's reflection stay
-the prior's. The summaries are `validation/trpl_sample_bg_s0.json` and `_s1.json`.
+Bounds still cut five of the posteriors (shares within 2 % of the range from the bound, from the
+histograms): the interface's SRV at its upper bound in 37 % of the samples (from four fifths),
+SnO2's doping in a fifth (from 93 %), boost × reach in a fifth (at the sampler's 1e-5 m, tighter
+than the fit's bounds), the glass side's absorbed share in a fifth (at 1), and Spiro's `E_v` at its
+lower bound of 5.0 eV in 11 %. Those five's medians and intervals depend on the bounds. Four more
+have the local fit at or near a bound where the posterior is flat up to it, not piled: the deep
+traps' density, the air side's SRV, the far side's reflection and the interface states' level.
+SnO2's band edge is at 4.06 (4.04–4.08) eV and no longer −0.99 correlated with the doping. The air
+side's SRV has only an upper bound, about 2 cm/s (its interval depends on the lower bound), and its
+−1.00 correlation with the top side's absorbed share is gone. That share comes to 0.71, near the
+0.78 the reflection at perovskite/air leaves, and is now tied to the glass side's (+0.94) and to
+`k_rad` (−0.9): the number of carriers against their radiative rate. The mobility stays within the
+27–40 cm²/Vs the authors cite from OPTP, and `k_rad` stays 1.3·10⁻¹⁰ cm³/s. Three values move away
+from the authors': the glass side's SRV is now narrow at 2.4 times their 7.2 cm/s, Spiro's
+interface falls to a tenth of theirs and the photodoping to a quarter. `N_t` and `C_n` are still
+−0.90 correlated (their product the capture rate), the states' level spans 4.73–5.12 eV (cut below
+by its bound at 4.65), and the deep traps have only an upper bound. Spiro's doping and mobility and
+the far side's reflection stay the prior's. The summaries are `validation/trpl_sample_bg_s0.json`
+and `_s1.json`.
+
+**The bounds widened after it** (2026-11-22; not yet sampled, and the solver's convergence there
+not yet tested). The TRPL fits and posteriors on this page have the former bounds, as at commit
+085ccc7; `trpl_joint.py` and `trpl_sample.py` now have these:
+
+| | former | now | why |
+|---|---|---|---|
+| log10 SRV SnO2/FAPbI3 (m/s) | −5 – 3 | −5 – 5 | piled; to the thermal velocity |
+| log10 `N_D` SnO2 (m⁻³) | 20 – 25.5 | 20 – 26 | piled |
+| boost | 0 – 100 | 0 – 1000 | the next bound of boost × reach |
+| log10 boost × reach (m), sampled | −9 – −5 | −9 – −3.5 | piled; now the two bounds' product |
+| log10 absorbed share, both sides | −0.5 – 0 | −0.5 – 0.2 | piled (glass); the top is tied to it |
+| `E_v` Spiro (eV) | 5.0 – 5.5 | 4.8 – 5.5 | piled; stays above the level at 4.765 |
+| `E_t` SnO2/FAPbI3 (eV) | 4.65 – 5.5 | 4.35 – 5.5 | flat to a bound that was not physical |
+| `E_c` SnO2 (eV), with these states | 4.0 – 4.6 | 3.9 – 4.3 | tied to `N_D`; stays below `E_t` |
+
+The lower bound of 3.9 eV is the sampler's (`--ec-min 3.9` in `trpl_joint.py`), beyond the 30 meV
+photoemission finds. Some values in the widened ranges would not be physical: an absorbed share
+above 1 is an error of the fluence, and a large SRV with few states needs a hole capture
+`C_p = S/N_t` beyond any cross-section. SnO2's doping is an effective one already: at the median
+7 times its `N_c`, where Boltzmann's statistics put the Fermi level 0.06 eV from Fermi–Dirac's
+(0.11 at the former bound, 0.29 at the new), more than the band edge's interval. The deep traps'
+and the air side's lower bounds stay (there they change the decays by less than 1e-3 decades),
+as does the reflection's range of 0–1.
 
 **The posterior with outcoupling** (`trpl_sample.py --outcoupling`, 21 parameters, 256 walkers,
 1000 steps on an A100, two chains of 4.5–4.8 h; σ 0.119 decades, autocorrelation about 70
@@ -964,7 +994,7 @@ as arguments. SimSS itself is built by [`simss/`](../simss/README.md).
 | `validation/trpl_zimt.py [--cap S] [--workdir DIR]` | ZimT 5.36 on a decay with an exact answer and on the half-stacks' best case (Docker, each run stopped after `S` seconds) |
 | `validation/trpl_fit.py` | the SnO2 half-stack's measured decays fitted with free ends |
 | `validation/trpl_joint.py [--starts N] [--from-best] [--start-mu LOG10] [--bottom-zone NM] [--detect same\|opposite] [--outcoupling STACKS] [--recycling] [--physical [--ec-min EV]] [--absorbed] [--sno2-traps] [--charged-interface\|--neutral-interface] [--profile I=V,…] [--start-from FILE] [--background] [--optimizer batched\|scipy]` | all eight measured decays fitted together, one perovskite, every end free; with `--bottom-zone` a defective zone at the perovskite's bottom, with `--detect` the PL as a detector at 806 nm sees it, `--outcoupling` its light leaving better near the glass; `--recycling` photon recycling, `--physical` physical bounds on the SnO2 interface, `--absorbed` the pulse's absorbed share by side, `--sno2-traps` a level in the SnO2, `--charged-interface`/`--neutral-interface` the SnO2 interface states' own density and capture, `--profile` one parameter held at each value, `--background` the SnO2 stack's decays without their background; from all starts at once (`validation/lm_batch.py`: scipy's `least_squares` per start in a thread, their evaluations gathered into one batch: the same fits to the bit, four starts in 788 s instead of 1156) |
-| `validation/trpl_sample.py [--outcoupling [--neutral [--background]]] [--walkers W] [--steps S] [--sigma F] [--seed N] [--resume] [--fit-only]` | the joint fit's posterior by the ensemble sampler over the batch; the chain to `benchmarks/samples/trpl_chain.npz` (with `--outcoupling` `trpl_out_chain_s<seed>.npz`, with `--neutral` the fit with saturable SnO2 interface states, `trpl_neutral_chain_s<seed>.npz`, with `--background` that fit with the SnO2 stack's decays without their background, `trpl_bg_chain_s<seed>.npz`, refitted first where its fit is missing); on the hub `STEPS=trpl benchmarks/apptainer.sh` |
+| `validation/trpl_sample.py [--outcoupling [--neutral [--background]]] [--walkers W] [--steps S] [--sigma F] [--seed N] [--resume] [--fit-only]` | the joint fit's posterior by the ensemble sampler over the batch; the chain to `benchmarks/samples/trpl_chain.npz` (with `--outcoupling` `trpl_out_chain_s<seed>.npz`, with `--neutral` the fit with saturable SnO2 interface states, `trpl_neutral_chain_s<seed>.npz`, with `--background` that fit with the SnO2 stack's decays without their background, `trpl_bg_ec3.9_chain_s<seed>.npz`, refitted first where its fit is missing; each chain with its bounds, `--resume` only within the same); on the hub `STEPS=trpl benchmarks/apptainer.sh` |
 | `validation/trpl_robust.py scatter\|profiles` | the outcoupling fit refitted from scattered starts, and profiles of its boost and mobility (`trpl_robust.json`) |
 | `validation/trpl_timing.py [--batches N …] [--parallel P]` | the same transient's wall time in jaxdd and in ZimT |
 

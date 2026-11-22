@@ -76,9 +76,9 @@
 #              instead (26 parameters; trpl_neutral_chain_s<seed>.npz):
 #                STEPS=trpl TRPL_ARGS="--neutral --walkers 256 --steps 1000 --every 25" ...
 #              and with the SnO2 decays' background taken off (`--neutral --background`,
-#              trpl_bg_chain_s<seed>.npz; the fit refitted once before the chains on a clone
-#              without validation/trpl_joint_..._ec4_bg.json):
-#                STEPS=trpl TRPL_ARGS="--neutral --background --walkers 256 --steps 1500 \
+#              trpl_bg_ec3.9_chain_s<seed>.npz; the fit refitted once before the chains on a
+#              clone without validation/trpl_joint_..._ec3.9_bg.json):
+#                STEPS=trpl TRPL_ARGS="--neutral --background --walkers 256 --steps 3000 \
 #                    --every 25" UPLOAD=https://HOST/s/TOKEN benchmarks/apptainer.sh
 #              Before the chains, the best fit once (trpl_sample.py --fit-only).
 #

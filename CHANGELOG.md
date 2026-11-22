@@ -14,9 +14,19 @@ the API, and says so here.
   is missing it is refitted first from the fit without the background, and
   `benchmarks/apptainer.sh`'s trpl step does so once before its chains (`--fit-only`) and
   uploads the TRPL fits and summaries with the chains.
+- **The TRPL fit's bounds widened** where that posterior ran against them, in
+  `validation/trpl_joint.py` for every model that has the parameter: the SnO2 interface's SRV to
+  1e5 m/s, SnO2's doping to 1e26 m⁻³, Spiro's E_v from 4.8 eV, the boost to 1000 (sampled boost ×
+  reach to their bounds' product, not 1e-5 m), the absorbed shares to 1.6, the interface states'
+  level from 4.35 eV (with them SnO2's E_c at most 4.3 eV). `trpl_sample.py --neutral` takes
+  SnO2's E_c from 3.9 eV; with `--background` its fit, chains and summaries are now named
+  `ec3.9` (`trpl_bg_ec3.9_chain_s<seed>.npz`). The chains save their bounds, and `--resume`
+  refuses a chain with others or none.
 
 ### Fixed
 
+- `docs/validation.md` said the bounds no longer carry the TRPL posterior without the
+  background; they cut five of its 26 parameters.
 - `trpl_sample.py --outcoupling` without `--neutral` wrote `trpl_chain.npz` and
   `trpl_sample.json`, so two seeds side by side overwrote each other's chain; again
   `trpl_out_chain_s<seed>.npz` and `trpl_sample_out_s<seed>.json`.

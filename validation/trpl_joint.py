@@ -83,11 +83,11 @@ PARAMETERS = (
     ("shallow level below E_c (eV)", 0.261, 0.02, 0.6),
     ("log10 S glass/FAPbI3 (m/s)", np.log10(0.072), -5, 3),
     ("log10 S FAPbI3/air (m/s)", np.log10(0.036), -5, 3),
-    ("log10 S SnO2/FAPbI3 (m/s)", np.log10(0.09), -5, 3),
+    ("log10 S SnO2/FAPbI3 (m/s)", np.log10(0.09), -5, 5),
     ("E_c SnO2 (eV)", 4.1, 4.0, 4.6),
-    ("log10 N_D SnO2 (m⁻³)", 24.0, 20, 25.5),
+    ("log10 N_D SnO2 (m⁻³)", 24.0, 20, 26),  # above N_c an effective one (Boltzmann)
     ("log10 S FAPbI3/Spiro (m/s)", np.log10(1.0), -5, 3),
-    ("E_v Spiro (eV)", 5.2, 5.0, 5.5),
+    ("E_v Spiro (eV)", 5.2, 4.8, 5.5),  # above its interface's level, 4.765
     ("log10 N_A Spiro (m⁻³)", 24.0, 20, 25.5),
     ("log10 μ Spiro (m²/Vs)", -7.0, -10, -4),
     ("log10 ν_int (m/s)", 5.0, 0, 7),
@@ -122,17 +122,18 @@ def use_outcoupling(stacks):
     OUTCOUPLED = tuple(stacks)
     NAMES = (*NAMES, "outcoupling boost near the glass", "log10 its reach (m)")
     START = np.r_[START, 3.0, np.log10(50e-9)]
-    LO, HI = np.r_[LO, 0.0, -8.5], np.r_[HI, 100.0, -6.5]
+    LO, HI = np.r_[LO, 0.0, -8.5], np.r_[HI, 1000.0, -6.5]
 
 
 def use_absorbed():
     """The share of the pulse the perovskite absorbs, by side: lit through the glass (and SnO2)
-    and from the top, each a factor on the fluence (log10, from 0.3 to 1: reflection at the
-    stack's faces, absorption in its other layers); two more parameters."""
+    and from the top, each a factor on the fluence (log10, from 0.3 to 1.6: reflection at the
+    stack's faces, absorption in its other layers; above 1 an error of the fluence); two more
+    parameters."""
     global NAMES, START, LO, HI, ABSORBED
     ABSORBED = len(NAMES)
     NAMES = (*NAMES, "log10 absorbed share, glass side", "log10 absorbed share, top side")
-    START, LO, HI = np.r_[START, -0.1, -0.1], np.r_[LO, -0.5, -0.5], np.r_[HI, 0.0, 0.0]
+    START, LO, HI = np.r_[START, -0.1, -0.1], np.r_[LO, -0.5, -0.5], np.r_[HI, 0.2, 0.2]
 
 
 def use_sno2_traps():
@@ -177,7 +178,9 @@ def use_charged_interface(kind=-1):
     NAMES = (*NAMES, "log10 N_t SnO2/FAPbI3 (m⁻²)", "its level E_t (eV)",
              "log10 its C_n (m³/s)")  # fmt: skip
     START = np.r_[START, 16.0, 4.765, -14.0]
-    LO, HI = np.r_[LO, 12.0, 4.65, -20.0], np.r_[HI, 18.0, 5.5, -10.0]
+    LO, HI = np.r_[LO, 12.0, 4.35, -20.0], np.r_[HI, 18.0, 5.5, -10.0]
+    # `device` does not check the gaps again: E_t stays above SnO2's conduction band
+    HI[NAMES.index("E_c SnO2 (eV)")] = 4.3
 
 
 def use_physical_bounds(ec_min=4.2):

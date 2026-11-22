@@ -15,12 +15,13 @@ from near the glass leaving the film better (`trpl_joint.py --detect same --subl
 are sampled as log10(boost × reach) and log10 reach, along the valley the decays leave them
 (docs/validation.md), the boost kept within its bounds. With `--outcoupling --neutral`, that fit
 with the pulse's absorbed share by side and the SnO2 interface's states with their own density
-and capture, neutral (saturable), at physical bounds with SnO2's conduction band at least 4.0 eV
-(`trpl_joint.py ... --outcoupling film --absorbed --neutral-interface --physical --ec-min 4`,
-26 parameters, from `trpl_joint_detect_same_out_film_absorbed_neutral_physical_ec4.json`, else
-the best fit written below). With `--neutral --background`, that fit with the SnO2 stack's
+and capture, neutral (saturable), at physical bounds with SnO2's conduction band at least 3.9 eV
+(`trpl_joint.py ... --outcoupling film --absorbed --neutral-interface --physical --ec-min 3.9`,
+26 parameters, from the fit at 4.0 eV,
+`trpl_joint_detect_same_out_film_absorbed_neutral_physical_ec4.json`, else the best fit written
+below). With `--neutral --background`, that fit with the SnO2 stack's
 decays without their background (`trpl_joint.py ... --background`), from
-`..._ec4_bg.json`; where there is none, refitted first from the fit without the background (one
+`..._ec3.9_bg.json`; where there is none, refitted first from the fit without the background (one
 start, 60 evaluations, as `trpl_joint.py --background --start-from` it) and written there, so
 that the next start and the other chains take the same one. `--fit-only` makes sure of the
 best fit and stops (benchmarks/apptainer.sh does so once before its chains run side by side).
@@ -30,10 +31,10 @@ best fit and stops (benchmarks/apptainer.sh does so once before its chains run s
 
 writes the summary (validation/trpl_sample.json, with `--outcoupling`
 validation/trpl_sample_out_s<seed>.json, with `--neutral` trpl_sample_neutral_s<seed>.json,
-with `--background` trpl_sample_bg_s<seed>.json) and the chain (benchmarks/samples/
-trpl_chain.npz, trpl_out_chain_s<seed>.npz, trpl_neutral_chain_s<seed>.npz,
-trpl_bg_chain_s<seed>.npz), the chain also every `--every` steps; `--resume` goes on from the
-chain saved, up to `--steps` in all. Prints its progress as it goes.
+with `--background` trpl_sample_bg_ec3.9_s<seed>.json) and the chain with its bounds
+(benchmarks/samples/trpl_chain.npz, trpl_out_chain_s<seed>.npz, trpl_neutral_chain_s<seed>.npz,
+trpl_bg_ec3.9_chain_s<seed>.npz), the chain also every `--every` steps; `--resume` goes on from
+the chain saved, if its bounds are these, up to `--steps` in all. Prints its progress as it goes.
 """
 
 import argparse
@@ -71,7 +72,7 @@ NEUTRAL_BEST = [
 ]  # fmt: skip
 NEUTRAL_RMS = 0.0912
 NEUTRAL_FILE = "trpl_joint_detect_same_out_film_absorbed_neutral_physical_ec4.json"
-NEUTRAL_BG_FILE = NEUTRAL_FILE.replace(".json", "_bg.json")
+NEUTRAL_BG_FILE = NEUTRAL_FILE.replace("_ec4.json", "_ec3.9_bg.json")
 BOOST, REACH = 19, 20
 
 
@@ -136,7 +137,7 @@ def coordinates(outcoupling):
         return tj.NAMES, tj.LO, tj.HI, same, same
     names = (*tj.NAMES[:BOOST], "log10 boost × reach (m)", *tj.NAMES[REACH:])
     lo = np.r_[tj.LO[:BOOST], -9.0, tj.LO[REACH:]]
-    hi = np.r_[tj.HI[:BOOST], -5.0, tj.HI[REACH:]]
+    hi = np.r_[tj.HI[:BOOST], np.log10(tj.HI[BOOST]) + tj.HI[REACH], tj.HI[REACH:]]
 
     def to_theta(u):
         th = np.array(u, dtype=float)
@@ -182,8 +183,8 @@ def main():
     if a.neutral:  # in trpl_joint.py's order of the parameters
         tj.use_absorbed()
         tj.use_charged_interface(0)
-        tj.use_physical_bounds(4.0)
-        kind = "bg" if a.background else "neutral"
+        tj.use_physical_bounds(3.9)
+        kind = "bg_ec3.9" if a.background else "neutral"
     if a.outcoupling:
         out_npz = REPO / "benchmarks" / "samples" / f"trpl_{kind}_chain_s{a.seed}.npz"
         out_json = REPO / "validation" / f"trpl_sample_{kind}_s{a.seed}.json"
@@ -206,10 +207,12 @@ def main():
 
     def save(chain, lps):
         np.savez(out_npz, chain=chain, log_prob=lps, names=np.array(NAMES), theta=theta,
-                 sigma=sigma)  # fmt: skip
+                 sigma=sigma, lo=LO, hi=HI)  # fmt: skip
 
     if a.resume and out_npz.exists():
         old = np.load(out_npz)
+        if "lo" not in old or not np.array_equal([old["lo"], old["hi"]], [LO, HI]):
+            raise SystemExit(f"{out_npz.name} has other bounds or none saved: move it away")
         before, lps_before = old["chain"], old["log_prob"]
         theta, sigma = old["theta"], float(old["sigma"])
         x0 = before[-1]

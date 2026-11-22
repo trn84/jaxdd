@@ -202,14 +202,15 @@ where the fit takes them) within the bounds, the likelihood Gaussian per point w
 fit's rms misfit. The walkers start around the best fit, drawn from the linearised posterior.
 Each step moves the two halves of the walkers in turn, each by differential evolution relative
 to the other (ter Braak 2006: along the difference of two walkers of the other half, scaled by
-2.38/√(2d), by one in a tenth of the moves), so a step is two calls of the batched model:
+2.38/√(2d), by one in a tenth of the moves), so a step is two calls of the batched model
+(`trpl_sample.py` solves only the proposals within the bounds; the others are rejected unsolved):
 
 ```mermaid
 flowchart LR
     F["best fit<br/>(fit_measured.py --starts N)"] --> W["W walkers around it,<br/>from σ²(JᵀJ + P)⁻¹"]
     W --> P
     subgraph S["one step, repeated"]
-        P["half A: x' = x + γ(x_j − x_k),<br/>x_j, x_k from half B"] --> J["one batch: W/2 × 5 curves<br/>(TRPL: W/2 × 8 transients)"]
+        P["half A: x' = x + γ(x_j − x_k),<br/>x_j, x_k from half B"] --> J["one batch: W/2 × 5 curves<br/>(TRPL: at most W/2 × 8 transients)"]
         J --> M["Metropolis: accept with<br/>min(1, p(x') / p(x))"]
         M -- "then half B against A" --> P
     end

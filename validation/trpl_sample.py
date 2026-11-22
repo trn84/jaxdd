@@ -1,5 +1,6 @@
 """The posterior of `trpl_joint.py`'s parameters, by `sample_measured.py`'s ensemble sampler over
-the batch: each half-step solves half the walkers' eight decays at once.
+the batch: each half-step proposes for half the walkers and solves the eight decays of those
+proposals that lie within the bounds at once.
 
 The likelihood is Gaussian and independent per bin, its width `--sigma` times the best joint
 fit's rms misfit (decades; by default 1, the reduced χ² one at the fit), the prior uniform in

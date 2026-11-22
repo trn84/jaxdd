@@ -85,7 +85,7 @@ PARAMETERS = (
     ("log10 S FAPbI3/air (m/s)", np.log10(0.036), -5, 3),
     ("log10 S SnO2/FAPbI3 (m/s)", np.log10(0.09), -5, 5),
     ("E_c SnO2 (eV)", 4.1, 4.0, 4.6),
-    ("log10 N_D SnO2 (m⁻³)", 24.0, 20, 26),  # above N_c an effective one (Boltzmann)
+    ("log10 N_D SnO2 (m⁻³)", 24.0, 20, 25.5),  # above N_c an effective one (Boltzmann)
     ("log10 S FAPbI3/Spiro (m/s)", np.log10(1.0), -5, 3),
     ("E_v Spiro (eV)", 5.2, 4.8, 5.5),  # above its interface's level, 4.765
     ("log10 N_A Spiro (m⁻³)", 24.0, 20, 25.5),
@@ -127,13 +127,13 @@ def use_outcoupling(stacks):
 
 def use_absorbed():
     """The share of the pulse the perovskite absorbs, by side: lit through the glass (and SnO2)
-    and from the top, each a factor on the fluence (log10, from 0.3 to 1.6: reflection at the
-    stack's faces, absorption in its other layers; above 1 an error of the fluence); two more
-    parameters."""
+    and from the top, each a factor on the fluence (log10, from 0.3 to 1: reflection at the
+    stack's faces, absorption in its other layers); two more parameters. Not above 1: the decays
+    are normalised, so only the fluence sets the carriers' number against k_rad and the captures."""
     global NAMES, START, LO, HI, ABSORBED
     ABSORBED = len(NAMES)
     NAMES = (*NAMES, "log10 absorbed share, glass side", "log10 absorbed share, top side")
-    START, LO, HI = np.r_[START, -0.1, -0.1], np.r_[LO, -0.5, -0.5], np.r_[HI, 0.2, 0.2]
+    START, LO, HI = np.r_[START, -0.1, -0.1], np.r_[LO, -0.5, -0.5], np.r_[HI, 0.0, 0.0]
 
 
 def use_sno2_traps():

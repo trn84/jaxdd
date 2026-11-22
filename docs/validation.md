@@ -825,28 +825,40 @@ the far side's reflection stay the prior's. The summaries are `validation/trpl_s
 and `_s1.json`.
 
 **The bounds widened after it** (2026-11-22; not yet sampled, and the solver's convergence there
-not yet tested). The TRPL fits and posteriors on this page have the former bounds, as at commit
+not yet measured). The TRPL fits and posteriors on this page have the former bounds, as at commit
 085ccc7; `trpl_joint.py` and `trpl_sample.py` now have these:
 
 | | former | now | why |
 |---|---|---|---|
 | log10 SRV SnO2/FAPbI3 (m/s) | −5 – 3 | −5 – 5 | piled; to the thermal velocity |
-| log10 `N_D` SnO2 (m⁻³) | 20 – 25.5 | 20 – 26 | piled |
 | boost | 0 – 100 | 0 – 1000 | the next bound of boost × reach |
 | log10 boost × reach (m), sampled | −9 – −5 | −9 – −3.5 | piled; now the two bounds' product |
-| log10 absorbed share, both sides | −0.5 – 0 | −0.5 – 0.2 | piled (glass); the top is tied to it |
 | `E_v` Spiro (eV) | 5.0 – 5.5 | 4.8 – 5.5 | piled; stays above the level at 4.765 |
 | `E_t` SnO2/FAPbI3 (eV) | 4.65 – 5.5 | 4.35 – 5.5 | flat to a bound that was not physical |
 | `E_c` SnO2 (eV), with these states | 4.0 – 4.6 | 3.9 – 4.3 | tied to `N_D`; stays below `E_t` |
 
 The lower bound of 3.9 eV is the sampler's (`--ec-min 3.9` in `trpl_joint.py`), beyond the 30 meV
-photoemission finds. Some values in the widened ranges would not be physical: an absorbed share
-above 1 is an error of the fluence, and a large SRV with few states needs a hole capture
-`C_p = S/N_t` beyond any cross-section. SnO2's doping is an effective one already: at the median
-7 times its `N_c`, where Boltzmann's statistics put the Fermi level 0.06 eV from Fermi–Dirac's
-(0.11 at the former bound, 0.29 at the new), more than the band edge's interval. The deep traps'
-and the air side's lower bounds stay (there they change the decays by less than 1e-3 decades),
-as does the reflection's range of 0–1.
+photoemission finds. Some values in the widened ranges would not be physical: a large SRV with
+few states needs a hole capture `C_p = S/N_t` beyond any cross-section. The deep traps' and the
+air side's lower bounds stay (there they change the decays by less than 1e-3 decades), as does
+the reflection's range of 0–1.
+
+Two bounds the posterior piles against stay where they were. Commit ba4917b had opened both, and
+the hub's refit there (0.0552 decades rms, stopped at 60 evaluations) went to both new bounds:
+
+- **The absorbed shares stay at most 1.** Opened to 1.6 they went to 1.58 and 1.18, their ratio
+  kept (0.74 from 0.76), `k_rad` down to 0.84e-10 from 1.21e-10 cm³/s, the captures down and the
+  shallow traps up with it. The decays are normalised: more carriers with a smaller `k_rad` and
+  smaller captures decay nearly alike, and only the fluence sets their number. The bound at 1 is
+  the physics that determines `k_rad`.
+- **SnO2's doping stays at most 10^25.5 m⁻³.** Opened to 1e26 it went there. It is an effective
+  one already: at the median 7 times its `N_c`, where Boltzmann's statistics put the Fermi level
+  0.06 eV from Fermi–Dirac's (0.11 at the bound, 0.29 at 1e26), more than the band edge's
+  interval. To go further needs the other statistics, not another bound.
+
+In that refit the deep traps' density, the air side's SRV, the far side's reflection and the
+states' level stayed within 0.005 of their start: the fit inherits their places near the bounds
+from the fits before it, it is not driven there.
 
 **The posterior with outcoupling** (`trpl_sample.py --outcoupling`, 21 parameters, 256 walkers,
 1000 steps on an A100, two chains of 4.5–4.8 h; σ 0.119 decades, autocorrelation about 70

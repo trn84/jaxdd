@@ -22,9 +22,10 @@ and capture, neutral (saturable), at physical bounds with SnO2's conduction band
 below). With `--neutral --background`, that fit with the SnO2 stack's
 decays without their background (`trpl_joint.py ... --background`), from
 `..._ec3.9_bg.json`; where there is none, refitted first from the fit without the background (one
-start, 60 evaluations, as `trpl_joint.py --background --start-from` it) and written there, so
-that the next start and the other chains take the same one. `--fit-only` makes sure of the
-best fit and stops (benchmarks/apptainer.sh does so once before its chains run side by side).
+start, 200 evaluations, as `trpl_joint.py --background --start-from` it) and written there, so
+that the next start and the other chains take the same one (one outside the bounds is refused).
+`--fit-only` makes sure of the best fit and stops (benchmarks/apptainer.sh does so once before
+its chains run side by side).
 
     .venv/bin/python validation/trpl_sample.py [--outcoupling [--neutral [--background]]]
         [--walkers W] [--steps S] [--sigma F] [--seed N] [--resume] [--fit-only]
@@ -77,14 +78,14 @@ BOOST, REACH = 19, 20
 
 
 def refit(prob, theta0):
-    """The fit of `prob` from `theta0` (one start, 60 evaluations, as `trpl_joint.py` with
+    """The fit of `prob` from `theta0` (one start, 200 evaluations, as `trpl_joint.py` with
     `--start-from`), written to validation/NEUTRAL_BG_FILE in `trpl_joint.py`'s form."""
     from lm_batch import least_squares_many
 
     t0 = time.time()
     print(f"no validation/{NEUTRAL_BG_FILE}: refitting with the background taken off", flush=True)
     fits, _ = least_squares_many(prob.residuals_many, [np.clip(theta0, tj.LO, tj.HI)], tj.LO,
-                                 tj.HI)  # fmt: skip
+                                 tj.HI, max_nfev=200)  # fmt: skip
     R, _ = prob.residuals_many([np.array(f["theta"]) for f in fits])
     for f, r in zip(fits, R, strict=True):
         f["per_decay"] = prob.per_decay_rms(r)
@@ -105,7 +106,10 @@ def best_fit(outcoupling, neutral=False, background=False, prob=None):
         path = REPO / "validation" / NEUTRAL_BG_FILE
         if path.exists():
             f = min(json.loads(path.read_text())["fits"], key=lambda f: f["rms"])
-            return np.array(f["theta"]), f["rms"]
+            th = np.array(f["theta"])
+            if np.any((th < tj.LO) | (th > tj.HI)):  # another run's bounds, and so its sigma
+                raise SystemExit(f"{path.name} lies outside these bounds: move it away")
+            return th, f["rms"]
         return refit(prob, best_fit(outcoupling, neutral)[0])
     found = []
     if neutral:
@@ -196,13 +200,20 @@ def main():
         print(f"the best fit: rms {rms:.4f} decades")
         return
 
-    def log_prob(points):
+    def allowed(points):  # the sampled box, and the boost within its own bounds
         th = to_theta(points)
-        inside = np.all((points > LO) & (points < HI) & (th >= tj.LO) & (th <= tj.HI), axis=1)
+        return np.all((points > LO) & (points < HI) & (th >= tj.LO) & (th <= tj.HI), axis=1)
+
+    def log_prob(points):
+        inside = allowed(points)
         lp = np.full(len(points), -np.inf)
-        if inside.any():
-            R, _ = prob.residuals_many(list(th[inside]))
-            lp[inside] = -0.5 * np.sum(R**2, axis=1) / sigma**2
+        n = int(inside.sum())
+        if n:
+            th = to_theta(points[inside])
+            # padded to a multiple of 8 sets: each batch size compiles the solver once
+            th = np.concatenate([th, np.repeat(th[-1:], -n % 8, axis=0)])
+            R, _ = prob.residuals_many(list(th))
+            lp[inside] = -0.5 * np.sum(R[:n] ** 2, axis=1) / sigma**2
         return lp
 
     def save(chain, lps):
@@ -227,7 +238,7 @@ def main():
         R, _ = prob.residuals_many([to_theta(theta + h * e) for e in np.eye(theta.size)]
                                    + [to_theta(theta)])  # fmt: skip
         J = ((R[:-1] - R[-1]) / h).T
-        x0 = start(theta, J, sigma, LO, HI, a.walkers, rng)
+        x0 = start(theta, J, sigma, LO, HI, a.walkers, rng, allowed)
         before, lps_before = np.empty((0, a.walkers, theta.size)), np.empty((0, a.walkers))
     steps = a.steps - len(before)
     t0 = time.time()

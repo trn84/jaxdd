@@ -105,9 +105,10 @@ def autocorr_time(chain, c=5.0):
     return out
 
 
-def start(theta, jac, sigma, lo, hi, walkers, rng):
+def start(theta, jac, sigma, lo, hi, walkers, rng, allowed=None):
     """Walkers from the linearised posterior around the fit, a weak prior of the bounds' width
-    added, redrawn until inside the bounds."""
+    added, redrawn until inside the bounds, and where `allowed` (points -> (points,) bool) is
+    given until it allows them: a walker the log-probability refuses would start at -inf."""
     width = hi - lo
     precision = jac.T @ jac / sigma**2 + np.diag(1.0 / (0.5 * width) ** 2)
     cov = np.linalg.inv(precision)
@@ -116,7 +117,10 @@ def start(theta, jac, sigma, lo, hi, walkers, rng):
     filled = 0
     while filled < walkers:
         y = rng.multivariate_normal(theta, cov, size=4 * walkers)
-        y = y[np.all((y > lo) & (y < hi), axis=1)][: walkers - filled]
+        y = y[np.all((y > lo) & (y < hi), axis=1)]
+        if allowed is not None:
+            y = y[allowed(y)]
+        y = y[: walkers - filled]
         x[filled : filled + len(y)] = y
         filled += len(y)
     return x

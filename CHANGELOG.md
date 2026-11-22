@@ -16,15 +16,22 @@ the API, and says so here.
   uploads the TRPL fits and summaries with the chains.
 - **The TRPL fit's bounds widened** where that posterior ran against them, in
   `validation/trpl_joint.py` for every model that has the parameter: the SnO2 interface's SRV to
-  1e5 m/s, SnO2's doping to 1e26 m⁻³, Spiro's E_v from 4.8 eV, the boost to 1000 (sampled boost ×
-  reach to their bounds' product, not 1e-5 m), the absorbed shares to 1.6, the interface states'
-  level from 4.35 eV (with them SnO2's E_c at most 4.3 eV). `trpl_sample.py --neutral` takes
-  SnO2's E_c from 3.9 eV; with `--background` its fit, chains and summaries are now named
+  1e5 m/s, Spiro's E_v from 4.8 eV, the boost to 1000 (sampled boost × reach to their bounds'
+  product, not 1e-5 m), the interface states' level from 4.35 eV (with them SnO2's E_c at most
+  4.3 eV). The absorbed shares stay at most 1 (above, `k_rad` is undetermined) and SnO2's doping
+  at most 10^25.5 m⁻³ (Boltzmann's statistics; docs/validation.md). `trpl_sample.py --neutral`
+  takes SnO2's E_c from 3.9 eV; with `--background` its fit, chains and summaries are now named
   `ec3.9` (`trpl_bg_ec3.9_chain_s<seed>.npz`). The chains save their bounds, and `--resume`
   refuses a chain with others or none.
+- `trpl_sample.py`'s refit takes up to 200 evaluations (60 did not converge), refuses a saved fit
+  outside the bounds, and its batches are padded to multiples of 8 parameter sets, so that the
+  solver compiles for at most 16 batch sizes in the half-steps instead of 128.
 
 ### Fixed
 
+- `trpl_sample.py` started walkers whose boost was outside its bounds (inside those of boost ×
+  reach and reach), at a log-probability of -inf, some of them kept as samples
+  (`sample_measured.start(..., allowed=)`).
 - `docs/validation.md` said the bounds no longer carry the TRPL posterior without the
   background; they cut five of its 26 parameters.
 - `trpl_sample.py --outcoupling` without `--neutral` wrote `trpl_chain.npz` and

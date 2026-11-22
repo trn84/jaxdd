@@ -137,17 +137,16 @@ the stages only where Boltzmann's ions do not converge at once and it has mobile
 others skip them (`_newton_solve(..., skip=)`: under `vmap` a skipping device costs nothing, and
 where every device skips the loop takes no step). Where the start is the solution already the
 pre-bias's solve takes no step either (its derivatives are the solution's, `_converged_jvp`), so
-that a batch that needs no stage pays what it paid before, to the step: on `validation/hard.py
-4096 4096` (RTX 4070 Ti SUPER) 585 curves/s and 5.23 Newton steps per voltage, before and
-after. With 4e24 m⁻³ of ions (Boltzmann's needs 30–70 steps there) the start used to fail on a
-GPU in about one run of two, round-off deciding where Boltzmann's Newton ended; the stages
-converge in every run, and a cold start at −0.3 V does too.
+a batch that needs no stage pays nothing for them (`validation/hard.py 4096 4096`, RTX 4070 Ti
+SUPER: 585 curves/s and 5.23 Newton steps per voltage with and without). With 4e24 m⁻³ of ions
+(Boltzmann's needs 30–70 steps there) Boltzmann's start alone fails on a GPU in about one run of
+two, round-off deciding where its Newton ends; the stages converge in every run, a cold start at
+−0.3 V too.
 
 **Why extrapolate.** Along a J-V curve the solution changes smoothly with the voltage. Starting
 each voltage from the linear extrapolation of the last two solutions (SIMsalabim's
-`Extrapolate_Solution`) instead of from the last one saves Newton steps at every voltage;
-together with the quadratic stop below it took the average from 4.6 to 2.8 steps per voltage
-on the benchmark devices. The first voltage of each direction starts from the pre-bias solution
+`Extrapolate_Solution`) instead of from the last one saves Newton steps at every voltage:
+with the quadratic stop below, 2.8 steps per voltage on the benchmark devices instead of 4.6. The first voltage of each direction starts from the pre-bias solution
 as it is. The one-device `solve_jv` scans the voltages in the order given, from the pre-bias to
 the first, and starts each voltage from the last converged solution, without extrapolating.
 
@@ -155,9 +154,9 @@ the first, and starts each voltage from the last converged solution, without ext
 a voltage does not depend on the way there, so the scan may take the voltages in any order. A
 scan from the lowest voltage up starts with a jump from `V_pre` to it, 1.25 V with ions frozen
 at flat band (`V_pre` at `V_bi`, the scan from −0.2 V); on 16 384 devices of a parameter grid with
-ions that first voltage took 11.5 Newton steps on average and up to 28, and 11 454 of the devices
-took 10 or more there. Under `vmap` every device pays the slowest one's steps at every voltage
-([batching.md](batching.md)), so that one voltage set the first pass's limit. Outwards from
+ions that first voltage takes 11.5 Newton steps on average and up to 28, 11 454 of the devices
+10 or more. Under `vmap` every device pays the slowest one's steps at every voltage
+([batching.md](batching.md)), so that one voltage would set the first pass's limit. Outwards from
 `V_pre`, each direction's first voltage is at most one voltage step away: on the same devices it
 takes at most 4 steps, and no voltage takes more than 12 (9 devices take 10 or more, above
 0.7 V; with the Jacobian assembled by intervals, [below](#the-residual-and-the-jacobian-by-intervals)).
@@ -170,22 +169,18 @@ the test, so Newton stops with it wherever round-off left it. That logarithm is 
 In the dark, in a thick device with a thick doped transport layer, the electrons in that layer
 and the holes across much of the absorber lie at such densities (1e-30 m⁻³ and below), and
 between two neighbouring converged voltages their logarithms differ by 30–100 at single points.
-Extrapolated linearly, that difference became the start of the next voltage, e^100 off; Newton's
-capped steps did not bring it back, the state became NaN, and the scan carried the NaN through
-every later voltage. The first such difference is left at a voltage reached by a long way from
-the pre-bias: it is declared converged while densities below the floor still move (40 more
-Newton steps there move `ln p` at hundreds of points, at one by 29). The leftover is largest
-where that way is longest: ions frozen at flat band, a pre-bias at `V_bi`, 1.25 V from −0.2 V
-(the scan from the lowest voltage up; the scan outwards from the pre-bias shortens it to one
-voltage step).
-Whether a scan then failed was a matter of timing (of when the densities above the floor
-converge), not of a threshold in any one parameter. So the extrapolated change of every unknown at every point is held to the
+Extrapolated linearly, that difference would start the next voltage e^100 off, beyond what
+Newton's capped steps bring back: the state becomes NaN, and the scan carries it through every
+later voltage. Such a difference is left where a voltage is reached by a long way, declared
+converged while densities below the floor still move (40 more Newton steps move `ln p` at
+hundreds of points, at one by 29); whether a scan fails is a matter of timing, not of a threshold
+in any one parameter. So the extrapolated change of every unknown at every point is held to the
 caps of one Newton step (`solver.STEP_CAPS`: 10 `V_T`, 5 in `ln n` and `ln p`; 5 in the ion
 logarithms, the [damping](#damping) below). Where the solution moves smoothly the change is far
-inside the caps and the start is the plain extrapolation: on the benchmark devices and on 1000
-devices of a perovskite parameter table, light and dark, the curves are bit for bit those of
-the unclipped start. On the device that showed it (`tests/data/frozen_thick_htl_dark`), 55 of
-61 voltages failed in 3402 Newton steps; clipped, all 61 converge in 193.
+inside the caps: on the benchmark devices and on 1000 devices of a perovskite parameter table,
+light and dark, the curves are bit for bit those of the unclipped start. On
+`tests/data/frozen_thick_htl_dark` unclipped 55 of 61 voltages fail in 3402 Newton steps;
+clipped, all 61 converge in 193.
 
 **Why only a converged solution is carried on.** A voltage that fails (`max_iter`, or a state
 that is not finite) does not become the start of the next: the scan keeps its last converged
@@ -252,29 +247,27 @@ needs it (`lax.cond`); on `braun_light` a scan takes 76 s on a CPU, the exact ru
 
 The reference is `solver._row`, the three residuals of one point from its three neighbours as
 SIMsalabim writes them, and `jax.jacfwd` of it in its three neighbour arguments: `_assemble`
-equals it to 1e-11 (tests). It was the solver's assembly before; two things replaced it.
+equals it to 1e-11 (tests). Against that row form the assembly by intervals gains:
 
-- **Speed.** The row form evaluated every flux twice, once from each neighbouring row, in each
-  of its nine forward passes, and the residual a third time. By intervals, a Newton step of
-  4096 devices on an RTX 4070 Ti SUPER takes 18 ms instead of 73 (the assembly 7 instead of
-  61; `validation/breakdown.py`).
+- **Speed.** The row form evaluates every flux twice, from each neighbouring row, in each of its
+  nine forward passes, and the residual a third time. By intervals a Newton step of 4096 devices
+  on an RTX 4070 Ti SUPER takes 18 ms instead of 73 (the assembly 7 instead of 61;
+  `validation/breakdown.py`).
 - **Round-off.** The row form sums `lo·n[i−1] + m·n[i] + up·n[i+1]`, with `m` holding both
   intervals' terms. Where frozen ions at high density leave a carrier-free bulk under a strong
-  field, those terms are many orders larger than their sum, and the residual kept a round-off
-  that Newton could not get below: the potential kept a few 1e-5 `V_T` of noise there, voltages
-  converged only by the settled current or not at all (in the dark, above about 0.8 V). As a
-  difference of the two intervals' fluxes the residual has no such floor: on the hardest
-  devices known (1e18 cm⁻³ frozen at full accumulation, `L_diff/d` 0.2) Newton without
-  shortcuts reaches its 1e-10 step at every voltage, in about 5 steps, where the row form
-  stalled at a third to a half of the voltages.
+  field those terms are many orders larger than their sum, and the residual's round-off keeps a
+  few 1e-5 `V_T` of noise in the potential (voltages converge only by the settled current or not
+  at all, in the dark above about 0.8 V). As a difference of the two intervals' fluxes the
+  residual has no such floor: on the hardest devices known (1e18 cm⁻³ frozen at full
+  accumulation, `L_diff/d` 0.2) Newton without shortcuts reaches its 1e-10 step at every voltage
+  in about 5 steps, where the row form stalls at a third to a half of them.
 
 The ion scalars enter every Poisson row of their region, through the Boltzmann densities
 `exp(ln C ± V/V_T)`: K extra columns `U` (NP × 3 × K, K = 2 with one region per species),
 assembled with the rest as each point's anion and cation column and then split by region. The K
 constraints, "each region holds its number of ions", depend on the potential at every point of
 its region; their derivatives (K rows `W` and a K×K corner `D`) come from `jax.jacrev`, K
-reverse passes for K outputs. (Forward mode there would take `NP` passes; it once cost 90 % of a
-Newton step.)
+reverse passes for K outputs (forward mode would take `NP` passes, 90 % of a Newton step).
 
 ### The bordered system
 
@@ -299,8 +292,8 @@ code runs either way, which matters for a batch that mixes devices with and with
 More regions cost little: with two per species (K = 4, nine right-hand sides instead of five) a
 Newton step of 4096 devices on an A100-SXM4-40GB takes 1.11× one with one per species through
 the sweep kernel (13.2 against 11.9 ms; 1.29× through the scan), the kernel's curves the scan's
-to 1.2e-12 (`validation/slots.py`, 2026-11-15). With one region per species the step is what it
-was before regions had slots of their own (20.5 ms at 16 384 devices, 2780 curves/s).
+to 1.2e-12 (`validation/slots.py`). With one region per species the slots cost nothing (20.5 ms
+at 16 384 devices, 2780 curves/s).
 
 In a transient at the open circuit or with a series resistance the internal voltage is one more
 border, K + 1 (`batch._system_vint`, [model.md](model.md) "Transients"): its column the rows'
@@ -335,9 +328,8 @@ On an NVIDIA GPU the batched solver therefore runs the whole sweep, forward and 
 Pallas kernel (`jaxdd.sweep`): each program takes 64 devices and runs over every grid point
 itself, its carry in registers. The kernel wants the devices on the last axis, so that a
 program's loads are contiguous: the blocks are transposed in and the solution out. An
-optimization barrier before the transposes is essential: without it XLA fused the blocks'
-whole assembly into each of the four transposes and computed it four times, which made the
-kernel slower than the scan. At batch 16 384:
+optimization barrier before the transposes is essential: without it XLA fuses the blocks' whole
+assembly into each of the four transposes and computes it four times, slower than the scan. At batch 16 384:
 
 | | sweep, scan → kernel | Newton step (`breakdown.py`) | `bench.py` | `hard.py` |
 |---|---|---|---|---|
@@ -352,7 +344,7 @@ kernel alone takes 2.2 ms, with its transposes 4.4. The kernel can read the bloc
 assembly wrote them instead, `(devices, NP, entries)`, with strided loads and no transposes
 (`sweep.SWEEP_TRANSPOSED = False`). On that card it is faster at batch 4096 (3.3 against
 4.4 ms) and 8192 (7.0 against 8.5) and no faster at 16 384 (16.6 against 16.2), where the
-strided loads cost what the transposes did; the whole solver gains 2–5 % (`bench.py` at
+strided loads cost what the transposes do; the whole solver gains 2–5 % (`bench.py` at
 batch 16 384: 1043 against 997 curves/s). On an A100-SXM4-40GB the strided loads cost more
 than the transposes: 3.0 against 2.7 ms at batch 4096, 9.4 against 7.1 at 16 384. The
 transposed layout is therefore the default (`validation/breakdown.py` times both on the
@@ -361,17 +353,13 @@ before the blocks are stacked, none at the kernel) is slower than either: 19.7 a
 for assembly and sweep at batch 4096.
 
 Pallas is imported with `jaxdd.sweep`, not where the kernel is built. Its import registers two
-configuration states (`pallas_grid_context`, `pallas_dynamic_shapes_export`) that enter the
-cache key of every `jax.jit`, so whatever was compiled before the import is compiled once more
-at its next call. Imported during the solver's first trace, as it was at first, it made every
-process compile the solver twice, the second time inside its second call: a few seconds that a
-benchmark excluding only the first call counts as solving. On the RTX 4070 Ti SUPER that made
-`bench.py` 930 instead of 997 curves/s and two passes on `hard.py` 29 % slower than one where
-they are 9 %; on the A100-SXM4-40GB `bench.py` 2365 instead of 2785, batch 4096 of
-`benchmarks/run.py` 1037 instead of 2143, and two passes on `hard.py` 1100 instead of 1547;
-batch 16 384 of `run.py`, timed after batch 4096 in the same process, was right. A program
-that compiles functions of its own before it imports `jaxdd.batch` pays their second
-compilation for the same reason.
+configuration states (`pallas_grid_context`, `pallas_dynamic_shapes_export`) that enter the cache
+key of every `jax.jit`, so whatever was compiled before the import is compiled once more at its
+next call. Imported during the solver's first trace, it would make every process compile the
+solver twice, the second time inside its second call, which a benchmark excluding only the first
+call counts as solving (on the A100-SXM4-40GB `bench.py` 2365 instead of 2785 curves/s, batch
+4096 of `benchmarks/run.py` 1037 instead of 2143). A program that compiles functions of its own
+before it imports `jaxdd.batch` pays their second compilation for the same reason.
 
 The scan stays for one device (`solve_jv`), on a CPU and on ROCm; `JAXDD_SWEEP=scan` chooses
 it anywhere, `JAXDD_SWEEP=pallas` the kernel. The kernel uses Pallas's Triton backend, which
@@ -395,9 +383,8 @@ gone, at 2–3 % instead of the scan's 15–36 %. `validation/breakdown.py` time
 machine at hand.
 
 Parallel cyclic reduction (log₂ NP fully parallel levels instead of a sequential sweep) and a
-hybrid of it with the sweep were built and measured: slower on every machine and batch size,
-because each level passes over every block of every device and becomes bandwidth-bound. They
-were taken out.
+hybrid of it with the sweep are slower on every machine and batch size: each level passes over
+every block of every device and is bandwidth-bound.
 
 ### Damping
 
@@ -430,21 +417,21 @@ density is the larger of that value and `n_eq`: continuous, but with a kink wher
 changes direction, and a strong one, the slope of the flux in the neighbour's density falling
 from `a` (10⁵ m/s on a 1 nm layer) to about `S`. Close to it Newton cycles between the two
 branches without end (on `tests/data/surface_light` at 1.05 V, a two-cycle of step 0.40 for 200
-iterations). Smoothing the kink does not help: in the injected branch a relative change of `ε`
-in the contact's density moves the flux by `a·n_eq·ε`, so even `ε` = 1e-4 left the curve 7e-3 of
+iterations). Smoothing the kink does not help: in the injected branch a relative change of `ε` in
+the contact's density moves the flux by `a·n_eq·ε`, so even `ε` = 1e-4 leaves the curve 7e-3 of
 its scale off. So each contact's branch is held: chosen from the start of each voltage, kept
 through the iterations, and changed only once the step is below `BRANCH_FLIP_SIZE` (1e-3) or
 converged, where it is checked against the solution; after a change the convergence history
 starts anew (`solve_jv` and the batch's `_newton_loop`). A voltage is converged only where every
 contact's branch holds at its solution. On `surface_light` every voltage converges in at most 18
-steps. Where the two branches give the same density to `BRANCH_TIE` (1e-13 in
-`ln n`, round-off), as at equilibrium, the branch held stays, and a first choice takes equilibrium: decided
-by the sign of a round-off difference, the branch flipped at every check, each flip starting the
-convergence anew, and where it took the condition at `S` = 0 the blocked carrier floated (behind
-a barrier only recombination fixes its density) and Newton left the solution; a stack with a
-blocking contact did not converge even in the dark at 0 V. The tie is no wider: in the injected
-branch the density's relative error moves the flux by `a·n_eq` times it, and at 1e-12 a ZimT
-transient's QFLS was 4e-9 V off. Devices without a finite `S` have no contact state and skip all of it, to the bit.
+steps. Where the two branches give the same density to `BRANCH_TIE` (1e-13 in `ln n`, round-off), as at
+equilibrium, the branch held stays, and a first choice takes equilibrium. Decided by the sign of
+a round-off difference instead, the branch would flip at every check, each flip starting the
+convergence anew, and at `S` = 0 the blocked carrier would float (behind a barrier only
+recombination fixes its density): a stack with a blocking contact would not converge even in the
+dark at 0 V. The tie is no wider: in the injected branch the density's relative error moves the
+flux by `a·n_eq` times it (at 1e-12 a ZimT transient's QFLS is 4e-9 V off). Devices without a
+finite `S` have no contact state and skip all of it, to the bit.
 
 **The start's branch.** A voltage of a scan starts in the branches the last converged solution
 has, with its own contacts (`solver._scan`'s `solution_branch`, the batch's
@@ -452,10 +439,10 @@ has, with its own contacts (`solver._scan`'s `solution_branch`, the batch's
 its start shows. The start is the last solution with the new voltage's contacts: the voltage's
 change lies across the contact's interval alone (on the graded grid 1 pm at the end), and the
 condition's density there can show a carrier extracted that is not. With `S` = 0 the carrier
-is then blocked at both ends (behind a barrier at the other), Newton leaves the solution
-and, its step never below `BRANCH_FLIP_SIZE`, never changes the branch back: in
+would then be blocked at both ends (behind a barrier at the other), Newton would leave the
+solution and, its step never below `BRANCH_FLIP_SIZE`, never change the branch back (on
 `tests/test_free_surface.py`'s stack with `W_R` 4.0 eV, scanned up from −0.5 V in the dark, every
-voltage above failed, each converging from a cold start. The first voltage, without a converged
+voltage above, each converging from a cold start). The first voltage, without a converged
 solution before it, takes the branches its start shows.
 
 ### Free surfaces
@@ -467,7 +454,7 @@ rate (`_surface_srh`). The system keeps its unknowns and its block-tridiagonal f
 
 A device with a free end has no SimSS to match, and two of its discretisations are chosen so
 that it keeps its charge exactly. Poisson's equation is in flux form, each interval's `ε` its
-left point's. SIMsalabim's form is not conservative at a jump of `ε`, and it left a free stack's
+left point's. SIMsalabim's form is not conservative at a jump of `ε` and leaves a free stack's
 charge 5e-6 of its scale off; in flux form the charge is 0 to round-off. The mobile ions are
 counted over the points' control volumes (`_ion_number`), as Poisson's equation counts their
 charge, and not over the region's intervals (SIMsalabim's `Rescale_Ion_Density`, whose count
@@ -489,8 +476,8 @@ the sweep is unchanged. Which row it replaces (`_gauge_row`):
   the field at the far end being 0, because the continuity rows keep the charge. A continuity
   row replaced there would take Poisson's round-off times the weight `Δt` gives it, and Poisson's
   terms reach 1e7 (in its rows' scale) on the graded grid's small intervals. On a stack with
-  mobile ions and charged traps the electron density at the last point then jittered by 1e-3
-  in its logarithm and the late steps of a decay never converged. With Poisson's row replaced,
+  mobile ions and charged traps the electron density at the last point would jitter by 1e-3 in
+  its logarithm and the late steps of a decay never converge. With Poisson's row replaced,
   every step of a decay converges in 2–7 Newton steps, from 1 ps to 10 ms.
 
 In a batch the replacement is masked per device (`gauge_on`), and the implicit derivatives take
@@ -512,7 +499,7 @@ free end).
 Without a contact, only recombination fixes how many carriers there are. Far from the solution,
 that mode's restoring force (`k·n·p`, `S·n`) is tiny against the diffusion terms. A uniform film
 at 10¹³ m⁻³ under 1.5e28 m⁻³ s⁻¹ gives a condition number of 10²⁷, and the block sweep, which
-does not pivot, then got the step's sign wrong: Newton cycled between two densities. So a film
+does not pivot, gets the step's sign wrong: Newton cycles between two densities. So a film
 with both ends free starts where it recombines what it generates (`_balanced`): each point
 neutral by its doping at one splitting, found by bisection so that the device's recombination
 over the control volumes equals its generation (equilibrium in the dark). From there, Newton
@@ -549,14 +536,14 @@ the fluxes over the layer's intervals, drift and diffusion cancelling, are far l
 step's round-off is about `ε·|ln p|·(p_layer/p_bulk)·(L/h)`: in `tests/test_free_surface.py`'s
 stack at `W_R` 5.4 eV and −0.2 V in the dark, `p` 2e24 m⁻³ in the layer against 5e17 in the
 bulk on 1 pm intervals, 2e-4, which is what the steps do, at random between 1e-5 and 1e-3, with
-the dense pivoted solve the same as the sweep. The fixed floor never saw such a voltage converged.
+the dense pivoted solve the same as the sweep. The fixed floor never lets such a voltage converge.
 
 `solve_jv` and `solve_state` estimate the floor (`solver._noise_step`) once the last four steps
 are below 1e-3 without converging: each row's round-off taken as `ε·Σ|∂F/∂y|·|y|` (a term's
 derivative in `ln n` is the term itself, and `ln n` is known to `ε·|ln n|`), one sign
 throughout, which reaches the smooth modes, through the same sweep. Pessimistic by about two
 orders where measured (5e-2 against 2e-4; on an ordinary device 4e-7, below the fixed floor,
-which then decides as before). Steps all below it and below 1e-3 are the solution. The batch
+which then decides). Steps all below it and below 1e-3 are the solution. The batch
 needs no estimate: its settled current stops such a voltage (`settled current`, its cap the
 same 1e-3). The two solvers' states then agree within the floor (at −0.2 V `V` to 1e-5 V,
 `ln p` to 5e-4).
@@ -574,7 +561,7 @@ model of the device anyway. Such a voltage stays not converged.
 With Fermi–Dirac's statistics (`statistics="fermi-dirac"`, docs/model.md) the density stays
 below the band's: on SIMsalabim's grid (`grid="simss"`) that stack converges at every voltage to
 −0.5 V (in 5–70 Newton steps from 0 V in 0.05 V steps), the holes there 0.2 eV within the band.
-On the graded grid with the contacts' 1 pm intervals (26 pm on SIMsalabim's) Newton stalled
+On the graded grid with 1 pm intervals at the contacts (26 pm on SIMsalabim's) Newton stalls
 beyond −0.2 V at a floor of 1e-3 to 1e-2 in the bulk's potential, above `NOISE_FLOOR_CAP`: the
 round-off grows as `L/h`. With another statistics than Boltzmann's the graded grid therefore
 starts its spacing at a contact from the contact layer's Debye length at its band's density of
@@ -585,8 +572,8 @@ to −0.25 V. With Blakemore's the single solver converges to −0.35 V and the 
 (on SIMsalabim's grid most voltages to −0.4 V): its density approaches `N_c/0.27`, where its
 excess potential is singular. Boltzmann's grid is unchanged, its accumulation unbounded.
 A device whose contacts block both carriers at both ends (`S` = 0 for all four) exchanges no
-carrier with either, and its equilibrium with a degenerate layer did not converge on the coarser
-contacts (it did on 1 pm, by the start); such a device is a free film with electrodes.
+carrier with either, and its equilibrium with a degenerate layer does not converge on the coarser
+contacts (it does on 1 pm, by the start); such a device is a free film with electrodes.
 
 ### Densities below the floor
 
@@ -600,20 +587,18 @@ recombination), and in `ln n` a density e^30 above that solution falls by about 
 instead (`solver.density_steps`): the same linear solve, whose step `δ` in `ln n` is the
 relative step in `n`, applied as `ln n + ln(1 + δ)`, which lands on that solution in one step
 (at most a fall of e^-50 per step; a `δ` ≤ −1, a negative density, takes the ordinary cap of
-5). Everything above the floor is stepped as before. The densities below the floor then converge
-in the Newton steps the rest takes: on ZimT's cases the QFLS in the dark after the light came to
-ZimT's from 5e-3 V off ([validation.md](validation.md)) at no more Newton steps (497 against
-501 through `zimt_photo_light`), and its value does not change with the floor 1e-18 times
-lower. A lower floor alone converged them too, at 4 % more steps, but with mobile ions Newton
-then did not converge at all. In the steady state, on 1024 devices of `validation/hard.py`,
+5); everything above the floor is stepped in the logarithm. The densities below the floor then
+converge in the Newton steps the rest takes: on ZimT's cases the QFLS in the dark after the light
+is ZimT's (stepped in the logarithm, 5e-3 V off, [validation.md](validation.md)) at no more
+Newton steps (497 against 501 through `zimt_photo_light`), and does not change with the floor
+1e-18 times lower. A lower floor alone converges them too, at 4 % more steps, but not with
+mobile ions. In the steady state, on 1024 devices of `validation/hard.py`,
 every voltage still converges, at 2.81 Newton steps per voltage against 2.84, the curves within
 4e-12 of their scale in the median and 1e-5 at most (the settled-current stop).
 
 The settled current stops a voltage whose current no longer changes while the potential's last
-digits still do. With the row form of the residual it was what let the carrier-free bulk of
-strong frozen charge converge at all ([above](#the-residual-and-the-jacobian-by-intervals));
-assembled by intervals, every known device converges to `tol` without it, and it is a shortcut
-like the quadratic stop.
+digits still do. Assembled by intervals ([above](#the-residual-and-the-jacobian-by-intervals))
+every known device converges to `tol` without it: it is a shortcut like the quadratic stop.
 
 A voltage that reaches `max_iter` without any of these is returned as it is, **flagged**
 `converged = False`. jaxdd never stops early silently, and it never drops a voltage. The next

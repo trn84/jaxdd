@@ -27,8 +27,22 @@ the API, and says so here.
   outside the bounds, and its batches are padded to multiples of 8 parameter sets, so that the
   solver compiles for at most 16 batch sizes in the half-steps instead of 128.
 
+- `docs/validation.md`'s TRPL section describes the current model, its bounds and the posterior
+  of the full model within them (two chains of 256 walkers, 1000 steps from a converged chain
+  within the narrower bounds, steps 750–1000 kept): mobility 39.5 (37–43) cm²/Vs, `k_rad` 1.30
+  (1.22–1.42)·10⁻¹⁰ cm³/s, the SnO2 interface's SRV off its bound at 1.1·10⁵ cm/s, the boost
+  bounded only from below. The posteriors of the simpler models and the history of the bounds are
+  gone.
+- The handbook (`docs/`) describes the current state only: dates, "Stage" labels and accounts of
+  what was tried before are gone or stated as the reasons for what is there, and the pages are
+  shorter (about 170 lines fewer) with the same results. `docs/tutorial.md` no longer calls ions
+  bounded by their sites a plan (they are `N_max_anion`, `N_max_cation`).
+
 ### Fixed
 
+- `docs/validation.md` gave the TRPL posterior without the SnO2 decays' background about 2200
+  independent samples: the autocorrelation time estimated from its chains grows with the window,
+  so no such number holds.
 - `docs/validation.md` gave the TRPL posterior with the saturable states (in 0.4.0) 4200
   independent samples: the steps kept hold about 2500, and roughly so (five autocorrelation
   times).

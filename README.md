@@ -9,7 +9,7 @@ It reads SIMsalabim's input files and solves one device or a batch of thousands:
 of SimSS 5.36's steady state, with ions free or frozen after a pre-bias, and the transients of
 ZimT 5.36, on CPU and GPU, differentiable in the input's parameters. Against SimSS 5.36 it agrees
 to 1e-6 of the current scale with SimSS's own Bernoulli approximation; where the two differ by
-more, it has so far been SimSS's error, documented in [`docs/differences.md`](docs/differences.md).
+more, every case found is SimSS's error, documented in [`docs/differences.md`](docs/differences.md).
 On one A100 about 2750 J-V curves per second, on two 5400 (a batch is split across every GPU
 the process sees), on one H100 5600, on a 16-core desktop CPU about 640: 84×, 166×, 172× and
 20× SimSS on all cores of that desktop.

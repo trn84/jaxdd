@@ -31,7 +31,7 @@ so that the solver is never the larger error in what is computed from it.
 - **On grid points with frozen ions**, the remaining gaps were SimSS freezing a pre-bias
   that had not converged, off its number of ions; given SimSS's ion numbers, jaxdd reproduces
   its curves ([differences.md](differences.md) §1b).
-- **On a large parameter grid of perovskite cells with ions** (2026-11-11): 367 200 devices on
+- **On a large parameter grid of perovskite cells with ions**: 367 200 devices on
   a 500 nm absorber and 915 000 on four more (250–1000 nm; `L_diff/d` 0.1–30, ion densities
   1e15–1e18 cm⁻³ frozen at five accumulations, transport layers 1–300 nm doped 0–1e18 cm⁻³),
   light and dark, solved by the batched solver on an A100 and compared curve by curve with
@@ -55,45 +55,45 @@ so that the solver is never the larger error in what is computed from it.
 - **The batched solver** matches the one-device solver to 1e-10, and its shortcuts change `J` by
   at most 1.2e-10 of the generation current ([solver.md](solver.md)).
 
-- **Interface traps** (2026-11-13): a donor and an acceptor level of 3e14 m⁻² at the two
+- **Interface traps**: a donor and an acceptor level of 3e14 m⁻² at the two
   interfaces of the 1 nm stack, within 1.5e-6 of SimSS's scale; the same with free ions, 5.4e-6;
   a p-i-n stack with 10 and 20 nm transport layers and 5e13 and 4.6e14 m⁻² of donor traps,
   4e-7 against SimSS at tolerances of 1e-9. At its default tolerances SimSS stopped early there
   by 1.2e-4, and from 1.0 V on it does not converge at either; jaxdd converges to 1.25 V. The
   traps move these curves by up to two thirds of their scale.
-- **Charged bulk traps and trap files** (2026-11-14): the 1 nm stack's absorber traps (3.9e21
+- **Charged bulk traps and trap files**: the 1 nm stack's absorber traps (3.9e21
   m⁻³ at mid-gap) as acceptors, and as three donor levels from a trap file with two acceptor
   levels from an interface trap file at the left interface and one donor level at the right;
   within 2.5e-10 and 1.0e-10 of SimSS's scale at its tolerances of 1e-9, at most six Newton steps
   per voltage. The traps' charge moves these curves by 4–5 % of their scale.
-- **Finite surface recombination** (2026-11-14): 20 m/s for the electrons at the left contact
+- **Finite surface recombination**: 20 m/s for the electrons at the left contact
   and 50 m/s for the holes at the right one on the 1 nm stack, within 5e-12 of SimSS's scale at
   its tolerances of 1e-9, at every voltage but 1.05 V, where SimSS takes the contact's branch
   from the voltage before ([differences.md](differences.md) §7). At the other two ends, where
   SimSS 5.36 has the sign of `S` wrong, the device turned around gives the same curve to 1e-11.
-- **Langevin recombination** (2026-11-14): in all three layers of the 1 nm stack, moving the
+- **Langevin recombination**: in all three layers of the 1 nm stack, moving the
   curve by 2 % of its scale: within 1.4e-10 of SimSS with its mobilities, 3.7e-5 with each
   point's own layer's, the default ([differences.md](differences.md) §8).
-- **The field-dependent mobility** (2026-11-14): on the 1 nm stack, γ from 0 to 3e-4 (m/V)^½
+- **The field-dependent mobility**: on the 1 nm stack, γ from 0 to 3e-4 (m/V)^½
   for electrons and holes in the three layers, the electrons' constant in the last, moving the
   curve by 32 % of its scale: within 1.1e-10 of SimSS's scale at its tolerances of 1e-9, in at
   most 16 Newton steps per voltage, as without. With Langevin recombination in all three layers
   as well (the rate in the field of its interval, moving the curve by another 2.5 %): within
   1.5e-10 with SimSS's mobilities, 6.2e-5 with each point's own layer's
   ([differences.md](differences.md) §8).
-- **Field-dependent generation** (2026-11-14): Braun's dissociation in all three layers of the
+- **Field-dependent generation**: Braun's dissociation in all three layers of the
   1 nm stack, a Gaussian distance distribution in the absorber (`P0` 0.1), an exponential and a
   delta function in the transport layers, which halves J_sc: within 2.1e-10 of SimSS's scale
   with its Romberg integration and Bessel series, 6.1e-9 with the exact ones, the default
   ([differences.md](differences.md) §9), at most 16 Newton steps per voltage.
-- **Series and shunt resistance** (2026-11-13): 2e-4 and 0.3 Ω m² on the 1 nm stack, the
+- **Series and shunt resistance**: 2e-4 and 0.3 Ω m² on the 1 nm stack, the
   series resistance moving the voltage by 1.8 V at the top of the scan: `J_ext` within 2.2e-6 of
   SimSS's scale, `V_ext` within 4 µV.
-- **The transfer-matrix profile** (2026-11-13): on the 1 nm stack between glass, 110 nm ITO
+- **The transfer-matrix profile**: on the 1 nm stack between glass, 110 nm ITO
   and gold, and on a 20/500/10 nm stack between glass, 150 nm ITO and silver, the profile on the
   grid is SimSS's within 4e-12 and the curves within 2e-7 and 6e-7 of SimSS's scale; a uniform
   profile (`genProfile = none`) within 2.4e-6.
-- **The current in time** (2026-11-15): ZimT's integral form sums each density's change over
+- **The current in time**: ZimT's integral form sums each density's change over
   the interval after its point; summed over the point's control volume
   (jaxdd's default, [differences.md](differences.md) §13) it is the differential form's current
   of the same solution to 5e-11 of the scale at 400, 1600 and 6400 points (light on and off
@@ -111,7 +111,7 @@ so that the solver is never the larger error in what is computed from it.
   2.8e-3 / 1.5e-3 / 3.6e-4, 2.7e-2 / 7.6e-3 / 2.2e-3 and 2.9e-3 / 5.9e-4 / 1.6e-4 against
   8.3e-4 / 9.4e-4 / 1.9e-4, 8.5e-4 / 9.6e-4 / 1.9e-4 and 2.5e-4 / 1.9e-4 / 3.2e-5. The
   comparisons with ZimT below take ZimT's sums (`zimt_current=True`).
-- **The grid on hard devices** (2026-11-15, `validation/grid.py` on an A100): `hard.py`'s 4096
+- **The grid on hard devices** (`validation/grid.py` on an A100): `hard.py`'s 4096
   devices (frozen ions up to 4e18 cm⁻³, absorbers of 250–1000 nm, transport layers of 1–300 nm),
   each in the light and the dark, against the criteria (η within 1e-3 up to 1.0 V, `J_SC` within
   0.1 %), on both grids against the graded one at 3200 points:
@@ -134,8 +134,8 @@ so that the solver is never the larger error in what is computed from it.
   the RTX 4070 Ti SUPER: 99.8 % at 400 points; the one device that misses is 30/1000/300 nm with
   a diffusion length far below the absorber and accumulated ions, its `J_SC` off by 2.1e-3. The
   grid's parameters are a choice on those 512 (β 2–16 and `d₀` 0.3 pm–0.1 nm tried: 93–99.8 %
-  at 400 points; the first attempt, boundary layers a few Debye lengths of the doping and ions
-  wide, met them on 22 % at most): the hard devices' worst errors were at interfaces with
+  at 400 points; boundary layers a few Debye lengths of the doping and ions wide meet them on
+  22 % at most): the hard devices' worst errors were at interfaces with
   accumulated ions, whose fields make the densities change on picometres. With the same points it costs Newton nothing
   more: 2.82 Newton steps per voltage on both grids at 400 points, the batch paying 4.30.
 
@@ -151,7 +151,7 @@ so that the solver is never the larger error in what is computed from it.
   (`zimt_ions_fast_light`): graded 400 points 6.0e-4 of the scale, SIMsalabim's 4.0e-3 at 400
   and 2.2e-3 at 3200; the light on and off with traps: 5.2e-5, 8.2e-4 and 6.6e-4; the same
   Newton steps per time step on both.
-- **Mobile ions in time** (2026-11-15, Stage C): sweeps to a voltage and back under light with
+- **Mobile ions in time**: sweeps to a voltage and back under light with
   free ions, against ZimT 5.36 at tolerances of 1e-9: ions in the absorber of
   `steady_1e17_thin_light` over 2 × 5 s to 1.2 V (`tests/data/zimt_ions_slow_light`) and over
   2 × 50 ms to 0.9 V (`zimt_ions_fast_light`), ions in the region of two layers of
@@ -163,7 +163,7 @@ so that the solver is never the larger error in what is computed from it.
   iteration stops converging with ions (its densities moving by up to 99 % at its limit of
   2000 iterations), at 1e-9 and at 1e-12 alike and whatever its acceleration; jaxdd agrees
   with it up to its first unconverged step, after which ZimT carries unconverged states.
-- **The open circuit and series resistance in time** (2026-11-15, Stage C), the internal voltage
+- **The open circuit and series resistance in time**, the internal voltage
   an unknown of each step's Newton solve, against ZimT 5.36 at `tolPois = tolDens = tolVint =
   1e-12`: the photovoltage of `thin_l1_light` at the open circuit through a pulse of 1.2 suns
   over 1 µs and 1 ms after it at 1 sun (`tests/data/zimt_tpv_light`, 151 steps, 1.0283 V to
@@ -174,7 +174,7 @@ so that the solver is never the larger error in what is computed from it.
   Brent on whole solves at each step. The open circuit at `t = 0` is SimSS 5.36's `Voc`
   (1.0282617 V; SimSS at 1e-12 on 0.1 mV steps around it, a cubic through them,
   `thin_l1_voc_light`) to 1.1e-13 V.
-- **Gradients through time** (2026-11-15, Stage C): the tangents of a transient in its
+- **Gradients through time**: the tangents of a transient in its
   parameters against central differences (a step of 1e-3 in the logarithm): the absorber's trap
   density through the light switched on within 2.7e-7 of their largest, the holes' capture in
   the photovoltage at the open circuit within 8e-6 (`Vint`'s Newton tolerance in the
@@ -186,7 +186,7 @@ so that the solver is never the larger error in what is computed from it.
   the anions' mobility and density from the sweep's hysteresis, to 7e-10, in 7 Jacobians and
   40 s (compiling 14–42 s more). The direct recombination is not determined by the
   photovoltage of a device whose traps dominate (a fit took it to 0 at a misfit of 5e-8 V).
-- **ZimT's output, its automatic stop and failures** (2026-11-15, Stage C). Every column of the
+- **ZimT's output, its automatic stop and failures**. Every column of the
   `tJFile` of the fourteen ZimT cases in `tests/data`: the currents and the recombination as
   currents (per layer, at each interface, the minority carriers' at the contacts, the ions',
   the displacement current) within 1e-7 of the scale, `errJ` within 3e-6, with
@@ -199,9 +199,9 @@ so that the solver is never the larger error in what is computed from it.
   first layer's QFLS is 2.1e-2 V above jaxdd's, 0.8684 V where one step later, 0.8 ns and 10 mV
   on, ZimT's own is 0.8479 V and jaxdd's 0.8479 V; with a trap file 1.8e-5 V off in the dark at
   0 V (jaxdd's −3.5e-7 V, the equilibrium's 0 to SIMsalabim's Bernoulli function). jaxdd's
-  values there do not change with Newton's floor 1e-18 times lower. Before the densities below
-  that floor were stepped in the density (docs/solver.md, "When is a voltage converged?") the
-  QFLS was up to 5e-3 V off in the dark after the light and 9e-4 V with surface recombination.
+  values there do not change with Newton's floor 1e-18 times lower. Without the densities below
+  that floor stepped in the density (docs/solver.md, "When is a voltage converged?") the
+  QFLS would be up to 5e-3 V off in the dark after the light and 9e-4 V with surface recombination.
   The automatic stop on the photovoltage after a pulse, against the steady state before it
   (`Track` 2) and step by step (`Track` 3): ZimT stops after 118 and 119 of 182 steps, jaxdd a
   step before each, where the states' difference crosses `tolPois` (1e-12 V) and ZimT's own
@@ -209,7 +209,7 @@ so that the solver is never the larger error in what is computed from it.
   2 on steps made to fail. Two ion regions per species (`zimt_regions2_light`): ZimT keeps
   only the last region's current (differences.md §11); with `zimt_ion_currents` jaxdd's
   `Jext`, `Jnion`, `Jpion` within 1e-8 of the scale.
-- **Traps in time** (2026-11-15, Stage C): light on and off at short circuit with the
+- **Traps in time**: light on and off at short circuit with the
   absorber's traps neutral (`tests/data/zimt_traps_photo_light`, `thin_l1_light` itself), charged
   as acceptors (`zimt_acceptor_photo_light`) and three levels from a trap file with two at an
   interface (`zimt_trapfiles_photo_light`), and a sweep to 1.2 V and back with charged interface
@@ -219,7 +219,7 @@ so that the solver is never the larger error in what is computed from it.
   (the interface traps alone) 3.5e-2 of the scale off: the occupations' dynamics are what these
   cases test. At short circuit the interface traps' dynamics move the current by 5e-6 only,
   hence the sweep for them.
-- **Transients of electrons and holes** (2026-11-15, Stage C): `thin_l1_light` without its
+- **Transients of electrons and holes**: `thin_l1_light` without its
   traps, against ZimT 5.36 at tolerances of 1e-12 (at 1e-9 ZimT itself moves by 1.7e-7 of the
   scale in the first picoseconds), 240 steps each: light on and off at short circuit over six
   decades of time (`tests/data/zimt_photo_light`, and with finite surface recombination
@@ -227,30 +227,30 @@ so that the solver is never the larger error in what is computed from it.
   current is half the scale (`zimt_sweep_light`, `zimt_sweep_diff_light` with the differential
   current): within 1.1e-10, 3.1e-10, 1.0e-10 and 1.5e-11 of ZimT's scale, and as one batch,
   each device with its own steps, within the same.
-- **ZimT's input and its steady states** (2026-11-15): a ZimT 5.36 input (`tests/data/
+- **ZimT's input and its steady states**: a ZimT 5.36 input (`tests/data/
   zimt_steady_light`, `thin_l1_light` in ZimT's format) read with its `tVGFile` (`read_tvg`, ZimT's
   checks) and built into a device; its seven steady states (`t = 0` on every line, at two light
   intensities) within 1.6e-10 of ZimT's scale by the steady-state solver: ZimT's `t = 0` is
   SimSS's steady state.
-- **Two mobile regions of a species** (2026-11-14): anions and cations mobile in both
+- **Two mobile regions of a species**: anions and cations mobile in both
   transport layers of a p-i-n cell, the absorber closed to them (`tests/data/two_regions_light`),
   each region its own normalisation: within 6.8e-7 of SimSS's scale where it converged, by both
   solvers, in a batch beside a device of one region per species, which keeps its curve to
   4.1e-7; the gradient in one region's ion density against finite differences.
-- **Ions across layers and held from the start** (2026-11-14): one ionic region of two layers,
+- **Ions across layers and held from the start**: one ionic region of two layers,
   free ions entering the 20 nm ETL of a p-i-n cell (`tests/data/region_etl_light`) and ions
   entering its 10 nm HTL, frozen after a pre-bias (`region_htl_frozen_light`): within 1.7e-7
   and 3.9e-6 of SimSS's scale where it converged, by both solvers; the region moves the curve
   by 0.7 % of the scale. Ions held from the start (`fixIons` without `preCond`, a net charge,
   `held_thin_light`): within 8.1e-11 of the patched SimSS (the unpatched one 40 % off).
-- **SimSS's voltages and its differential current** (2026-11-14): `simss_voltages` gives the
+- **SimSS's voltages and its differential current**: `simss_voltages` gives the
   voltages of every SimSS run in `tests/data`, a logarithmic downward scan (`Vdist = 2`,
   `Vscan = -1`) and `expJV`'s with `useExpData`; on the logarithmic scan the curve is within
   2.0e-6 of SimSS's scale. With `currDiffInt = 1` and SimSS at tolerances of 1e-9 the curves are
   within 2.5e-11 (`thin_l1_light`) and 1.7e-11 (with interface traps) of SimSS's, 1.2e-9 in a
   batch beside devices with the integral form; the anode-left p-i-n cell with free ions within
   6.9e-6, as with the integral form.
-- **The left electrode as the anode** (`leftElec = 1`, 2026-11-13): a p-i-n cell in its own
+- **The left electrode as the anode** (`leftElec = 1`): a p-i-n cell in its own
   orientation (glass, 150 nm ITO, 10 nm TaTm, 500 nm perovskite with free ions, 20 nm C60,
   100 nm Ag), interface traps at both interfaces, the transfer-matrix profile and a shunt: within
   6.9e-6 of SimSS's scale at its tolerances of 1e-9, the short-circuit current to ten digits.
@@ -258,7 +258,7 @@ so that the solver is never the larger error in what is computed from it.
   in the batch's arrays, the voltages and the input's own parameters (mobility, thickness, band
   edge, ion density, temperature, work function), without ions, with free and with frozen ions
   (tests; [solver.md](solver.md#derivatives)).
-- **A fit** (`validation/fit.py`, 2026-11-13): the absorber's trap density, direct
+- **A fit** (`validation/fit.py`): the absorber's trap density, direct
   recombination and both mobilities and the left work function, started 1.4–1.7× (and 0.025 eV)
   off, fitted to SimSS's curve of `thin_l1_light` by least squares with the Jacobian from
   `jax.jacfwd`: 25 curves and 19 Jacobians, 17 s on the RTX 4070 Ti SUPER. The trap density comes
@@ -274,7 +274,7 @@ so that the solver is never the larger error in what is computed from it.
   the direct recombination hardly; a fit of real data wants several light intensities or a dark
   curve, several starts, and its uncertainty by sampling rather than by linearisation.
 
-- **A fit to measured curves** (`validation/fit_measured.py`, 2026-11-13): the five light
+- **A fit to measured curves** (`validation/fit_measured.py`): the five light
   intensities of each of the three samples of Heester et al. (2025; `validation/data/heester2025`)
   at once, the paper's free parameters within its bounds plus the generation's scale, from the
   middle of the bounds. The device is the paper's stack with interface traps; what the paper does
@@ -308,8 +308,8 @@ so that the solver is never the larger error in what is computed from it.
   3.2e13 m⁻² with Werner's data, 2.4e13 with the stand-in's), little between the two n,k data.
   What these curves say about a single parameter depends on the unstated assumptions as much as
   on the data.
-- **Many starts at once** (`fit_measured.py --starts 16`, `jaxdd.fit.least_squares_many`,
-  2026-11-14): the same fit from 16 starts (the cold one, the paper's values and 14 of a Sobol
+- **Many starts at once** (`fit_measured.py --starts 16`, `jaxdd.fit.least_squares_many`):
+  the same fit from 16 starts (the cold one, the paper's values and 14 of a Sobol
   sequence in the box), every start scipy's `least_squares` as alone, their curves and
   Jacobians solved as one batch: 10.5 min per sample on the RTX 4070 Ti SUPER (400 batched
   evaluations of 16 × 5 curves and 14 tangents, 1.6 s each), the time of two fits from one
@@ -321,13 +321,13 @@ so that the solver is never the larger error in what is computed from it.
   sampler's σ the lower minima are e⁵⁹ and e¹⁵⁸ more likely, and the posteriors below are
   sampled around them. 64 starts for 0.6 Cl (24 min, 1.6× the time of 16 per evaluation for 4×
   the starts) find the same best, from 8 starts.
-  With the computed generation and Werner's n,k data (`--device anode --nk …`, 2026-11-15,
+  With the computed generation and Werner's n,k data (`--device anode --nk …`,
   12 min per sample) the best of 16 starts are 0.658, 0.552 and 1.96 %, where the uniform
   generation's are 0.701, 0.553 and 1.93 %: the optics do not make the curves easier to fit.
   The best minima lie elsewhere in the box again (0.6 Cl: the cations at their bound of
   1e23 m⁻³, the HTL interface's traps 4.5e14 m⁻²).
 
-- **The fit's uncertainty, by sampling** (`validation/sample_measured.py`, 2026-11-14): a posterior
+- **The fit's uncertainty, by sampling** (`validation/sample_measured.py`): a posterior
   of the same fourteen parameters, by an ensemble sampler whose walkers' five intensities are
   solved as one batch (differential evolution, the walkers started around each sample's best
   minimum: for 0.2 Cl the cold start's, for 0.1 and 0.6 Cl the best of 16 starts, above,
@@ -396,7 +396,7 @@ so that the solver is never the larger error in what is computed from it.
   measure is the fit under these assumptions as much as the cells. With σ the rms misfit the widths are a lower bound: the misfit is systematic and smooth
   in the voltage, not independent noise, and where the posterior is close to Gaussian its widths
   scale with σ (`--sigma`).
-- **Ions bounded by their sites** (`validation/hard.py 1024 256 N_max`, 2026-11-15, RTX 4070
+- **Ions bounded by their sites** (`validation/hard.py 1024 256 N_max`, RTX 4070
   Ti SUPER): `hard.py`'s 1024 devices (1e15–4e18 cm⁻³ of ions frozen at one of five
   accumulations), the absorber's two species bounded by the halide sites' 1.21e28 m⁻³, by
   IonMonger's 2e27 and by 1e26 (Driftfusion's in ChargeTransport.jl). Every voltage of every
@@ -405,7 +405,7 @@ so that the solver is never the larger error in what is computed from it.
   curves' largest difference from Boltzmann's over their scale, median / 99 % / most: 5.8e-7 /
   2.1e-4 / 1.6e-3 at 1.21e28, 3.5e-6 / 1.3e-3 / 9.6e-3 at 2e27, 7.1e-5 / 2.5e-2 / 0.17 at 1e26.
   On 16 384 of these devices (`validation/hard.py 16384 16384 N_max`, `STEPS=steric
-  benchmarks/apptainer.sh`, 2026-11-16, A100-SXM4-40GB) the tail is longer: every voltage
+  benchmarks/apptainer.sh`, A100-SXM4-40GB) the tail is longer: every voltage
   converges at 1.21e28 and 2e27, the differences 5.5e-7 / 3.4e-4 / 1.7e-2 and 3.3e-6 / 2.0e-3 /
   0.10; at 1e26 one device does not converge at three voltages (reported), the others differ by
   6.7e-5 / 3.9e-2 / 1.6, and one pass pays 9.66 Newton steps per voltage against 6.4 without
@@ -415,7 +415,7 @@ so that the solver is never the larger error in what is computed from it.
   (`tests/data/steady_1e17_thin_light`, Boltzmann's ions up to 3.9e25 m⁻³), free at every
   voltage from −0.5 to 1.4 V, every voltage converges with 1.2e23, 3e23, 8e23, 2e24 and 1e26 m⁻³
   of sites; with 5e23 the three from −0.5 to −0.4 V do not (reported unconverged).
-- **Ions bounded by their sites, against ChargeTransport.jl** (1.10.0, 2026-11-20,
+- **Ions bounded by their sites, against ChargeTransport.jl** (1.10.0,
   `validation/chargetransport/psc_ions.jl`, `tests/test_chargetransport.py`): its Ex103 cell,
   TiO2 (100 nm, `N_D` 1e24 m⁻³) | MAPI (400 nm) | spiro-OMeTAD (200 nm, `N_A` 1e24), mobile
   vacancies in the perovskite over an immobile background of the same density, bounded by the
@@ -435,7 +435,7 @@ so that the solver is never the larger error in what is computed from it.
   to 0.1 % (their peak 2.78e25 against 2.78e25 in equilibrium), `n` and `p` to 0.1–3 %, the
   potential to 0.8 mV, the current to 2e-5–4e-4.
 
-  **The carriers' statistics** (2026-11-20, docs/model.md): the same cell with its transport
+  **The carriers' statistics** (docs/model.md): the same cell with its transport
   layers doped 3e25 m⁻³ against their `N_c` of 5e25 (degenerate, the Fermi level 0.3 eV within
   the band; 1e24 vacancies on 1e25 sites), each statistics against ChargeTransport.jl's own
   (`STAT=fermi-dirac`, its TeSCA `F_{1/2}`, and `STAT=blakemore`): in equilibrium, dark at 0.6 and
@@ -472,7 +472,7 @@ so that the solver is never the larger error in what is computed from it.
   voltage's step, at 1e4 s with the ions' mobility raised to 1e-12 m²/Vs (where they settle does
   not depend on it), the number kept to 1e-13.
 
-  **In time** (2026-11-20, the flux of the electrochemical potential at a constant mobility,
+  **In time** (the flux of the electrochemical potential at a constant mobility,
   docs/model.md): the voltage stepped from equilibrium in the dark to 0.6 and 1.0 V (4e24 on
   2e25 sites) and to 1.0 V (1e24 on 1e25; 1.6e25 on 1e27 below), the vacancies at 1e-12 m²/Vs, 100 s on
   ChargeTransport's own 122 times (implicit Euler both: what is left is the grids'), jaxdd at
@@ -515,7 +515,7 @@ it is checked against jaxdd's own transients and against its limits:
   1 MHz it is five times that, the depletion layers' capacitance.
 
 When jaxdd and SimSS disagree, check SimSS first: its `errJ` at that voltage, its log for "No
-convergence", and a rerun at tight tolerances. The cases where SimSS was wrong so far are all in
+convergence", and a rerun at tight tolerances. The cases where SimSS is wrong are in
 [differences.md](differences.md).
 
 ## A table with refined axes
@@ -639,287 +639,195 @@ the interface within nanoseconds; with 0.41 cm²/Vs it is met to 0.25 decades un
 ([model.md](model.md#bulk-traps-init_trapping-calc_trap_filling_charge)): with the authors'
 parameters and the shallow level's `C_p` = 0, the film's PL at 1 µs is 0.060 (measured 0.078).
 
-**The measurements, together** (`trpl_joint.py`, 2026-11-19). All eight decays (the film's four,
-SnO2's three, Spiro's one), one perovskite (k_rad, mobility, photodoping, a deep level and a
-shallow one without hole capture, their capture coefficient, the shallow level's depth), one
-glass/perovskite and one perovskite/air surface for the samples that share them, each transport
-layer its own SRV, band edge and doping (Spiro its mobility), one transfer velocity; 17
-parameters, every end free. From the authors' values: 0.397 → 0.193 decades rms, every decay
-0.12–0.24; from three starts spread by ±0.5 decades 0.26, 0.26 and one that never left a start
-whose SnO2 decays did not converge. One iteration solves 144 transients in about 5 s.
+**The model of the eight decays** (`trpl_joint.py`). All eight decays (the film's four, SnO2's
+three, Spiro's one) fitted together, one perovskite, every end free. The full model, which the
+posterior below samples (`trpl_joint.py --detect same --sublayers 24 --outcoupling film --absorbed
+--neutral-interface --physical --ec-min 3.9 --background`, 26 parameters):
 
-The misfit is systematic, and it has a name. Lit through the glass the model is 0.2–0.3 decades
-too high after 30 ns, lit from the top 0.1–0.28 too low: the measured PL at 1 µs is three times
-smaller after excitation through the glass (0.078 against 0.27), about half the carriers lost
-early on that side only. A uniform perovskite with two surfaces cannot do that: a recombining
-glass surface reaches the carriers lit from the top too, at the mobility the data ask for.
-A defective zone at each perovskite's bottom (`--bottom-zone 30` and 80 nm, its own deep-trap
-density; the films grow on Al2O3 nanoparticles) does not either: at the best fit's mobility
-it helps the glass side as much as it hurts the top side (0.1925 without its traps, 0.198 at
-1e19 m⁻³, 0.506 at 1e20), and fits from 0.1 or 1 cm²/Vs end at 0.49 and 0.24, the mobility
-pushed back up.
+- the perovskite: `k_rad`, mobility, photodoping, a deep level and a shallow one without hole
+  capture, their capture coefficient, the shallow level's depth, its absorption at 806 nm;
+- one glass/perovskite and one perovskite/air SRV for the samples that share them; each transport
+  layer its own SRV, band edge and doping, Spiro its mobility; one transfer velocity;
+- the PL as the detector at 806 nm sees it: each of 24 perovskite sublayers weighed by its light's
+  escape towards the detector, directly and after a reflection at the far side, and near the
+  glass by `1 + boost·e^{−z/reach}` (outcoupling);
+- the pulse's absorbed share on each side;
+- the SnO2 interface's states with their own density, level and electron capture (the hole capture
+  `C_p = S/N_t`), neutral, so that they saturate;
+- the SnO2 stack's decays with their background taken off.
 
-Nor does the PL's reabsorption on its way to the detector (`--detect same|opposite`): the
-detector sees only 806 nm, where the film still absorbs 4.4e4 cm⁻¹ at its top and 6.2e4 at its
-bottom (the authors' ellipsometry), so light from the far side of the film arrives at about 5 %.
-Each of twelve perovskite layers weighed by its light's escape towards the detector, directly
-and after a reflection at the far side (two more parameters): 0.191 decades with the detector
-on the lit side, 0.192 on the other, against 0.193 without; the fit takes the absorption down to
-1.8e4 and 1.4e4 cm⁻¹, a third of the measured one.
+Its best fit is 0.0562 decades rms, every decay 0.047–0.070. What each part does, each row the
+fit with everything above it:
 
-**Outcoupling near the glass** does (`--detect same --outcoupling film`, two more parameters):
-the light from near the film's bottom, where it is grown on Al2O3 nanoparticles, weighed by
-`1 + boost·e^{−z/reach}`, whichever side is lit. 0.120 decades rms against 0.191: the film's four
-decays 0.05–0.10 (before 0.20–0.23), the Spiro stack's 0.06, the SnO2 stack's unchanged (0.11,
-0.17, 0.23). The boost on the Spiro stack too gains nothing (0.126). Boost and reach trade
-along a valley, `boost·reach` 1.3–1.6 µm; profiles of the boost (the others refitted): 0.190 at
-0, 0.124 at 3, 0.120 at 10, flat to 100 (0.119). The mobility is one value for both sides now,
-27–30 cm²/Vs, the authors' OPTP range; profiles 0.194 at 3 cm²/Vs, 0.122 at 10, 0.169 at 100.
-
-**Photon recycling** does not (`--recycling`, `jaxdd.recycling`: 97 % of the band edge's photons
-reabsorbed in each stack's perovskite): 0.194 decades without the outcoupling, 0.131 with it
-(against 0.191 and 0.120). The fits take `k_rad` up by 1.4–1.6 decades, the share that escapes:
-recycling here slows the decay as a smaller `k_rad` would, and the side asymmetry stays.
-
-**Physical bounds** (`--physical`: the interfaces' transfer velocity at most 1e5 m/s, SnO2's
-conduction band at least 0.2 eV below the perovskite's) cost the outcoupling fit 0.03 decades
-(0.150), all of it in the SnO2 stack (its decays 0.24 and 0.30). The fit's SnO2 interface sits
-at the bounds' other side: `E_c` 4.00 eV, `ν_int` 5.5e6 m/s.
-
-**The SnO2 stack** (`trpl_joint.py --detect same --sublayers 24 --outcoupling film`, each
-candidate refitted from the best fit before it). Lit through the glass the measured decay
-depends less on the fluence than the model's: at 4.8e11 cm⁻² the model lies 0.09 decades low
-between 10 ns and 1 µs, at 1.5e11 0.13 high (0.28 after 1 µs).
-
-| | rms | SnO2 stack's decays |
+| | rms (decades) | the decays |
 |---|---|---|
-| outcoupling near the glass | 0.120 | 0.11, 0.17, 0.23 |
-| with physical bounds (`--physical`) | 0.150 | 0.08, 0.24, 0.30 |
-| and the pulse's absorbed share by side (`--absorbed`) | 0.120 | 0.13, 0.17, 0.23 |
-| and a trap level in the SnO2 (`--sno2-traps`) | 0.120 | 0.13, 0.17, 0.23 |
-| and the interface states' own density and capture (`--charged-interface`) | 0.1034 | 0.07, 0.10, 0.23 |
-| the same states neutral (`--neutral-interface`) | 0.1035 | 0.07, 0.10, 0.23 |
-| and SnO2's band edge from 4.0 eV (`--ec-min 4`) | 0.091 | 0.07, 0.07, 0.20 |
+| one perovskite, its two surfaces, the transport layers (17 parameters) | 0.193 | 0.12–0.24 each |
+| the PL as the detector sees it (`--detect same`) | 0.191 | |
+| outcoupling near the glass (`--outcoupling film`) | 0.120 | film 0.05–0.10, Spiro 0.06, SnO2 0.11, 0.17, 0.23 |
+| physical bounds on the SnO2 interface (`--physical`) | 0.150 | SnO2 0.08, 0.24, 0.30 |
+| the absorbed share by side (`--absorbed`) | 0.120 | SnO2 0.13, 0.17, 0.23 |
+| saturable SnO2 interface states (`--neutral-interface`) | 0.1035 | SnO2 0.07, 0.10, 0.23 |
+| SnO2's band edge from 4.0 eV (`--ec-min 4`) | 0.091 | SnO2 0.07, 0.07, 0.20 |
+| the SnO2 decays' background taken off (`--background`) | 0.0562 | SnO2 0.05, 0.06, 0.06 |
 
-- **The absorbed share** (two parameters, 0.3–1 of the fluence) takes 1.0 through the glass and
-  0.78 from the top without the bounds, close to the reflection at perovskite/air at 398 nm
-  (about 22 % for n ≈ 2.5, k ≈ 0.8); with them it takes 0.55, and the bounds then cost nothing.
-- **A trap level in the SnO2** (acceptor-like; density, depth, capture) changes nothing.
+The rows above the last are fits within narrower bounds than the current ones (the SnO2
+interface's SRV at most 1e3 m/s, Spiro's `E_v` from 5.0 eV, the boost at most 100); the last one
+is the same fit within the current bounds (below). What does not help: a defective zone at the
+perovskite's bottom (`--bottom-zone`), photon recycling (`--recycling`), a trap level in the SnO2
+(`--sno2-traps`), the detector on the other side (`--detect opposite`), and the interface states
+charged instead of neutral (`--charged-interface`, 0.1034 against 0.1035).
+
+**The side asymmetry, and the outcoupling.** Without the outcoupling the model is 0.2–0.3 decades
+too high after 30 ns lit through the glass and 0.1–0.28 too low lit from the top: the measured PL
+at 1 µs is three times smaller after excitation through the glass (0.078 against 0.27), about half
+the carriers lost early on that side only. A uniform perovskite with two surfaces cannot do that:
+a recombining glass surface reaches the carriers lit from the top too, at the mobility the data
+ask for. A defective zone at the bottom of 30 or 80 nm (the films grow on Al2O3 nanoparticles)
+helps the glass side as much as it hurts the top side (0.1925 without its traps, 0.198 at
+1e19 m⁻³, 0.506 at 1e20), and fits from 0.1 or 1 cm²/Vs push the mobility back up. Reabsorption
+on the way to the detector does not either: the film absorbs 4.4e4 cm⁻¹ at 806 nm at its top and
+6.2e4 at its bottom (the authors' ellipsometry), so light from the far side arrives at about 5 %,
+and the fit takes the absorption down to a third of the measured one for 0.002 decades. Light from
+near the film's bottom leaving it better does it, whichever side is lit: 0.120 against 0.191, the
+film's four decays from 0.20–0.23 to 0.05–0.10. On the Spiro stack too it gains nothing (0.126).
+Boost and reach trade along a valley; profiles of the boost, the others refitted: 0.190 at 0,
+0.124 at 3, 0.120 at 10, flat to 100. Photon recycling (`jaxdd.recycling`, 97 % of the band edge's
+photons reabsorbed) slows the decay as a smaller `k_rad` would (the fits take `k_rad` up by
+1.4–1.6 decades) and leaves the asymmetry.
+
+**The SnO2 stack.** Lit through the glass its measured decay depends less on the fluence than a
+fit with outcoupling alone has it: at 4.8e11 cm⁻² that fit lies 0.09 decades low between 10 ns and
+1 µs, at 1.5e11 0.13 high.
+
+- **The absorbed share** (0.32–1 of the fluence on each side) takes 0.95 through the glass and
+  0.73 from the top (the posterior below), near the 0.78 that the reflection at perovskite/air leaves at 398 nm (n ≈ 2.5,
+  k ≈ 0.8).
 - **The interface's recombination is needed**: held at 1e-3 or at the authors' 9 cm/s, the rest
-  refitted, 0.28 (both stopped at 60 evaluations); at 1e3 cm/s 0.121, free about 800 cm/s.
-  The authors' SRV is a boundary condition for a perovskite without its SnO2; in jaxdd's stack
-  the band bending keeps the holes from the interface, and the same loss needs a larger `S`.
-- **Its states' own density and capture** (the hole capture `C_p = S/N_t`, the electron
-  capture and the level free) bring the glass side's two decays to 0.07 and 0.10: with slow
-  electron capture (`C_n` 1e-17 against `C_p` 1e-12 m³/s) and few states (1e9 cm⁻²) the
-  states are not always full and the recombination saturates with the fluence. Charged or
-  neutral fit alike: it is the saturation, not the charge. The values are not determined
-  (from two starts 9e8 and 6e10 cm⁻², `C_n` 4e-17 and 5e-19), SnO2's doping goes to its bound
-  (3e25 m⁻³) and the top side's absorbed share to 0.5; the decay lit from the top stays at 0.23.
+  refitted, 0.28 decades (stopped at 60 evaluations). The authors' SRV is a boundary condition for a perovskite without its
+  SnO2; in jaxdd's stack the band bending keeps the holes from the interface, and the same loss
+  needs a larger `S`.
+- **Its states saturate.** With their own density and slow electron capture they are not always
+  full, and the recombination saturates with the fluence: the glass side's two decays from 0.13
+  and 0.17 to 0.07 and 0.10. Charged or neutral fit alike: it is the saturation, not the charge.
+- **SnO2's band edge**: `--physical` bounds it from 4.2 eV, the electron affinities' 4.2–4.5 eV;
+  photoemission on FA-rich perovskites on SnO2 finds the conduction bands within 30 meV (Energy
+  Environ. Sci. 2015, doi:10.1039/C5EE02608C), so `--ec-min` lowers the bound (4.0 in the table,
+  3.9 for the posterior, wider than those 30 meV).
+- **The background.** The decay lit from the top has a fifth to a quarter of the others' counts
+  at its peak (780 against 3100–3600) and two to three times their background per bin (1.35 counts
+  against 0.43 and 0.75): over 15–20 µs its background is 1.73e-3 of its peak, the others' 1.19e-4
+  and 2.42e-4. It is flat from 8 µs, as is the first decay's to within a quarter; the second's only
+  from about 12 µs. Between 1 and 2.7 µs it is 15–57 % of what the fit sees above its floor of
+  3e-3, and the model has none. `sno2_data(background=True)` takes from each of the SnO2 stack's
+  decays its mean over 15–20 µs, beyond the fitted times (the 19 bins before the pulse's rise show
+  the same level within two standard errors, too few to measure it); the film's decays still fall
+  at 20 µs and stay as measured, Spiro's has its background taken off already. With the fit's
+  values unchanged that alone takes the misfit from 0.091 to 0.072 decades: it was the
+  measurement's, not the model's.
 
-The bound on SnO2's band edge rests on electron affinities of 4.2–4.5 eV; photoemission on
-FA-rich perovskites on SnO2 finds the conduction bands within 30 meV (Energy Environ. Sci.
-2015, doi:10.1039/C5EE02608C), so the bound is doubtful, the one on the transfer velocity not. From 4.0 eV the
-fit with the neutral states takes 4.07 eV and comes to 0.091 decades, the SnO2 stack's decays
-0.07, 0.07 and 0.20 (`--ec-min 4`); its interface's SRV then sits at its bound (1e5 cm/s), with
-3e10 cm⁻² states of slow electron capture (`C_n` 1.5e-18 m³/s), and the far side's reflection at
-1. This is the fit the posterior with the saturable states (below) samples.
+**The bounds** (`trpl_joint.py`; `--physical --ec-min 3.9`), where they matter:
 
-**The posterior with the saturable states** (`trpl_sample.py --outcoupling --neutral`, 26
-parameters, 256 walkers, 1000 steps, two chains on the hub's two A100s, 5.2 and 5.3 h; σ 0.091
-decades, autocorrelation 70–82 steps, acceptance 4 %). The chains start further out than the
-outcoupling fit's (median log-probability −695 and −552 over the first 100 steps, theirs −256
-and −260) and are still coming in at the end (the median rises by about 2 between steps 700 and
-1000, where the outcoupling chains were flat from 600), so steps 600–1000 are kept (204 800
-samples): against those kept from step 333 the medians move by at most 0.13 half-widths and the
-widths by at most 11 %, but the interface states' `N_t` and `C_n` widen from 0.40 to 0.49 and
-0.55 decades (kept from 333, 600, 800), and theirs are a lower bound. The two chains agree in
-every median within 0.19 half-widths and every half-width within 36 % (`N_t`, `C_n`; the others
-within 20 %). The steps kept hold about 2500 independent samples between them, a rough number:
-400 steps are only about five autocorrelation times (4200, given here up to 0.4.0, is what steps
-333–1000 would hold). Median and 16–84 %, both chains:
-
-| | with the saturable states | with outcoupling (above) | Kober-Czerny et al. |
-|---|---|---|---|
-| mobility FAPbI3 | 42 (36–48) cm²/Vs | 30.5 (26–34) | 0.41 (film), 2.2 (SnO2 stack) |
-| k_rad | 1.37 (1.19–1.60)·10⁻¹⁰ cm³/s | 1.06 (1.01–1.12)·10⁻¹⁰ | 0.75·10⁻¹⁰ |
-| photodoping | 2.1 (1.9–2.3)·10¹⁵ cm⁻³ | 1.3 (1.2–1.4)·10¹⁵ | 2.1·10¹⁵ |
-| SRV FAPbI3/Spiro | 53 (38–79) cm/s | 28 (15–47) | 100 (60–120) |
-| SRV glass/FAPbI3 | 10 (7–13) cm/s | 0.04 (0.003–0.45) | 7.2 |
-| SRV FAPbI3/air | 1.3·10⁻³ cm/s, at its lower bound | 0.03 (0.003–0.24) | 3.6 |
-| SRV SnO2/FAPbI3 | 8.2 (6.3–9.5)·10⁴ cm/s, at its upper bound | at its upper bound | 9 (4–17) |
-| absorption at 806 nm | 3.0 (2.4–3.7)·10⁴ cm⁻¹ | 3.7 (2.9–4.4)·10⁴ | 4.4–6.2·10⁴ (ellipsometry) |
-| absorbed share, glass side / top | 0.93 (0.84–0.98) / 0.55 (0.49–0.59) | – | – |
-| interface states `N_t` | 2.4 (0.6–5.5)·10¹⁰ cm⁻² | – | – |
-| their `C_n` | 2.1 (0.8–8.4)·10⁻¹⁸ m³/s | – | – |
-| boost, reach | 50 (26–82), 46 (27–73) nm | 41 (19–74), 48 (29–78) nm | – |
-
-SnO2's band edge takes 4.08 (4.07–4.09) eV and its doping its upper bound (3·10¹⁹ cm⁻³) in 93 %
-of the samples, the two −0.99 correlated; the interface's SRV sits at its bound in four fifths.
-The film's surfaces, undetermined with outcoupling alone, are now settled: the glass side near
-the authors' 7.2 cm/s, the air side at its bound, −1.00 correlated with the top side's absorbed
-share (the same loss of the early carriers). `N_t` and `C_n` are −0.95 correlated (their product
-the capture rate), the states' level spans 4.72–5.12 eV. Spiro's doping and mobility and the far
-side's reflection stay the prior's. The photodoping comes to the authors' value, `k_rad` rises a
-third and the mobility to just above the 27–40 cm²/Vs the authors cite from OPTP; SnO2's
-two bounds and the air side's still carry the fit.
-
-**The SnO2 stack lit from the top carries the measurement's background** (`--background`, the same
-fit from its best values). That decay has a fifth to a quarter of the others' counts at its peak
-(780 against 3100–3600) and two to three times their background per bin (1.35 counts against 0.43
-and 0.75): over 15–20 µs its background is 1.73e-3 of its peak, the others' 1.19e-4 and 2.42e-4. It
-is flat from 8 µs, as is the first decay's to within a quarter; the second's only from about 12 µs.
-Between 1 and 2.7 µs it is 15–57 % of what the fit sees above its floor of 3e-3, and the model has
-no background. `sno2_data(background=True)` takes from each of the SnO2 stack's three decays its
-mean over 15–20 µs, beyond the fitted times (the 19 bins before the pulse's rise show the same
-level within two standard errors, too few to measure it); the film's decays still fall at 20 µs and
-stay as measured, Spiro's has its background taken off already. With the fit's values unchanged
-that alone gives 0.072 decades rms; refitted, 0.056, every decay 0.046–0.070, the SnO2 stack's
-0.05, 0.06 and 0.06 (from 0.07, 0.07 and 0.20). The SnO2 interface's SRV leaves its bound (5.5e4
-cm/s), the top side's absorbed share comes to 0.76 (the reflection at perovskite/air leaves about
-0.78), the mobility 38 cm²/Vs, `k_rad` 1.2e-10 cm³/s, the glass side's SRV 18 cm/s; the photodoping
-falls to 5e14 cm⁻³ and Spiro's doping by 1.7 decades (undetermined before). The model is unchanged:
-the misfit was the measurement's.
-
-**The posterior without the background** (`trpl_sample.py --outcoupling --neutral --background`, 26
-parameters, 256 walkers, 1500 steps, two chains on the hub's two A100s, 9.2 and 11.7 h over two
-sessions, the second going on from steps 1275 and 725 with `--resume`; acceptance 3 %). σ is 0.0562
-decades, from the hub's refit: from the rounded best values it reaches the local fit's misfit
-(0.0562 against 0.0563), not shown to be the same minimum (SnO2's SRV 7.7e4 against 5.5e4 cm/s).
-The chains come in from a median log-probability of −451 over the first 100 steps and still rise by
-0.5–1 per 100 steps until about step 1200, so steps 1000–1500 are kept (256 000 samples): against
-those kept from step 500 the medians move by at most 0.21 half-widths and the widths by at most 18
-%. The two chains agree in every median within 0.31 half-widths and every half-width within 24 %;
-with an autocorrelation of 103–118 steps (over the last 1000) that is about 2200 independent
-samples between them, a rough number: the 500 steps kept are only four to five autocorrelation
-times. Median and 16–84 %, both chains:
-
-| | without the background | with it (above) | Kober-Czerny et al. |
-|---|---|---|---|
-| mobility FAPbI3 | 38 (35–41) cm²/Vs | 42 (36–48) | 0.41 (film), 2.2 (SnO2 stack) |
-| k_rad | 1.29 (1.21–1.43)·10⁻¹⁰ cm³/s | 1.37 (1.19–1.60)·10⁻¹⁰ | 0.75·10⁻¹⁰ |
-| photodoping | 4.7 (3.2–6.1)·10¹⁴ cm⁻³ | 2.1 (1.9–2.3)·10¹⁵ | 2.1·10¹⁵ |
-| SRV FAPbI3/Spiro | 10 (2–23) cm/s | 53 (38–79) | 100 (60–120) |
-| SRV glass/FAPbI3 | 17.6 (16.5–18.6) cm/s | 10 (7–13) | 7.2 |
-| SRV FAPbI3/air | 0.04 (0.003–0.5) cm/s | 1.3·10⁻³ cm/s, at its lower bound | 3.6 |
-| SRV SnO2/FAPbI3 | 5.9 (2.9–8.6)·10⁴ cm/s, at its upper bound in 37 % | 8.2 (6.3–9.5)·10⁴ cm/s, at its upper bound | 9 (4–17) |
-| absorption at 806 nm | 2.3 (1.8–2.8)·10⁴ cm⁻¹ | 3.0 (2.4–3.7)·10⁴ | 4.4–6.2·10⁴ (ellipsometry) |
-| absorbed share, glass side / top | 0.94 (0.84–0.98) / 0.71 (0.64–0.76) | 0.93 (0.84–0.98) / 0.55 (0.49–0.59) | – |
-| interface states `N_t` | 4.5 (0.6–12)·10⁹ cm⁻² | 2.4 (0.6–5.5)·10¹⁰ | – |
-| their `C_n` | 3.2 (0.9–24)·10⁻¹⁷ m³/s | 2.1 (0.8–8.4)·10⁻¹⁸ | – |
-| boost, reach | 46 (31–60), 141 (121–160) nm | 50 (26–82), 46 (27–73) nm | – |
-
-Bounds still cut five of the posteriors (shares within 2 % of the range from the bound, from the
-histograms): the interface's SRV at its upper bound in 37 % of the samples (from four fifths),
-SnO2's doping in a fifth (from 93 %), boost × reach in a fifth (at the sampler's 1e-5 m, tighter
-than the fit's bounds), the glass side's absorbed share in a fifth (at 1), and Spiro's `E_v` at its
-lower bound of 5.0 eV in 11 %. Those five's medians and intervals depend on the bounds. Four more
-have the local fit at or near a bound where the posterior is flat up to it, not piled: the deep
-traps' density, the air side's SRV, the far side's reflection and the interface states' level.
-SnO2's band edge is at 4.06 (4.04–4.08) eV and no longer −0.99 correlated with the doping. The air
-side's SRV has only an upper bound, about 2 cm/s (its interval depends on the lower bound), and its
-−1.00 correlation with the top side's absorbed share is gone. That share comes to 0.71, near the
-0.78 the reflection at perovskite/air leaves, and is now tied to the glass side's (+0.94) and to
-`k_rad` (−0.9): the number of carriers against their radiative rate. The mobility's median stays
-within the 27–40 cm²/Vs the authors cite from OPTP (its interval reaches 41), and `k_rad` stays
-1.3·10⁻¹⁰ cm³/s. Three values move away from the authors': the glass side's SRV is now narrow at
-2.4 times their 7.2 cm/s, Spiro's interface falls to a tenth of theirs and the photodoping to a
-quarter. `N_t` and `C_n` are still −0.90 correlated (their product the capture rate), the states'
-level spans 4.73–5.12 eV (cut below by its bound at 4.65), and the deep traps have only an upper
-bound. Spiro's doping and mobility and the far side's reflection stay the prior's. The summaries
-are `validation/trpl_sample_bg_s0.json` and `_s1.json`.
-
-**The bounds widened after it** (2026-11-22; not yet sampled, and the solver's convergence there
-not yet measured). The TRPL fits and posteriors on this page have the former bounds, as at commit
-085ccc7; `trpl_joint.py` and `trpl_sample.py` now have these:
-
-| | former | now | why |
-|---|---|---|---|
-| log10 SRV SnO2/FAPbI3 (m/s) | −5 – 3 | −5 – 5 | piled; to the thermal velocity |
-| boost | 0 – 100 | 0 – 1000 | the next bound of boost × reach |
-| log10 boost × reach (m), sampled | −9 – −5 | −9 – −3.5 | piled; now the two bounds' product |
-| `E_v` Spiro (eV) | 5.0 – 5.5 | 4.8 – 5.5 | piled; stays above the level at 4.765 |
-| `E_t` SnO2/FAPbI3 (eV) | 4.65 – 5.5 | 4.35 – 5.5 | flat to a bound that was not physical |
-| `E_c` SnO2 (eV), with these states | 4.0 – 4.6 | 3.9 – 4.3 | 3.9: opened with `N_D`'s bound; 4.3: stays below `E_t` |
-
-The lower bound of 3.9 eV is the sampler's (`--ec-min 3.9` in `trpl_joint.py`), beyond the 30 meV
-photoemission finds. It was opened for a tie to the doping that the posterior above no longer
-shows, and stayed when the doping's bound was closed again. Some values in the widened ranges would
-not be physical: a large SRV with few states needs a hole capture `C_p = S/N_t` beyond any
-cross-section. The deep traps' and the air side's lower bounds stay (there, estimated from their
-rates `C·N` and `S/d`, not simulated, they change the decays by less than 1e-3 decades), as does
-the reflection's range of 0–1.
-
-Two bounds the posterior piles against stay where they were. Commit ba4917b had opened both, and
-the hub's refit there (0.0552 decades rms, stopped at 60 evaluations) went to both new bounds:
-
-- **The absorbed shares stay at most 1.** Opened to 1.6 they went to 1.58 and 1.18, their ratio
-  kept (0.74 from the local fit's 0.76), `k_rad` down to 0.84e-10 from that fit's 1.21e-10 cm³/s,
-  the captures down and the shallow traps up with it. The decays are normalised, so more carriers
-  with a smaller `k_rad` and smaller captures can decay nearly alike: `k_rad`'s value then rests
-  on the bound at 1, which is physical. That is one refit, not converged; no posterior was
-  sampled above 1.
-- **SnO2's doping stays at most 10^25.5 m⁻³.** Opened to 1e26 it went there. It is an effective
-  one already: at the median 7 times its `N_c`, where Boltzmann's statistics put the Fermi level
-  0.06 eV from Fermi–Dirac's (0.11 at the bound, 0.29 at 1e26), more than the band edge's
-  interval. To go further needs the other statistics, not another bound.
-
-In that refit the deep traps' density, the air side's SRV, the far side's reflection and the
-states' level stayed within 0.005 of their start: that refit took their places near the bounds
-over from its start. One refit does not show that they have no effect, nor where others would
-take them.
-
-**The posterior with outcoupling** (`trpl_sample.py --outcoupling`, 21 parameters, 256 walkers,
-1000 steps on an A100, two chains of 4.5–4.8 h; σ 0.119 decades, autocorrelation about 70
-steps, acceptance 5 %). The two chains agree in every median within a tenth of its width:
-mobility 30.5 (26–34) cm²/Vs, `k_rad` 1.06 (1.01–1.12)·10⁻¹⁰ cm³/s, photodoping 1.3
-(1.2–1.4)·10¹⁵ cm⁻³, SRV FAPbI3/Spiro 28 (15–47) cm/s, the absorption at 806 nm 3.7
-(2.9–4.4)·10⁴ cm⁻¹ (back near the ellipsometry's), boost 41 (19–74), reach 48 (29–78) nm. The SnO2 interface's SRV sits at
-its upper bound in two thirds of the samples, SnO2's band edge at its lower in a quarter;
-the film's two surfaces stay undetermined (0.004–0.4 cm/s, 16–84 %).
-
-**The mobility** is the fit's means against that misfit, not a measurement. Fixed and the other
-16 refitted (a profile): 0.44 decades rms at 0.1 and 0.41 cm²/Vs, 0.38 at 1, 0.26 at 3, 0.19 at
-10, 0.23 at 30. The decays pull apart: lit through the glass the film's are met best at 1–3
-cm²/Vs (0.06–0.11), lit from the top and the SnO2 stack's at 30 (0.06–0.15). At 10 cm²/Vs the
-carriers spread over the film within the first 2 ns bin, to which the data are normalised, and the
-large fall of `∫n·p` as they leave the 33 nm the pulse fills disappears into it; at 0.41 cm²/Vs it
-runs over the first 10 ns, steeper than measured (0.36 at 10 ns against 0.53). For FAPbI3 the
-authors cite 27–40 cm²/Vs over short distances (OPTP, single crystals) and find 0.1–2 over long
-ones (TRPL, the PL's spectral shift, transient photoconductivity).
-
-**The posterior** (`trpl_sample.py`: 48 walkers, 300 steps, 43 min; σ the fit's 0.193 decades,
-a lower bound on the widths as the misfit is systematic; autocorrelation about 22 steps,
-acceptance 5 %). Medians, 16–84 %, against the authors' medians:
-
-| | jaxdd, eight decays | Kober-Czerny et al. |
+| | bounds | why |
 |---|---|---|
-| k_rad | 1.04 (0.92–1.14)·10⁻¹⁰ cm³/s | 0.75·10⁻¹⁰ |
-| photodoping | 1.2 (1.0–1.4)·10¹⁵ cm⁻³ | 2.1·10¹⁵ |
-| mobility FAPbI3 | 10 (9–12) cm²/Vs | 0.41 (film), 2.2 (SnO2 stack) |
-| SRV FAPbI3/Spiro | 170 (120–215) cm/s | 100 (60–120) |
-| SRV SnO2/FAPbI3 | 1.9 (0.4–5.8)·10⁴ cm/s | 9 (4–17) |
-| SRV glass/FAPbI3 | 0.13 (0.01–1.2) cm/s | 7.2 |
-| SRV FAPbI3/air | 0.07 (0.006–1.0) cm/s | 3.6 |
+| SRV SnO2/FAPbI3 | 1e-5 – 1e5 m/s | up to about the thermal velocity |
+| transfer velocity `ν_int` | 1 – 1e5 m/s | `--physical` |
+| `E_c` SnO2 | 3.9 – 4.3 eV | from 3.9 by `--ec-min` (`--physical` alone: 4.2); at most 4.3, below the states' level |
+| the states' level `E_t` | 4.35 – 5.5 eV | within the gaps |
+| `E_v` Spiro | 4.8 – 5.5 eV | above its interface's level at 4.765 eV |
+| boost | 0 – 1000 | sampled as boost × reach up to the two bounds' product, 10^−3.5 m |
+| absorbed shares | 0.32 – 1 | physical: more than the fluence is not absorbed |
+| `N_D` SnO2 | 1e20 – 10^25.5 m⁻³ | Boltzmann's statistics |
+| deep traps, SRV FAPbI3/air | from 1e14 m⁻³, 1e-5 m/s | below, the decays change by less than 1e-3 decades |
+| reflection at the far side | 0 – 1 | |
 
-The radiative constant (within 40 %), the photodoping (within a factor of two) and the Spiro
-interface agree. The SnO2 interface's
-SRV is set by its traps against SnO2's doping and band edge (correlation 0.84): in a stack with
-band bending its traps are not the authors' boundary condition, and the two numbers measure
-different things. The film's two surfaces are barely determined (two decades each), as the
-authors found for their sum. The mobility is determined, and 25 times theirs: what the side
-asymmetry above leaves unexplained may sit there.
+Two of these hold the fit. **The absorbed shares** at 1: without that bound the fit takes 1.58 and
+1.18, their ratio kept, `k_rad` down to 0.84e-10 cm³/s and the captures with it (one refit, not
+converged). The decays are normalised, so more carriers with a smaller `k_rad` and smaller
+captures decay nearly alike; `k_rad`'s value rests on the bound, which is physical. **SnO2's
+doping** at 10^25.5 m⁻³: beyond, the fit takes 1e26. It is an effective doping already: at the
+posterior's median 7 times SnO2's `N_c`, where Boltzmann's statistics put the Fermi level 0.06 eV
+from Fermi–Dirac's (0.11 at the bound, 0.29 at 1e26), more than the band edge's interval. To go
+further needs the other statistics (docs/model.md), not another bound. The deep traps' and the air
+side's lower bounds are estimated from their rates `C·N` and `S/d`, not simulated.
+
+**The posterior** (`trpl_sample.py --outcoupling --neutral --background`, `STEPS=trpl
+benchmarks/apptainer.sh` on a GPU host). `sample_measured.py`'s ensemble sampler (differential
+evolution), each half-step's proposals within the bounds solved as one batch of eight decays each;
+the prior uniform in the sampled coordinates within the bounds (boost and reach as log10(boost ×
+reach) and log10 reach, along the valley), the likelihood Gaussian per bin with σ the best fit's
+rms, 0.0562 decades. The misfit is systematic, so the widths are a lower bound. Two chains of 256
+walkers and 1000 steps, each on an A100 of its own, 5.7 and 5.9 h; acceptance 3 %, 2.5 % at the
+end. They started from the last state of a 1500-step chain of the same likelihood within narrower
+bounds (the SnO2 interface's SRV at most 1e3 m/s, boost × reach at most 1e-5 m and the boost 100,
+Spiro's `E_v` from 5.0 eV, `E_t` from 4.65 eV, SnO2's `E_c` 4.0–4.6 eV), started from the
+linearised posterior around the fit, its first 1000 steps its burn-in; the
+walkers then took about 750 steps to fill the wider ranges (at the end `E_v` below 5.0 eV in 63 %
+of the samples, the SRV above 1e3 m/s in 58 %, boost × reach above 1e-5 m in 55 %, each flat from
+about step 850). Steps 750–1000 are kept, 128 000 samples. Between steps 500–750 and 750–1000 no
+median moves by more than 0.23 half-widths, and the two chains agree in every median within 0.25
+half-widths. Two shares still grow at the end: `E_t` below 4.65 eV (31 → 36 %) and the boost above
+100 (24 → 35 %), which the data do not bound (below). 250 steps at this acceptance settle the
+medians; the intervals are rough, and the autocorrelation time estimated from the chains grows with
+the window, so no number of independent samples is given. The summary `trpl_sample.py` writes
+keeps the last two thirds of the steps; the values here are steps 750–1000 of both chains.
+Median and 16–84 %:
+
+| | jaxdd | Kober-Czerny et al. |
+|---|---|---|
+| mobility FAPbI3 | 39.5 (37–43) cm²/Vs | 0.41 (film), 2.2 (SnO2 stack); 27–40 from OPTP, cited |
+| `k_rad` | 1.30 (1.22–1.42)·10⁻¹⁰ cm³/s | 0.75·10⁻¹⁰ |
+| photodoping | 4.3 (3.0–5.6)·10¹⁴ cm⁻³ | 2.1·10¹⁵ |
+| SRV glass/FAPbI3 | 17.7 (16.7–18.6) cm/s | 7.2 |
+| SRV FAPbI3/air | below 1.7 cm/s (97.5 %) | 3.6 |
+| SRV FAPbI3/Spiro | 3.9 (0.1–18) cm/s | 100 (60–120) |
+| SRV SnO2/FAPbI3 | 1.1 (0.5–2.3)·10⁵ cm/s | 9 (4–17) |
+| absorption at 806 nm | 2.3 (1.8–2.7)·10⁴ cm⁻¹ | 4.4–6.2·10⁴ (ellipsometry) |
+| absorbed share, glass side / top | 0.95 (0.87–0.99) / 0.73 (0.67–0.77) | – |
+| shallow traps | 3.7 (3.2–4.1)·10¹⁵ cm⁻³, 0.173 (0.169–0.177) eV below `E_c` | – |
+| deep traps | below 3·10¹² cm⁻³ (97.5 %) | – |
+| SnO2 `E_c`, `N_D` | 4.04 (4.02–4.07) eV, 2.0 (1.1–2.8)·10¹⁹ cm⁻³ | – |
+| SnO2/FAPbI3 states `N_t`, `E_t` | 5.0 (0.8–13)·10⁹ cm⁻², 4.81 (4.50–5.08) eV | – |
+| their `C_n` | 2.5 (0.8–18)·10⁻¹⁷ m³/s | – |
+| `E_v` Spiro | 4.97 (4.87–5.07) eV | – |
+| boost, reach | above 30 (95 %), 144 (121–163) nm | – |
+
+- **At a bound** (within 2 % of the range): SnO2's doping in 31 % of the samples and the glass
+  side's absorbed share in 27 %. Their intervals depend on those bounds (above); none of the others
+  is cut.
+- **Not bounded by the data**: the boost only from below. Its log-probability is flat above about
+  50 (median −184.9 at 50–100, −184.3 at 200–500, −185.0 above 500); its median of 73 and 16–84 %
+  of 40–149 are the prior's up to 1000, while the reach is narrow. The air side's SRV and the deep
+  traps have only an upper bound. Spiro's doping and mobility, the transfer velocity and the far
+  side's reflection stay the prior's.
+- **Correlated**: the two absorbed shares (+0.93) and each against `k_rad` (−0.85), the number of
+  carriers against their radiative rate; the states' `N_t` against their `C_n` (−0.93), their
+  product the capture rate; the shallow level's depth against its density (−0.93); SnO2's band
+  edge against its interface's SRV (−0.77).
+- **The SnO2 interface's SRV** is large for its few states: `C_p = S/N_t` is 2.3 (0.7–13)·10⁻¹¹
+  m³/s, at a thermal velocity of 1e5 m/s a capture cross-section of about 2·10⁻¹² cm², large for a
+  neutral state. The data ask for a fast, saturable loss there; whether these states are its
+  physical form, the posterior does not say.
+- **Against the authors**: `k_rad` 1.7 times theirs, the photodoping a fifth, the glass side's SRV
+  2.5 times, Spiro's interface a 25th; the absorption half the ellipsometry's. The mobility lies at
+  the upper end of the 27–40 cm²/Vs the authors cite from OPTP and a hundred times above their
+  TRPL value.
+
+**The mobility** is what the decays' first nanoseconds hide. From about 10 cm²/Vs the carriers
+spread over the film within the first 2 ns bin, to which the data are normalised, and the large
+fall of `∫n·p` as they leave the 33 nm the pulse fills disappears into it; at 0.41 cm²/Vs it runs
+over the first 10 ns, steeper than measured. The decays lit through the glass and from the top pull
+the mobility apart without the outcoupling (best at 1–3 and at 30 cm²/Vs); with it they agree.
+For FAPbI3 the authors cite 27–40 cm²/Vs over short distances (OPTP, single crystals) and find
+0.1–2 over long ones (TRPL, the PL's spectral shift, transient photoconductivity).
 
 **Speed** (`trpl_timing.py`, the film's transient with electrodes, 142 steps; RTX 4070 Ti SUPER
 against the Ryzen 9 5950X's cores): jaxdd 0.18 s for one, 32 ms each in a batch of 28 (one
 iteration of a fit), after compilation; ZimT 8.9 s for one run, 2.4 s each with four at once.
 ZimT's time is its Gummel iterations' and depends on the case: on the film with the fitted
-parameters at the open circuit one run took 98 s (7.5 s each with 16 at once), jaxdd 0.24 s.
-The posterior with the saturable states (above) took 5.2 and 5.3 h on two A100s. Its two chains
-of 256 walkers × 1000 steps × eight decays proposed 4.1 million transients, but only those within
-the bounds were solved, and the run did not record how many. ZimT's times above do not
-extrapolate to it: they are the film's with electrodes over 142 steps, the sampler's transients
-all three stacks' with free ends over about 360.
+parameters at the open circuit one run took 98 s (7.5 s each with 16 at once), jaxdd 0.24 s. The
+posterior's chains take about 21 s a step on an A100: two batched calls, each the proposals of 128
+walkers within the bounds, eight decays each, transients of all three stacks with free ends over
+about 360 time steps. ZimT's times above do not extrapolate to them.
 
 ## The tests
 
@@ -929,7 +837,7 @@ the integral current (`zimt_current=True`, the wrapper `zimt_transient`); the gr
 own tests name it. `pytest` runs on whatever JAX has (CPU or GPU), in parallel, one worker per physical core
 (pytest-xdist; on a GPU at most one per 2 GB of its memory, `tests/conftest.py`; `-n 0` for one process): on a 16-core desktop about 75 s, and 30 s once JAX's
 compilation cache (`.pytest_cache/jax`, `tests/conftest.py`) holds the programs; in one process
-it was 400 s. What is left is tracing, which JAX does not cache, and the gradients' finite
+about 400 s. What is left is tracing, which JAX does not cache, and the gradients' finite
 differences, about 12 s each for the slowest. The CI (`.github/workflows/ci.yml`) runs them on
 the CPU for a push whose commit message says `[test]` (and always for a tag, a pull request
 and a run started by hand), twice: with the newest JAX on Python 3.13 and with the oldest that

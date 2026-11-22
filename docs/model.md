@@ -1,9 +1,8 @@
 # The device model and its discretisation
 
 jaxdd's equations are SIMsalabim 5.36's (`Units/DDRoutines.pas`), on SIMsalabim's grid point for
-point, by default on jaxdd's graded grid (below). This page
-states them as jaxdd implements them; the names in brackets are SIMsalabim's routines, for a
-reader who wants to check one against the other. Units are SI, energies in eV, potentials in V.
+point, by default on jaxdd's graded grid (below), as jaxdd implements them; the names in brackets
+are SIMsalabim's routines. Units are SI, energies in eV, potentials in V.
 
 ## The grid
 
@@ -109,16 +108,15 @@ own derivative `1/(d ln F/dη) − 1`). Everywhere a density meets its quasi-Fer
   surface's** mid-gap level likewise `n_i·e^(−w_n)`, `n_i·e^(−w_p)` against
   `n·p − n_i²·e^(−w_n − w_p)` (`_surface_srh`). So in the dark at 0 V a degenerate layer's
   interface traps and surfaces recombine nothing (`tests/test_statistics.py`; with Boltzmann's
-  `n_t0` there the holes' quasi-Fermi level bent by 1e-4 V and more).
+  `n_t0` there the holes' quasi-Fermi level would bend by 1e-4 V and more).
 
-Compiling costs another statistics more than Boltzmann's. Each evaluation of `F_{1/2}⁻¹` is
-five Newton steps on TeSCA's `F`. The assembly therefore takes the excess potentials once per
-state (`stat_cache`, `_cached`), and a contact's Newton on its density (`_robin`) is a loop with
-its body traced once, its derivatives the iteration's. Taking the derivative through the
-converged density alone (the implicit function) failed where the contact had not converged in
-its 12 steps: Newton on the device diverged. With these, one assembly of the degenerate HTL's
-stack compiles in 2.2 s against Boltzmann's 0.8 s (25.8 s before), and a whole steady state in
-74 s against 19 s (440 s). Each evaluation's own Newton steps stay unrolled: as a loop they
+Another statistics costs compile time. Each evaluation of `F_{1/2}⁻¹` is five Newton steps on
+TeSCA's `F`, so the assembly takes the excess potentials once per state (`stat_cache`,
+`_cached`), and a contact's Newton on its density (`_robin`) is a loop with its body traced once,
+its derivatives the iteration's (through the converged density alone, the implicit function,
+Newton on the device diverges where the contact has not converged in its 12 steps). One assembly
+of the degenerate HTL's stack then compiles in 2.2 s against Boltzmann's 0.8 s, a whole steady
+state in 74 s against 19 s. Each evaluation's own Newton steps stay unrolled: as a loop they
 compile in 40 % less time but run 15 % slower.
 
 The implied `V_oc` and the PLQY keep their Boltzmann's definitions (`k·n_i²` the radiative
@@ -653,7 +651,7 @@ anions:  h_{i−1}·F_r − h_i·F_l + fac·dti·(e^{l_k}·a_prev − a) = 0,   
 (cations as holes). ZimT rescales the ions to their total after every solve
 (`Rescale_Ion_Density`, the trapezoid rule over the region); its converged state is therefore
 the discrete equation's with the density before the step scaled by a factor per region,
-`e^{l_k}`, which is a slot (one unknown per region, its constraint the total; Stage B's). With
+`e^{l_k}`, which is a slot (one unknown per region, its constraint the total, as in the steady state). With
 `dti = 0` the row is Boltzmann's (bounded by their sites the occupancy's, above) and `l_k` its
 normalisation, as in the steady state. Outside
 its regions an ion's unknown is held. The ions' currents (each region by the integral form with

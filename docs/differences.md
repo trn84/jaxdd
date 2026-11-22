@@ -1,12 +1,11 @@
 # Where jaxdd differs from SIMsalabim, and why
 
 jaxdd solves SIMsalabim 5.36's discrete equations (on SIMsalabim's grid with `grid="simss"`,
-§12; the same Scharfetter–Gummel discretisation in the generalised potentials, the same current in either of its forms). Where
-SIMsalabim's result is not the solution of those equations, or where SIMsalabim approximates
-something jaxdd can compute exactly, jaxdd takes the physically correct answer by default and
-says so here. Each difference has a way to reproduce SIMsalabim's number, so a comparison can
-always tell the two apart; §7 says why its two have none, and §10 why jaxdd refuses those
-inputs instead.
+§12; the same Scharfetter–Gummel discretisation, the same current in either form). Where
+SIMsalabim's result is not the solution of those equations, or it approximates what jaxdd can
+compute exactly, jaxdd takes the physically correct answer by default, listed here, each with a
+way to reproduce SIMsalabim's number (§7 says why two have none, §10 why jaxdd refuses those
+inputs).
 
 ## 1 Convergence: SimSS stops early, jaxdd does not
 
@@ -17,7 +16,7 @@ test before it has converged. The sign is SimSS's own `errJ`: the spread of the 
 the device, which a converged steady state has at zero.
 
 **How large.** On 1000 devices without ions drawn from a parameter table of perovskite cells
-(`validation/table_gate.py`, 2026-11-07), 76 differ from SimSS by more than 1e-3 in the
+(`validation/table_gate.py`), 76 differ from SimSS by more than 1e-3 in the
 collection `η = (J_dark − J_light)/J_gen` up to 1.0 V:
 
 - 52 only at the first voltage of the scan (−0.2 V), where SimSS starts from its crude initial
@@ -46,9 +45,8 @@ from the potential and rescales it to `N·L` (`Calc_Ion_Distribution_Steady_Stat
 does not rescale; only at a fixed point is that factor 1. Nothing in `JV.dat` shows it: `errJ`
 is the scan's, and the scan solves the frozen ions cleanly. A tighter `tolDens` does not help.
 
-**How large.** On 48 random points of a parameter grid of perovskite cells with ions
-(2026-11-08): at three of them SimSS's frozen anions and cations were off `N·L` by
-0.8–6.5e-4, opposite for the two species — at 1e18 cm⁻³ up to 1e-4 C/m² of net ionic charge,
+**How large.** On 48 random points of a parameter grid of perovskite cells with ions, at three
+SimSS's frozen anions and cations were off `N·L` by 0.8–6.5e-4, opposite for the two species — at 1e18 cm⁻³ up to 1e-4 C/m² of net ionic charge,
 about 0.25 V across a 500 nm absorber — and `η` off by 4e-3 to 3.7e-2 (`J_SC` 6 % at
 `L_diff/d` 0.2). Given SimSS's frozen ion numbers (the device's `anion_total`, `cation_total`),
 jaxdd reproduces SimSS's curves to 9e-5 of `η`: the whole gap is the ions' number.
@@ -110,7 +108,7 @@ layer one more. float64 lands below it on other stacks. The grid is then one nod
 interface: the absorber's last node is the next layer's first.
 
 **How large.** Where ions pile up at that interface (frozen at accumulation), the node moves
-the peak: on a parameter grid of perovskite cells with ions (2026-11-11), four of 284 sampled
+the peak: on a parameter grid of perovskite cells with ions, four of 284 sampled
 curves that missed SimSS by more than 1e-3 in `η` were this, 1.3–1.9e-3 up to 1.0 V, all on
 stacks with both transport layers thin (0.7 and 1.4 nm). With SimSS's split jaxdd met SimSS
 there to 4–6e-5. It is a discretisation error of the grid, not of either solver.
@@ -154,13 +152,13 @@ current (`Jn[0] > 0`, `Jn[NP] > 0`) at both ends, so at those two ends it holds 
 while the carrier is injected.
 
 **How large.** The 1 nm stack without band offsets (all three layers `E_c` 4, `E_v` 5.6 eV),
-`S_n_R = S_p_L`, SimSS 5.36 (2026-11-14): at 1e4, 1e2 and 1 m/s it stops with a floating-point
+`S_n_R = S_p_L`, SimSS 5.36: at 1e4, 1e2 and 1 m/s it stops with a floating-point
 exception (invalid operation, underflow, division by zero) during the scan; before it, at 1e2 m/s
 and 1.0 V, it reports a photocurrent of −1339 A/m² from a generation of 254 A/m². At 1e-2 and
 0 m/s it gives the blocking contact's curve (`V_oc` 0.998 V), as both conditions do at `S` = 0.
 jaxdd on that stack lit uniformly (`none_light` without offsets): the current at 1 V rises
-monotonically from 44 A/m² at an infinite `S` to 877 at 0, and the device turned around (`leftElec = 1`,
-the carriers then at the ends SimSS has right) gives the same curve to 1e-11
+monotonically from 44 A/m² at an infinite `S` to 877 at 0, and the device turned around
+(`leftElec = 1`, the carriers then at the ends SimSS has right) gives the same curve to 1e-11
 (`tests`).
 
 **The switch, at the ends SimSS has right.** SimSS takes each contact's branch from the sign of
@@ -174,7 +172,7 @@ the voltage step.
 **In time (ZimT).** The same switch, from the step before, makes a blocking contact (`S` = 0)
 leak after a laser pulse: where it takes the injected branch the contact's density is `n_eq`,
 an ohmic contact. A uniform film between two such contacts at 'sfb', radiative recombination
-alone, 0 V (`validation/trpl_zimt.py`, 2026-11-18): no field, no current, so each implicit-Euler
+alone, 0 V (`validation/trpl_zimt.py`): no field, no current, so each implicit-Euler
 step is known in closed form. jaxdd is within 1.2e-5 of it; ZimT 5.36 reports every step
 converged, lets up to 5.6e5 A/m² through its blocking contacts and is 30 % low at 7 ns, 80 % at
 73 ns, all but empty at 10 µs. With electrodes chosen to mimic a half-stack without them

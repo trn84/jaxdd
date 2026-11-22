@@ -45,19 +45,17 @@ res.converged    # per voltage
 res.iterations   # Newton steps per voltage
 ```
 
-`read_setup` takes the setup file's path; the layer files and the generation profile are found
-relative to it. `simss_voltages(setup)` gives the voltages SimSS would run, in its
-order: `Vmin` to `Vmax` by `Vstep` or logarithmically towards `Vacc` (`Vdist`), up or down
-(`Vscan`), or `expJV`'s with `useExpData`. `solve_jv` solves the voltages in the order given, each
-from the solution at the one before.
-The device's own `G_frac` sets the light; `solve_jv(dev, V, g_frac=0.0)` gives the dark curve of
-the same device. If the input has `preCond = 1`, the device is first settled at `Vpre` with its
-ions free (and with `fixIons = 1` the ions are then held for the scan; `fixIons = 1` alone holds
-them where SimSS starts them, each layer's own density); a pre-bias that does not
-converge raises `RuntimeError`.
+`read_setup` finds the layer files and the generation profile relative to the setup file.
+`simss_voltages(setup)` gives the voltages SimSS would run, in its order (`Vmin` to `Vmax` by
+`Vstep` or logarithmically towards `Vacc`, up or down, or `expJV`'s with `useExpData`).
+`solve_jv` solves them in the order given, each from the solution at the one before. The
+device's `G_frac` sets the light; `solve_jv(dev, V, g_frac=0.0)` gives its dark curve. With
+`preCond = 1` the device is first settled at `Vpre` with its ions free (with `fixIons = 1` they
+are then held for the scan; `fixIons = 1` alone holds them at each layer's starting density); a
+pre-bias that does not converge raises `RuntimeError`.
 
-`solve_jv` is the reference implementation: a Python loop over voltages and Newton steps, easy
-to step through, about 20 curves per second on one CPU core. For many devices use the batch.
+`solve_jv` is the reference implementation, a Python loop easy to step through, about 20 curves
+per second on one CPU core. For many devices use the batch.
 
 ## A film without contacts: photoluminescence
 
@@ -113,12 +111,11 @@ The devices of one batch may differ in everything but the number of grid points 
 share the voltages). `prepare` refuses a mix of grid sizes; group devices by `NP` and solve each
 group as its own batch.
 
-The first call compiles. That takes seconds on a CPU and up to a minute on a GPU at large
-batches, and it happens again for every new **shape or option**: another batch size, another
-`NP`, another number of voltages, another `max_iter`, `first_max_iter`, `bernoulli_name` or
-`strict`. For a long sweep, cut the devices into batches of one fixed size (pad the last one by
-repeating a device) and keep the options fixed; then every batch after the first runs without
-compiling, but for the second pass, which compiles once per power of two of stragglers.
+The first call compiles (seconds on a CPU, up to a minute on a GPU at large batches), and
+again for every new **shape or option**: batch size, `NP`, number of voltages, `max_iter`,
+`first_max_iter`, `bernoulli_name`, `strict`. For a long sweep cut the devices into batches of
+one size (pad the last by repeating a device) and keep the options fixed; then only the second
+pass compiles again, once per power of two of stragglers.
 
 ### Options
 
@@ -173,12 +170,12 @@ grad = jax.grad(misfit)(jnp.log(1e-3))            # reverse mode
 ```
 
 In a fit, do not leave out a voltage that did not converge: a zero residual there rewards the
-optimiser for leaving the region where the solver converges, and it will (a recombination
-coefficient run to infinity, every voltage unconverged, the misfit zero). Give it a residual of
-the curve's scale instead; `validation/fit.py` is a whole fit (least squares, the Jacobian by
-`jax.jacfwd`), `validation/fit_measured.py` one of measured curves at five light intensities
-at once, `validation/sample_measured.py` its posterior by an ensemble sampler over the batch,
-and [validation.md](validation.md) shows what such curves determine.
+optimiser for leaving the region where the solver converges (a recombination coefficient run to
+infinity, every voltage unconverged, the misfit zero). Give it a residual of the curve's scale
+instead. `validation/fit.py` is a whole fit (least squares, the Jacobian by `jax.jacfwd`),
+`validation/fit_measured.py` one of measured curves at five intensities at once,
+`validation/sample_measured.py` its posterior; [validation.md](validation.md) shows what such
+curves determine.
 
 Devices of one structure batch by `jax.vmap(functools.partial(device_tree, structure))` over
 stacked parameters, built on the GPU. A parameter change keeps the structure: the points per
@@ -436,17 +433,16 @@ setup = setup_from_texts({
 dev = build_device(setup)
 ```
 
-Reading and building a device is NumPy work on the host, about 1.5 ms on one core of a desktop
-CPU; whatever writes the inputs usually costs more. For very large sweeps build the next
-batch's devices in worker processes while the solver runs on the current one.
+Reading and building a device is NumPy work on the host, about 1.5 ms on one desktop core. For
+very large sweeps build the next batch's devices in worker processes while the solver runs.
 
 ## Comparing with SimSS
 
-jaxdd's grid is its own by default, graded towards every layer's ends: at SimSS's 400 points it
-meets the validation criteria on 99.6 % of hard devices where SimSS's own grid meets them on
-27 % ([validation.md](validation.md)). Its curves therefore differ from SimSS's by SimSS's grid
-error, about 1e-3 of the current in the median there and up to a few percent. For a comparison
-point by point take SimSS's grid:
+jaxdd's grid is its own by default, graded towards every layer's ends: at 400 points it meets
+the validation criteria on 99.6 % of hard devices where SimSS's grid meets them on 27 %
+([validation.md](validation.md)), so its curves differ from SimSS's by SimSS's grid error (about
+1e-3 of the current in the median there, up to a few percent). For a comparison point by point
+take SimSS's grid:
 
 ```python
 dev = build_device(setup, grid="simss")   # SIMsalabim's Make_Grid, as SimSS has it
@@ -468,10 +464,11 @@ with the exact Bernoulli function. Larger gaps are usually SimSS's: rerun SimSS 
 
 - **Strong frozen charge.** At 1e18 cm⁻³ of ions frozen at full accumulation (thin absorber,
   `L_diff/d` 0.2), the ions pile up in nanometre layers at 1500 times their mean density and
-  leave a carrier-free bulk between them. jaxdd converges there at every voltage (since its
-  Jacobian is assembled by intervals, [solver.md](solver.md)); SimSS skips a third of those
-  voltages. Whether such a profile is physical is another question: Boltzmann statistics let
-  ions stack without limit (a steric limit is proposed in [PLAN.md](../PLAN.md)).
+  leave a carrier-free bulk between them. jaxdd converges there at every voltage (its Jacobian
+  assembled by intervals, [solver.md](solver.md)); SimSS skips a third of those voltages.
+  Whether such a profile is physical is another question: Boltzmann's ions stack without limit
+  unless bounded by their sites (`N_max_anion`, `N_max_cation`,
+  [model.md](model.md#ions-bounded-by-their-sites-jaxdds-off-by-default)).
 - **`fixIons` without `preCond`** holds the ions at SimSS's starting density, uniform in each
   layer, for the whole scan, which is rarely meant: with uniform ions of both signs at the same
   density they cancel, and the device behaves as one without ions.

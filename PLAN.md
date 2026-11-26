@@ -32,7 +32,41 @@ about two A100s).
 
 ## 3 Later
 
-Nothing at present.
+### 3.1 Ageing simulators: jaxdd stepped through time by a caller
+
+A simulator that ages devices step by step and measures them in between can call jaxdd as its
+solver: a steady state or a transient per device and ageing step, a transient J-V scan per
+measurement, the caller owning the time loop. Four things such a caller needs that jaxdd lacks;
+the cost per call, measured there, may add more.
+
+1. **A transient from a given state.** `solve_transient` starts every device from a steady state,
+   the tVG's first step at `t = 0`; it cannot be handed a state. Slow ions that relax over
+   minutes to a day are left off their steady state by an ageing step of an hour, and the next
+   step, or a scan at 298 K right after ageing at 338 K, has to start where it left them. To do:
+   an initial state (potential, densities, ions per point) accepted in place of the first
+   steady state, for every device of a batch. **Done when** a transient split in two at any step,
+   the second half started from the first's last state, gives the unsplit transient's currents
+   and states within the Newton tolerance.
+2. **The ions in the transient's profiles.** `profiles=True` returns `V`, `n` and `p` per step,
+   not the ions, so the state of item 1 cannot be taken from a result. To do: `anion` and
+   `cation` beside them, as `solve_states` has them. **Done when** a profile's ions integrate to
+   each species' total within round-off and item 1's test runs on them.
+3. **Auger recombination.** Neither SimSS nor jaxdd has it; it shapes TRPL at high fluence and
+   the curve at high injection, and a model whose devices carry an Auger coefficient loses it
+   at the drift-diffusion level. To do: jaxdd's own term `(C_n·n + C_p·p)·(n·p − n_i²)` per
+   layer, zero by default so that SimSS's inputs solve to the bit as before, with its
+   derivatives in the Jacobian. **Done when** the zero default
+   leaves every SimSS comparison unchanged to the bit, and a uniform device in high injection
+   decays at the closed form's Auger rate within the time steps' error.
+4. **Bit-identity on the CPU, tested.** A caller that promises reproducible datasets needs the
+   same jaxdd commit, JAX version and backend to give the same bits on the same platform; no test
+   of jaxdd's checks that a solve repeated in one process, or in a new one, does. **Done when**
+   a test solves `solve_batch`, `solve_states` and `solve_transient` twice in fresh processes on
+   the CPU and compares them with `array_equal`.
+
+Not taken up until a caller shows it needs them: a temperature changing in time within a
+transient (a scan that warms the device; jaxdd's `T` is one per device and call), and two ion
+species of one sign (jaxdd has one anion and one cation species).
 
 ## 4 Not planned
 

@@ -37,6 +37,7 @@ from jaxdd.solver import (
     STEP_CAPS,
     _assemble,
     _assemble_ions,
+    _auger,
     _balanced_logs,
     _bulk_rates,
     _carrier_excess,
@@ -110,7 +111,8 @@ def _device_tree(dev: Device, xp=np) -> dict:
         "rec": {"kd": dev.k_direct, "ni2": dev.ni**2, "Nt": dev.srh_Nt, "Cn": dev.srh_Cn,
                 "Cp": dev.srh_Cp, "nt0": dev.srh_nt0, "pt0": dev.srh_pt0,
                 **({"stat": {dev.statistics: 1.0 / dev.N_c}}
-                   if dev.statistics != "boltzmann" else {})},
+                   if dev.statistics != "boltzmann" else {}),
+                **({"an": dev.auger_n, "ap": dev.auger_p} if dev.auger_n is not None else {})},
         "iface": iface,
         "J_scale": xp.maximum(generated, 1.0),
         "R_series": dev.R_series,
@@ -196,6 +198,11 @@ def prepare(devices: list[Device]) -> dict:
             t["s"].setdefault("c_inv", np.zeros_like(t["s"]["hm"]))
             t["ion"].setdefault("a_inv", np.zeros(len(t["x"])))
             t["ion"].setdefault("c_inv", np.zeros(len(t["x"])))
+    if any("an" in t["s"] for t in trees):  # Auger recombination (jaxdd's); the others none
+        for t in trees:
+            for k in ("an", "ap"):
+                t["s"].setdefault(k, np.zeros_like(t["s"]["hm"]))
+                t["rec"].setdefault(k, np.zeros_like(t["rec"]["kd"]))
     if any("tq" in t["s"] for t in trees):  # charged bulk traps; the others none
         for t in trees:
             t["s"].setdefault("tq", np.zeros_like(t["s"]["Nt"]))
@@ -392,6 +399,9 @@ def _current_parts(d, full, g_frac, B=bernoulli):
     direct = rec["kd"] * (n * p - _degenerate(rec, n, p)["ni2"])
     points = {"V": V, "n": n, "p": p, "gen": G * g_frac, "direct": direct, "bulk_n": Rn - direct,
               "bulk_p": Rp - direct, "int_n": R_int[0], "int_p": R_int[1]}  # fmt: skip
+    if "an" in rec:  # Auger (jaxdd's), apart from the traps' recombination
+        auger = _auger(n, p, _degenerate(rec, n, p))
+        points.update(auger=auger, bulk_n=Rn - direct - auger, bulk_p=Rp - direct - auger)
     return parts, points
 
 

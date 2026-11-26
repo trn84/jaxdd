@@ -251,6 +251,8 @@ def _stencils(dev: Device, xp=np) -> dict[str, jnp.ndarray]:
     if _has_sites(dev):  # ions bounded by their sites: 1/N_max (`occupancy`), 0 unbounded
         out["a_inv"] = _inverse_sites(dev.anion_max, NP + 2, xp)[i]
         out["c_inv"] = _inverse_sites(dev.cation_max, NP + 2, xp)[i]
+    if dev.auger_n is not None:  # Auger recombination (jaxdd's), only where a layer has it
+        out["an"], out["ap"] = dev.auger_n[i], dev.auger_p[i]
     if dev.trap_charge is not None:  # charged bulk traps, only where there are any
         out["tq"], out["tcwe"] = dev.trap_charge[i], dev.trap_cwe[i]
     if dev.interface is not None:  # on the edges (`Device.interface`), only where there are any
@@ -690,9 +692,19 @@ def _bulk_rates(n, p, s):
     Rn = jnp.where(traps, s["Nt"] * Cn * (nl * vacant - s["nt0"] * mean), 0.0)
     Rp = jnp.where(traps, s["Nt"] * Cp * (pl * mean - s["pt0"] * vacant), 0.0)
     direct = s["kd"] * (n * p - s["ni2"])
+    if "an" in s:  # Auger (jaxdd's): band to band, the same for both carriers
+        direct = direct + _auger(n, p, s)
     if "fs_k" in s:  # a free end's surface: its states follow at once, the same for both
         direct = direct + _surface_srh(n, p, s)
     return direct + _summed(s["Nt"], Rn, n), direct + _summed(s["Nt"], Rp, n)
+
+
+def _auger(n, p, s):
+    """Auger recombination (jaxdd's; m⁻³ s⁻¹), `(C_n·n + C_p·p)·(n·p − n_i²)`: the electrons'
+    process (eeh) and the holes' (ehh), each balanced by its impact ionisation so that it
+    vanishes at a flat Fermi level (`n_i²` the equilibrium's at the point's own quasi-Fermi
+    levels with another statistics, `_degenerate`, as the direct rate's)."""
+    return (s["an"] * n + s["ap"] * p) * (n * p - s["ni2"])
 
 
 def _bulk_occupation(n, p, s):
@@ -725,6 +737,8 @@ def _recombination(n, p, s):
     srh = s["Nt"] * Cn * Cp * (nl * pl - s["nt0"] * s["pt0"])
     srh = srh / jnp.where(s["Nt"] > 0, Cn * (nl + s["nt0"]) + Cp * (pl + s["pt0"]), 1.0)
     R = s["kd"] * (n * p - s["ni2"]) + _summed(s["Nt"], jnp.where(s["Nt"] > 0, srh, 0.0), n)
+    if "an" in s:  # Auger (jaxdd's)
+        R = R + _auger(n, p, s)
     if "fs_k" in s:  # a free end's surface: SRH per area over the end point's volume
         R = R + _surface_srh(n, p, s)
     return R
@@ -1774,6 +1788,8 @@ def _current(dev: Device, V, n, p, g_frac, B=bernoulli) -> float:
                  Cp=dev.srh_Cp, nt0=dev.srh_nt0, pt0=dev.srh_pt0)  # fmt: skip
     if dev.statistics != "boltzmann":
         s_all["stat"] = {dev.statistics: 1.0 / np.asarray(dev.N_c)}
+    if dev.auger_n is not None:  # Auger (jaxdd's)
+        s_all.update(an=dev.auger_n, ap=dev.auger_p)
     R = np.asarray(_recombination(n, p, s_all))
     R_int = (np.zeros(NP + 2), np.zeros(NP + 2))
     if dev.interface is not None:

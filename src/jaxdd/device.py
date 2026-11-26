@@ -375,6 +375,11 @@ class Device:
     #: The carriers' statistics (`statistics.STATISTICS`): Boltzmann's, SIMsalabim's, or
     #: Blakemore's or Fermi–Dirac's `F_{1/2}` (docs/model.md, "The carriers' statistics").
     statistics: str = "boltzmann"
+    # Auger recombination at each point (m⁶/s, the layer's `C_n_Auger`, `C_p_Auger`; jaxdd's,
+    # not SIMsalabim's): `(C_n·n + C_p·p)·(n·p − n_i²)`, 0 on the electrodes. None where no layer
+    # has any, so that the rest of the solver is SIMsalabim's to the bit.
+    auger_n: np.ndarray | None = None
+    auger_p: np.ndarray | None = None
 
 
 @dataclass(frozen=True)
@@ -424,6 +429,10 @@ class Structure:
     #: `N_max_cation`): the device then carries them (`Device.anion_max`); without, a site
     #: density set in the parameters does nothing.
     ion_sites: bool = False
+    #: Whether any layer has Auger recombination (a nonzero `C_n_Auger` or `C_p_Auger`): the
+    #: device then carries it (`Device.auger_n`); without, a coefficient set in the parameters
+    #: does nothing.
+    auger: bool = False
     statistics: str = "boltzmann"  # `statistics.STATISTICS`
     anion_region: np.ndarray = None  # per layer: its mobile region's index, −1 none
     cation_region: np.ndarray = None
@@ -463,6 +472,11 @@ LAYER_PARAMETERS = (
 #: (m⁻³), a mobile ion's density bounded by it (`solver.occupancy`); infinite, Boltzmann's
 #: unbounded density, where a layer file does not name it.
 ION_SITE_PARAMETERS = ("N_max_anion", "N_max_cation")
+
+#: jaxdd's own per-layer parameters, not SIMsalabim's: the Auger coefficients (m⁶/s) of the
+#: rate `(C_n·n + C_p·p)·(n·p − n_i²)`, the electrons' (eeh) and the holes' (ehh) process; 0,
+#: none, where a layer file does not name them.
+AUGER_PARAMETERS = ("C_n_Auger", "C_p_Auger")
 
 
 def _named(layer: Layer, name: str) -> bool:
@@ -564,8 +578,8 @@ def device_parameters(
     statistics: str = "boltzmann",
 ) -> tuple[Structure, dict]:
     """A SIMsalabim input (`check_supported` first) as its `Structure` and its
-    parameters: a dict of `LAYER_PARAMETERS` and `ION_SITE_PARAMETERS`, each an array over the
-    layers, and `T`, `W_L`,
+    parameters: a dict of `LAYER_PARAMETERS`, `ION_SITE_PARAMETERS` and `AUGER_PARAMETERS`, each
+    an array over the layers, and `T`, `W_L`,
     `W_R`, `G_frac`, `V_pre`, the generation profile's file (`gen_x`, `gen_G`) and the external
     circuit's `R_series` and `R_shunt` (Ω m², `R_shunt` ≤ 0 none). Trap files add their levels,
     layers × levels: `bulk_trap_E`, `bulk_trap_N` (eV, m⁻³) and `int_trap_E`, `int_trap_N`
@@ -746,8 +760,13 @@ def device_parameters(
     params = {name: np.array([value(ly, name) for ly in layers]) for name in LAYER_PARAMETERS}
     for name in ION_SITE_PARAMETERS:
         params[name] = np.array([float(ly.raw.get(name, "inf")) for ly in layers])
+    for name in AUGER_PARAMETERS:
+        params[name] = np.array([float(ly.raw.get(name, "0")) for ly in layers])
+        if not np.all(params[name] >= 0):
+            raise ValueError(f"{name} must be zero or positive, got {params[name]}")
     structure = dataclasses.replace(structure, ion_sites=bool(any(
-        np.isfinite(params[name]).any() for name in ION_SITE_PARAMETERS)))  # fmt: skip
+        np.isfinite(params[name]).any() for name in ION_SITE_PARAMETERS)), auger=bool(any(
+        (params[name] > 0).any() for name in AUGER_PARAMETERS)))  # fmt: skip
     for k, ly in enumerate(layers, start=1):  # the ions must fit into their sites
         for species in ("anion", "cation"):
             N, N_max = ly.f(f"N_{species}"), params[f"N_max_{species}"][k - 1]
@@ -1027,6 +1046,8 @@ def device_arrays(structure: Structure, p: dict, xp=np) -> Device:
                          for k, f in zip(SURFACE_PARAMETERS, st.free * 2, strict=True)])
         if any(st.free) else None,
         statistics=st.statistics,
+        auger_n=xp.where(interior, p["C_n_Auger"][lid], 0.0) if st.auger else None,
+        auger_p=xp.where(interior, p["C_p_Auger"][lid], 0.0) if st.auger else None,
     )  # fmt: skip
 
 

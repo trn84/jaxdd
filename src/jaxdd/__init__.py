@@ -26,7 +26,7 @@ from jaxdd.simss_input import (
     simss_voltages,
 )
 from jaxdd.solver import JVResult, StateResult, solve_jv, solve_state
-from jaxdd.transient import TransientResult, solve_transient, tj_columns
+from jaxdd.transient import TransientResult, TransientState, solve_transient, tj_columns
 
 try:
     __version__ = version("jaxdd")
@@ -43,6 +43,7 @@ __all__ = [
     "StateResult",
     "Structure",
     "TransientResult",
+    "TransientState",
     "__version__",
     "build_device",
     "check_supported",

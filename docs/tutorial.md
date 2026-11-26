@@ -3,8 +3,8 @@
 ## Install
 
 ```bash
-pip install "jaxdd @ git+https://github.com/trn84/jaxdd@v0.4.0"            # CPU
-pip install "jaxdd[cuda12] @ git+https://github.com/trn84/jaxdd@v0.4.0"    # an NVIDIA GPU
+pip install "jaxdd @ git+https://github.com/trn84/jaxdd@v0.5.0"            # CPU
+pip install "jaxdd[cuda12] @ git+https://github.com/trn84/jaxdd@v0.5.0"    # an NVIDIA GPU
 python -c "import jax, jaxdd; print(jaxdd.__version__, jax.devices())"
 ```
 
@@ -331,6 +331,23 @@ device's steps: batch such devices apart from the others where speed matters
 forward mode (`jax.jvp`, `jax.jacfwd`; `validation/fit_transient.py` fits one); inside a
 transformation give `ions` and `vint` explicitly. It is not split across GPUs. What jaxdd
 reproduces of ZimT, and what not, is in [model.md](model.md) "Transients".
+
+### Going on from a state
+
+A program that owns the time loop — one that ages devices and measures them between the steps —
+continues a transient where the last one left the devices, ions and trapped charge included:
+
+```python
+first = solve_transient(batch, tvg_soak)                     # e.g. an hour at MPP bias
+scan = solve_transient(batch, tvg_scan, initial=first.final)   # every time of tvg_scan after it
+r = solve_transient(batch, tvg, profiles=True)
+r.state(10)                                                  # step 10's state, from the profiles
+```
+
+`final` (always) and `state(k)` (with `profiles=True`) are `TransientState`s: the potential, the
+densities and the ions on every point, the traps' occupations, the internal voltage and the
+time, batch first. Split at any step and continued so, a transient is the unsplit one within the
+Newton tolerance ([model.md](model.md#going-on-from-a-state-jaxdds)).
 
 ### Band diagrams in time, and photon recycling
 

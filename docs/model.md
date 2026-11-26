@@ -202,6 +202,26 @@ the last point of a layer, the one before it, the layer's own (the default). The
 depends on the potential at the point and at a neighbour, and so does the recombination in
 Newton's Jacobian.
 
+### Auger recombination (jaxdd's, off by default)
+
+SIMsalabim has none. jaxdd adds, in a layer whose file names them, the Auger coefficients
+`C_n_Auger` and `C_p_Auger` (m⁶/s; 0 where not named):
+
+```
+R_Auger = (C_n_Auger·n + C_p_Auger·p)·(n·p − n_i²)
+```
+
+the electrons' process (two electrons and a hole, eeh) and the holes' (ehh), each balanced by its
+impact ionisation, so that it vanishes at a flat Fermi level; with another statistics `n_i²` is
+the equilibrium's at the point's own quasi-Fermi levels, as for the direct rate. It is
+non-radiative: the PLQY and implied `V_oc` count `k_direct`'s photons only, and Auger takes
+from them through the densities. It adds to both carriers' rates, in the steady state and in
+time, and Newton's Jacobian takes its derivatives as the other rates' (`jax.jvp` of
+`_bulk_rates`); a transient's columns report it as `JAuger` per layer (jaxdd's), apart from the
+bulk's. A device with no coefficient above 0 carries no Auger term at all (`Device.auger_n`
+None), so SIMsalabim's inputs solve to the bit as before. Tested on a uniform film: the steady
+state and each step of implicit Euler in closed form, to 1e-9 (`tests/test_free_surface.py`).
+
 ### Bulk traps (`Init_Trapping`, `Calc_Trap_Filling_Charge`)
 
 A layer has one level (`N_t_bulk` m⁻³ at `E_t_bulk`) or, with `bulkTrapFile`, the levels of that
@@ -715,13 +735,31 @@ recombination of each carrier, the minority carriers' currents at the contacts, 
 the ions' and the displacement current, and with `specialOutput = spv` each layer's voltage
 drop. The currents are `batch._current_parts`, what the average `Jint` is made of. ZimT's
 `varFile` is not written; `solve_transient(..., profiles=True)` returns its core instead, each
-step's potential and densities on every point (`TransientResult.profiles`, `V`, `n`, `p`; a free
-end's boundary point its neighbour's state, as the solver reads it), for band diagrams in time. The QFLS is `V_T·ln(n·p/n_i²)`. It
+step's potential and densities on every point (`TransientResult.profiles`, `V`, `n`, `p`, the
+ions `anion` and `cation`, 0 outside their regions; a free end's boundary point its neighbour's
+state, as the solver reads it), for band diagrams in time, with the traps' occupations
+(`f_bulk`, `f_interface`) and each step's `dti`. The QFLS is `V_T·ln(n·p/n_i²)`. It
 takes the logarithm of densities far below any that moves a current, below Newton's floor of
 convergence (`n_floor`, 1e-12 of the largest `N_c`): the minority carriers in the dark and in a
 transport layer. Newton steps those in the density, not its logarithm, so that they converge
 with the rest although they do not count for convergence (docs/solver.md, "When is a voltage
 converged?"); the QFLS is then the converged solution's at every step (docs/validation.md).
+
+### Going on from a state (jaxdd's)
+
+ZimT starts every run from a steady state. A caller that owns the time loop — one that ages a
+device step by step and measures it in between — needs the next transient to start where the
+last one left the device: slow ions off their steady state, traps part filled. A step's state is
+what the next step reads of it: the potential, the densities and the ions on every point, the
+traps' occupations, the internal voltage, and the step's `dti`, which the contacts' ions take
+(`_ion_full`). `TransientResult.final` is the last state kept, `TransientResult.state(k)` step
+`k`'s (from the profiles), both a `TransientState`; `solve_transient(..., initial=state)` starts
+every device from it, each step's `Δt` from its `t`. The interior points are the unknowns'
+start, the contacts follow from the device, the ions' slots start at a scale of 1 as after a
+steady state. A transient split at any step and continued so gives the unsplit one's currents
+to 1e-11 of their scale and its densities within the Newton tolerance
+(`tests/test_transient_state.py`): only the first step's first guess differs, which is not
+extrapolated from the step before. ZimT's automatic stop counts from the start again.
 
 ## Impedance (jaxdd's, `solve_impedance`)
 

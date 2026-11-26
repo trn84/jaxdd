@@ -7,6 +7,31 @@ the API, and says so here.
 
 ## [Unreleased]
 
+## [0.5.0] – 2026-11-26
+
+### Added
+
+What a caller that ages devices step by step needs (PLAN.md §3.1 of 0.4.0):
+
+- **A transient that goes on from a state**: `solve_transient(..., initial=state)` starts every
+  device from a `TransientState` (the potential, densities and ions on every point, the traps'
+  occupations, the internal voltage, the time) instead of a steady state.
+  `TransientResult.final` is the last state kept, `TransientResult.state(k)` any step's (with
+  `profiles=True`), and `TransientResult.t` the steps' times. A transient split at any step and
+  continued so gives the unsplit one's currents to 1e-11 of their scale
+  (`tests/test_transient_state.py`, four ZimT cases: mobile ions, charged bulk traps, interface
+  traps, surface recombination).
+- **The ions and the traps' occupations in a transient's profiles**: `profiles` holds `anion`,
+  `cation` (0 outside their regions), `f_bulk`, `f_interface` and each step's `dti` beside `V`,
+  `n`, `p`; the ions count each region's total at every step.
+- **Auger recombination** (jaxdd's): per layer `C_n_Auger`, `C_p_Auger` (m⁶/s), the rate
+  `(C_n·n + C_p·p)·(n·p − n_i²)` in the steady state and in time, differentiable; a transient's
+  `JAuger` column per layer. 0 where a layer file does not name them, and a device without any
+  has no Auger term at all, so SimSS's inputs solve to the bit as before.
+- **Bit-identity on the CPU, tested**: `solve_batch`, `solve_states` and `solve_transient` give
+  the same bits in two new processes, on one XLA thread and on XLA's default threads
+  (`tests/test_reproducible.py`).
+
 ### Changed
 
 - **The TRPL posterior with the SnO2 decays' background taken off**: `validation/trpl_sample.py
@@ -300,7 +325,8 @@ of devices on CPUs and NVIDIA GPUs, differentiable in the input's parameters.
   depletion zones; ZimT's `varFile` is not written. A transient is not split across several GPUs.
 - AMD GPUs: prepared for the MI50 (gfx906, JAX 0.4.31 in a ROCm image), not yet measured.
 
-[Unreleased]: https://github.com/trn84/jaxdd/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/trn84/jaxdd/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/trn84/jaxdd/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/trn84/jaxdd/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/trn84/jaxdd/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/trn84/jaxdd/compare/v0.1.0...v0.2.0

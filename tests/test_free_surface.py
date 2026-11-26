@@ -11,7 +11,7 @@ import pytest
 
 from jaxdd.batch import device_tree, prepare, solve_batch, solve_states
 from jaxdd.constants import EPS_0, Q
-from jaxdd.device import build_device, device_parameters
+from jaxdd.device import AUGER_PARAMETERS, ION_SITE_PARAMETERS, build_device, device_parameters
 from jaxdd.simss_input import TVG, read_setup, setup_from_texts, simss_voltages
 from jaxdd.solver import solve_jv, solve_state
 from jaxdd.transient import solve_transient, tj_columns
@@ -56,7 +56,9 @@ def stack_setup(layers, W_L="free", W_R="free", S=(0, 0, 0, 0), NP=400, **setup)
     for i, changes in enumerate(layers):
         text = ABSORBER
         for k, v in changes.items():
-            text = _set(text, k, v)
+            # jaxdd's own parameters are not in SIMsalabim's file: added
+            own = k in AUGER_PARAMETERS + ION_SITE_PARAMETERS and f"\n{k} " not in text
+            text = text + f"{k} = {v}\n" if own else _set(text, k, v)
         files[f"L{i + 1}.txt"] = text
     return setup_from_texts(files)
 
@@ -366,6 +368,102 @@ def test_a_free_film_decays_as_implicit_euler() -> None:
     uniform = np.broadcast_to(np.array(n)[:, None], prof["n"][0, :, 1:-1].shape)
     np.testing.assert_allclose(prof["n"][0, :, 1:-1], uniform, rtol=1e-9)
     np.testing.assert_allclose(prof["p"][0], prof["n"][0], rtol=1e-9)
+
+
+#: Auger coefficients for the tests (m⁶/s): a perovskite's order, 1e-28 cm⁶/s, the two apart so
+#: that each is seen.
+C_AUGER = (1e-40, 3e-40)
+AUGER = dict(zip(AUGER_PARAMETERS, C_AUGER, strict=True))
+
+
+def test_auger_in_a_film_without_contacts() -> None:
+    """jaxdd's Auger term (`C_n_Auger`, `C_p_Auger`): a uniform film without traps holds `G =
+    (k + (C_n + C_p)·n)·(n² − n_i²)` at `n = p` (the cubic's root), the PLQY the direct share."""
+    d = stack([{"N_t_bulk": 0, **AUGER}])
+    r = solve_state(d)
+    G, k, C = 1.5e28, 4.7281398e-17, sum(C_AUGER)
+    ni = d.ni[1]
+    roots = np.roots([C, k, -C * ni**2, -(G + k * ni**2)])
+    n = roots[(np.abs(roots.imag) < 1e-6 * np.abs(roots)) & (roots.real > 0)].real
+    assert r.converged and len(n) == 1
+    np.testing.assert_allclose(r.n[1:-1], n[0], rtol=1e-10)
+    np.testing.assert_allclose(r.p[1:-1], n[0], rtol=1e-10)
+    assert r.plqy == pytest.approx(k * (n[0] ** 2 - ni**2) / G, rel=1e-9)
+    without = solve_state(stack([{"N_t_bulk": 0}]))
+    assert r.n[1] < 0.95 * without.n[1]  # Auger matters here: 8 % of the recombination
+
+
+def test_a_free_film_decays_at_the_auger_rate() -> None:
+    """High injection (100 suns' generation), the light switched off: each step of implicit Euler
+    of `dn/dt = −(k + (C_n + C_p)·n)·(n² − n_i²)` in closed form (the cubic's root), to 1e-9; the
+    Auger share of the recombination as `JAuger`, kept out of the bulk's."""
+    d = stack([{"N_t_bulk": 0, **AUGER}])
+    dt, k, C, G = 1e-8, 4.7281398e-17, sum(C_AUGER), 1.5e30
+    tvg = _tvg(np.arange(31) * dt, np.r_[100.0, np.zeros(30)])
+    r = solve_transient(prepare([d]), tvg)
+    assert r.converged.all() and (r.J == 0).all()
+    ni = d.ni[1]
+
+    def root(coefficients):
+        x = np.roots(coefficients)
+        return x[(np.abs(x.imag) < 1e-6 * np.abs(x)) & (x.real > 0)].real.max()
+
+    n = [root([C, k, -C * ni**2, -(G + k * ni**2)])]
+    for _ in range(30):  # n + dt·(k + C·n)·(n² − n_i²) = n_before
+        n.append(root([C * dt, k * dt, 1 - C * dt * ni**2, -(n[-1] + k * dt * ni**2)]))
+    n = np.array(n)
+    assert C * n[0] > 0.5 * k  # Auger at least a third of the start's recombination
+    cols = tj_columns(r, 0)
+    np.testing.assert_allclose(ni * np.exp(cols["QFLSL1"] / (2 * d.Vt)), n, rtol=1e-9)
+    # Its current, averaged over the layer as ZimT's `EquiCurr` averages the direct one: in a
+    # uniform film `C·n/k` of that.
+    np.testing.assert_allclose(cols["JAugerL1"], cols["JdirL1"] * C * n / k, rtol=1e-9)
+    np.testing.assert_allclose(cols["JbulkElecL1"], 0.0, atol=1e-12 * cols["JAugerL1"].max())
+
+
+def test_auger_with_traps_settles_in_time_on_the_steady_state() -> None:
+    """Auger beside the traps' own occupation in time (`solver._bulk_rates`): from the dark, the
+    light on for 1 ms in growing steps, the film ends at `solve_state`'s densities."""
+    d = stack([AUGER])
+    times = np.r_[0.0, np.geomspace(1e-12, 1e-3, 80)]
+    r = solve_transient(prepare([d]), _tvg(times, np.r_[0.0, np.ones(80)]), profiles=True)
+    assert r.converged.all()
+    steady = solve_state(d)
+    np.testing.assert_allclose(r.final.n[0, 1:-1], steady.n[1:-1], rtol=1e-7)
+    np.testing.assert_allclose(r.final.p[0, 1:-1], steady.p[1:-1], rtol=1e-7)
+
+
+def test_auger_of_zero_is_the_device_without_it() -> None:
+    """A coefficient of 0 named in the layer file is no Auger term at all (`Device.auger_n`
+    None), so SIMsalabim's inputs solve to the bit as before; a device without Auger in a
+    batch beside one with it is its own solve."""
+    plain = stack([{}])
+    zero = stack([dict.fromkeys(AUGER_PARAMETERS, 0)])
+    assert zero.auger_n is None and plain.auger_n is None
+    a, b = solve_state(plain), solve_state(zero)
+    np.testing.assert_array_equal(a.n, b.n)
+    np.testing.assert_array_equal(a.p, b.p)
+    states = solve_states(prepare([plain, stack([AUGER])]), first_max_iter=None)
+    np.testing.assert_allclose(states["n"][0, 0], a.n, rtol=1e-12)
+    with pytest.raises(ValueError, match="C_n_Auger"):
+        stack([{"C_n_Auger": -1e-40}])
+
+
+def test_the_implied_voc_is_differentiable_in_the_auger_coefficient() -> None:
+    """`device_tree` with Auger: the implied V_oc's derivative in `C_n_Auger` is its central
+    difference, and negative."""
+    structure, params = device_parameters(stack_setup([AUGER]))
+
+    def voc(log_C):
+        p = dict(params, C_n_Auger=np.array([1.0]) * 10.0**log_C)
+        batch = jax.tree_util.tree_map(lambda a: a[None], device_tree(structure, p))
+        return solve_states(batch, first_max_iter=None)["implied_voc"][0, 0]
+
+    grad = float(jax.jvp(voc, (-40.0,), (1.0,))[1])
+    h = 1e-3
+    fd = (float(voc(-40.0 + h)) - float(voc(-40.0 - h))) / (2 * h)
+    assert grad < 0
+    assert grad == pytest.approx(fd, rel=1e-5)
 
 
 def test_a_free_stack_in_time() -> None:

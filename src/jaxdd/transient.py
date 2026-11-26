@@ -65,7 +65,32 @@ from jaxdd.solver import (
     occupancy,
 )
 
-__all__ = ["TransientResult", "solve_transient", "tj_columns"]
+__all__ = ["TransientResult", "TransientState", "solve_transient", "tj_columns"]
+
+
+@dataclass(frozen=True)
+class TransientState:
+    """What a transient carries from one step to the next, per device (batch first), from which
+    `solve_transient(..., initial=)` goes on: `t` (s) the step's time; on every point (contacts
+    included, batch × NP + 2) the potential `V` (V, in its gauge) and the densities `n`, `p`,
+    `anion`, `cation` (m⁻³, the ions 0 outside their regions); `V_int` the internal voltage and
+    `J_ext` the external current (A/m²); `dti` the step's `1/Δt` (0 a steady state), which
+    the contacts' ions take; the traps' occupations at the step's end, `f_bulk` (like the
+    device's bulk trap levels on the interior points) and `f_interface` (on the edges, or a
+    scalar 0 without interface traps). `TransientResult.final` is the last state kept,
+    `TransientResult.state(k)` the state of step `k` (with `profiles=True`)."""
+
+    t: np.ndarray
+    V: np.ndarray
+    n: np.ndarray
+    p: np.ndarray
+    anion: np.ndarray
+    cation: np.ndarray
+    V_int: np.ndarray
+    J_ext: np.ndarray
+    dti: np.ndarray
+    f_bulk: np.ndarray
+    f_interface: np.ndarray
 
 
 @dataclass(frozen=True)
@@ -78,7 +103,9 @@ class TransientResult:
     ZimT keeps, the rows of its `tJFile` (not a step skipped by `failureMode = 2`, nor one at or
     after a stop); `stop` per device: 0 through every step, `STOP_STATIC` where the state has
     stabilised (`Track`, `MinCountStatic`), `STOP_FAILED` at a failed step (`failureMode` 0, or 2
-    with the reference state the last one kept)."""
+    with the reference state the last one kept). `t` each step's time (s); `final` the last
+    state kept (`TransientState`), to go on from; `profiles` with `profiles=True`, and `state(k)`
+    from them."""
 
     J: np.ndarray
     J_ext: np.ndarray
@@ -91,6 +118,22 @@ class TransientResult:
     accepted: np.ndarray
     stop: np.ndarray
     profiles: dict | None = None
+    t: np.ndarray | None = None
+    final: TransientState | None = None
+
+    def state(self, k: int) -> TransientState:
+        """Every device's state at step `k`, from `profiles` (`solve_transient(...,
+        profiles=True)`): the step's solution, as the next step starts from it where the step
+        was kept (`accepted`); a step not kept is its own solve, not the state carried on."""
+        if self.profiles is None:
+            raise ValueError("a step's state needs the profiles: solve_transient(profiles=True)")
+        prof = self.profiles
+        return TransientState(
+            t=self.t[:, k], V=prof["V"][:, k], n=prof["n"][:, k], p=prof["p"][:, k],
+            anion=prof["anion"][:, k], cation=prof["cation"][:, k], V_int=self.V_int[:, k],
+            J_ext=self.J_ext[:, k], dti=prof["dti"][:, k], f_bulk=prof["f_bulk"][:, k],
+            f_interface=prof["f_interface"][:, k],
+        )  # fmt: skip
 
 
 def _columns(d, parts, points, J, J_ext):
@@ -102,7 +145,8 @@ def _columns(d, parts, points, J, J_ext):
     (`EquiCurr`); at each layer's right end the interface traps' recombination of each carrier
     (`q·L·h·(R[i1] + R[i1 + 1])`); the minority
     carriers' currents at the contacts, the shunt's, the ions' and the displacement current
-    averaged; with `specialOutput = spv` each layer's voltage drop."""
+    averaged; with `specialOutput = spv` each layer's voltage drop. Where the device has Auger
+    recombination (jaxdd's) also `JAuger` per layer, which the bulk columns then leave out."""
     lay = d["layers"]
     cells, first, last = lay["cells"], lay["first"], lay["last"]
     x, h, L = d["x"], d["h"], d["L"]
@@ -142,7 +186,9 @@ def _columns(d, parts, points, J, J_ext):
     def mean(v):
         return jnp.sum(hh * v) / jnp.sum(hh)
 
+    auger = {"JAuger": equi(points["auger"])} if "auger" in points else {}
     return {
+        **auger,
         "errJ": err,
         "QFLS": average(0.5 * (qfls[:-1] + qfls[1:])),
         "Jphoto": equi(points["gen"]),
@@ -177,6 +223,8 @@ def tj_columns(result: TransientResult, k: int = 0, spv: bool = False) -> dict[s
            "Vint": result.V_int[k], "Jint": result.J[k]}  # fmt: skip
     for name in _LAYER_COLUMNS:
         out.update({f"{name}L{j + 1}": c[name][:, j] for j in range(nl)})
+    if "JAuger" in c:  # jaxdd's: Auger recombination as a current, per layer (ZimT has none)
+        out.update({f"JAugerL{j + 1}": c["JAuger"][:, j] for j in range(nl)})
     for name in _INTERFACE_COLUMNS:
         out.update({f"{name}L{j + 1}L{j + 2}": c[name][:, j] for j in range(nl - 1)})
     out.update({name: c[name] for name in ("JminLeft", "JminRight", "JShunt", "Jnion", "Jpion",
@@ -219,10 +267,12 @@ def _states_equal(A, B, ctl):
 OC_GUESS = 0.0
 
 
-def _solve_one(d, t, V, oc, G_frac, track, ctl, recycle, B, tol, max_iter, ions, vint, ion_last,
-               zimt_current, profiles=False, drift=False):  # fmt: skip
+def _solve_one(d, t, V, oc, G_frac, track, ctl, recycle, init, B, tol, max_iter, ions, vint,
+               ion_last, zimt_current, profiles=False, drift=False):  # fmt: skip
     """One device through its steps: the start as SIMsalabim's (`Init_Pot_Dens_Ions_Traps`,
-    Poisson at the first voltage), then each step by Newton from the one before. With `ions` the
+    Poisson at the first voltage), then each step by Newton from the one before; or, with `init`
+    (a `TransientState` as a dict of this device's arrays), from that state, as the step after
+    it would have started but for the extrapolated first guess. With `ions` the
     mobile ions are unknowns of their own (`V, ln n, ln p, ln a, ln c` per point,
     `solver._assemble_ions`), from the steady state's Boltzmann profiles. With `vint` the internal
     voltage is one more unknown of each step (`batch._vint_row`), the external voltage `V` its
@@ -233,29 +283,46 @@ def _solve_one(d, t, V, oc, G_frac, track, ctl, recycle, B, tol, max_iter, ions,
     (NP × NP, or None): each step's generation adds the photons of the state before it that
     it reabsorbs (`solve_transient`). `profiles`: each step's state (`V`, `ln n`, `ln p` on every
     point, the contacts' included) as one more output. `drift`: the ions bounded by their sites
-    flow with the modified drift (`solve_transient`'s `ion_flux`)."""
+    flow with the modified drift (`solve_transient`'s `ion_flux`). Always the last state kept, as
+    `(full, f_bulk, f_interface, V_int, J_ext, dti, t)`."""
     if drift:  # a key, not a value: the flux chosen when tracing (`solver._drift_factor`)
         d = dict(d, ion=dict(d["ion"], drift=jnp.asarray(1.0)))
     s, ion = d["s"], d["ion"]
-    V_first = jnp.where(oc[0] > 0, OC_GUESS, V[0])
-    d0, s0, ion0, V0 = jax.lax.stop_gradient((d, s, ion, V_first))
-    # The steady state at the first step (t = 0), from `batch._solve_one`'s start (`_start`).
-    # The first step then starts from it.
-    y, logs, _ = _start(d0, s0, ion0, V0, G_frac[0], B, tol, max_iter)  # solved again: its current
-    y_s, logs_s, J_s, ok_s, _ = _newton_solve(y, logs, d0, s0, ion0, V0, G_frac[0], B, tol,
-                                              max_iter)  # fmt: skip
-    y, logs = jnp.where(ok_s, y_s, y), jnp.where(ok_s, logs_s, logs)
     Vt = d["Vt"]
-    if ions:  # the ions' densities as unknowns: their steady profiles, 0 outside their regions
-        la, lc = _point_logs(logs, ion)
-        Vm = y[:, 0]
-        za, zc = la + Vm / Vt, lc - Vm / Vt
-        if "a_inv" in s:  # bounded by their sites: the occupancy's logarithm
-            za = jnp.log(occupancy(za, s["a_inv"])[0])
-            zc = jnp.log(occupancy(zc, s["c_inv"])[0])
-        y = jnp.concatenate([y, jnp.stack([jnp.where(s["a_mask"] > 0, za, 0.0),
-                                           jnp.where(s["c_mask"] > 0, zc, 0.0)], -1)],
-                            -1)  # fmt: skip
+    if init is None:
+        V_first = jnp.where(oc[0] > 0, OC_GUESS, V[0])
+        d0, s0, ion0, V0 = jax.lax.stop_gradient((d, s, ion, V_first))
+        # The steady state at the first step (t = 0), from `batch._solve_one`'s start
+        # (`_start`). The first step then starts from it.
+        y, logs, _ = _start(d0, s0, ion0, V0, G_frac[0], B, tol, max_iter)  # again: its current
+        y_s, logs_s, J_s, ok_s, _ = _newton_solve(y, logs, d0, s0, ion0, V0, G_frac[0], B, tol,
+                                                  max_iter)  # fmt: skip
+        y, logs = jnp.where(ok_s, y_s, y), jnp.where(ok_s, logs_s, logs)
+        if ions:  # the ions' densities as unknowns: their steady profiles, 0 outside their regions
+            la, lc = _point_logs(logs, ion)
+            Vm = y[:, 0]
+            za, zc = la + Vm / Vt, lc - Vm / Vt
+            if "a_inv" in s:  # bounded by their sites: the occupancy's logarithm
+                za = jnp.log(occupancy(za, s["a_inv"])[0])
+                zc = jnp.log(occupancy(zc, s["c_inv"])[0])
+            y = jnp.concatenate([y, jnp.stack([jnp.where(s["a_mask"] > 0, za, 0.0),
+                                               jnp.where(s["c_mask"] > 0, zc, 0.0)], -1)],
+                                -1)  # fmt: skip
+    else:
+        # From a given state: its interior points as the unknowns (the contacts follow from the
+        # device), the ions' logarithms where they are mobile, the slots' scales 1, as a step
+        # starts from the steady state.
+        init = jax.lax.stop_gradient(init)
+        y = jnp.stack([init["V"][1:-1], jnp.log(init["n"][1:-1]), jnp.log(init["p"][1:-1])], -1)
+        if ions:
+
+            def ln_ions(dens, mask):
+                return jnp.where(mask > 0, jnp.log(jnp.where(mask > 0, dens, 1.0)), 0.0)
+
+            y = jnp.concatenate([y, jnp.stack([ln_ions(init["anion"][1:-1], s["a_mask"]),
+                                               ln_ions(init["cation"][1:-1], s["c_mask"])], -1)],
+                                -1)  # fmt: skip
+        logs = jnp.zeros(ion["a_slots"].shape[0] + ion["c_slots"].shape[0])
     caps = _caps(Vt, y.shape[-1])
     v_cap = STEP_CAPS[0] * Vt
     traps = "ti" in s
@@ -267,6 +334,11 @@ def _solve_one(d, t, V, oc, G_frac, track, ctl, recycle, B, tol, max_iter, ions,
         return _ion_full(full, ion, Vt, B, dti_) if ions else full
 
     vol = _volumes(s, d["L"])
+
+    def snapshot(full):  # a free end's boundary point its neighbour's state, as the solver reads it
+        if "free" not in s:
+            return full
+        return jnp.concatenate([_free_ends(full[:, :3], s), full[:, 3:]], -1)
 
     def stencils(before, dti_k, fb, fi):
         """The step's stencils and device: the state before it, the traps' occupations, and
@@ -369,42 +441,103 @@ def _solve_one(d, t, V, oc, G_frac, track, ctl, recycle, B, tol, max_iter, ions,
         static = running & (count >= MIN_COUNT_STATIC)
         stop = jnp.where(failed, STOP_FAILED, jnp.where(static, STOP_STATIC, stop))
         carry = (*new, jnp.array(False), t_last, track_curr, cur, ref, count, stop)
-        # a free end's boundary point its neighbour's state, as the solver reads it
-        state = (
-            ((_free_ends(after[:, :3], s) if "free" in s else after[:, :3]),) if profiles else ()
-        )
+        state = (snapshot(after), fb_new, fi_new, dti_k) if profiles else ()
         return carry, (J, J_ext, V_new, ok, it, columns, keep, *state)
 
-    # Before the first step (t = 0, a steady state) the occupations do not matter.
-    fb0 = jnp.zeros_like(s["Nt"])
-    fi0 = jnp.zeros_like(s["ti"]["Nt"]) if traps else jnp.zeros(())
-    J0 = jnp.where(ok_s, J_s, 0.0) + d["G_shunt"] * V0
+    if init is None:
+        # Before the first step (t = 0, a steady state) the occupations do not matter.
+        fb0 = jnp.zeros_like(s["Nt"])
+        fi0 = jnp.zeros_like(s["ti"]["Nt"]) if traps else jnp.zeros(())
+        J0 = jnp.where(ok_s, J_s, 0.0) + d["G_shunt"] * V0
+        dti0, t0 = jnp.asarray(0.0), jnp.asarray(0.0)
+    else:
+        fb0 = init["f_bulk"]
+        fi0 = init["f_interface"] if traps else jnp.zeros(())
+        V0, J0, dti0, t0 = init["V_int"], init["J_ext"], init["dti"], init["t"]
     blank = summary(full_of(y, V0, 0.0), 0.0, 0.0, -1.0)
     zero = jnp.asarray(0)
-    start = (y, logs, y, logs, V0, V0, J0, jnp.asarray(0.0), fb0, fi0, jnp.array(True),
-             jnp.asarray(0.0), zero, blank, blank, zero, zero)  # fmt: skip
+    start = (y, logs, y, logs, V0, V0, J0, dti0, fb0, fi0, jnp.array(True), t0, zero, blank,
+             blank, zero, zero)  # fmt: skip
     end, out = jax.lax.scan(step, start, (t, V, oc, G_frac, track))
-    return (*out, end[-1])
+    y_e, V_e, J_e, dti_e, fb_e, fi_e, t_e = (end[k] for k in (0, 4, 6, 7, 8, 9, 11))
+    final = (snapshot(full_of(y_e, V_e, dti_e)), fb_e, fi_e, V_e, J_e, dti_e, t_e)
+    return (*out, end[-1], final)
 
 
 @functools.partial(jax.jit, static_argnames=("bernoulli_name", "max_iter", "ions", "vint",
                                              "ion_last", "zimt_current", "profiles",
                                              "drift"))  # fmt: skip
-def _solve_batch(batch, t, V, oc, G_frac, track, ctl, recycle, tol, max_iter, bernoulli_name,
-                 ions, vint, ion_last, zimt_current, profiles=False, drift=False):  # fmt: skip
+def _solve_batch(batch, t, V, oc, G_frac, track, ctl, recycle, init, tol, max_iter,
+                 bernoulli_name, ions, vint, ion_last, zimt_current, profiles=False,
+                 drift=False):  # fmt: skip
     one = functools.partial(_solve_one, B=BERNOULLI[bernoulli_name], tol=tol, max_iter=max_iter,
                             ions=ions, vint=vint, ion_last=ion_last, zimt_current=zimt_current,
                             profiles=profiles, drift=drift)  # fmt: skip
-    out = jax.vmap(one)(batch, t, V, oc, G_frac, track, ctl, recycle)
+    out = jax.vmap(one)(batch, t, V, oc, G_frac, track, ctl, recycle, init)
     J, J_ext, V_int, ok, its, columns, kept = out[:7]
     V_ext = V_int + J_ext * batch["R_series"][:, None]
-    return J, J_ext, V_int, V_ext, ok, its, columns, kept, out[-1], (out[7] if profiles else None)
+    return (J, J_ext, V_int, V_ext, ok, its, columns, kept, out[-2], out[-1],
+            (out[7:11] if profiles else None))  # fmt: skip
+
+
+def _states(full, f_bulk, f_iface, batch, ions, xp):
+    """`TransientState`'s arrays from the solver's (batch × … × NP + 2 × 3 or 5): the
+    densities from their logarithms, the ions each species' where it is mobile."""
+    out = {"V": full[..., 0], "n": xp.exp(full[..., 1]), "p": xp.exp(full[..., 2])}
+    for k, sp in ((3, "a"), (4, "c")):
+        name = "anion" if sp == "a" else "cation"
+        if ions:
+            member = xp.sum(xp.asarray(batch["ion"][f"{sp}_slots"]), axis=1)  # batch × NP + 2
+            member = member.reshape(member.shape[:1] + (1,) * (full.ndim - 3) + member.shape[1:])
+            out[name] = xp.where(member > 0, xp.exp(full[..., k]), 0.0)
+        else:
+            out[name] = xp.zeros_like(out["V"])
+    return {**out, "f_bulk": f_bulk, "f_interface": f_iface}
+
+
+def _checked_initial(initial: TransientState, batch, t, ions: bool) -> dict:
+    """`solve_transient`'s `initial` checked against the batch and its steps, as the solver's
+    dict of arrays."""
+    n = jax.tree_util.tree_leaves(batch)[0].shape[0]
+    points = batch["x"].shape[-1]
+    state = {f: jnp.asarray(getattr(initial, f), dtype=float)
+             for f in TransientState.__dataclass_fields__}  # fmt: skip
+    for f in ("V", "n", "p", "anion", "cation"):
+        if state[f].shape != (n, points):
+            raise ValueError(f"initial.{f}: one value per device and point, {(n, points)}, "
+                             f"got {state[f].shape}")  # fmt: skip
+    for f in ("t", "V_int", "J_ext", "dti"):
+        if state[f].shape != (n,):
+            raise ValueError(f"initial.{f}: one value per device ({n}), got {state[f].shape}")
+    if state["f_bulk"].shape != batch["s"]["Nt"].shape:
+        raise ValueError(f"initial.f_bulk: like the bulk traps, {batch['s']['Nt'].shape}, got "
+                         f"{state['f_bulk'].shape}")  # fmt: skip
+    if "ti" in batch["s"]:
+        if state["f_interface"].shape != batch["s"]["ti"]["Nt"].shape:
+            raise ValueError(f"initial.f_interface: like the interface traps, "
+                             f"{batch['s']['ti']['Nt'].shape}, got "
+                             f"{state['f_interface'].shape}")  # fmt: skip
+    else:
+        state["f_interface"] = jnp.zeros(n)
+    if not _traced(batch, t, *state.values()):
+        if not np.all(np.asarray(t)[:, 0] > np.asarray(state["t"])):
+            raise ValueError("a transient from a state starts after it: every device's first "
+                             "time must exceed its state's t")  # fmt: skip
+        if not (np.all(np.asarray(state["n"]) > 0) and np.all(np.asarray(state["p"]) > 0)):
+            raise ValueError("initial.n and initial.p must be positive on every point")
+        if ions:
+            for sp, name in (("a", "anion"), ("c", "cation")):
+                member = np.asarray(batch["s"][f"{sp}_mask"]) > 0
+                if np.any(member & ~(np.asarray(state[name])[:, 1:-1] > 0)):
+                    raise ValueError(f"initial.{name} must be positive where the device's "
+                                     f"{name}s are mobile")  # fmt: skip
+    return state
 
 
 def solve_transient(batch, tvg: TVG | list[TVG], tol=1e-10, max_iter=200, bernoulli_name="exact",
                     zimt_ion_currents=False, ions=None, vint=None, zimt_current=False,
-                    recycle=None, profiles=False,
-                    ion_flux="electrochemical") -> TransientResult:  # fmt: skip
+                    recycle=None, profiles=False, ion_flux="electrochemical",
+                    initial: TransientState | None = None) -> TransientResult:  # fmt: skip
     """A batch (`batch.prepare`) through ZimT's time steps `tvg`: one for every device, or one
     per device (all of one length). Each step's Newton to `tol` or `max_iter`. Where any device
     of the batch has an open circuit or a series resistance, the internal voltage is an unknown
@@ -423,13 +556,25 @@ def solve_transient(batch, tvg: TVG | list[TVG], tol=1e-10, max_iter=200, bernou
     step (explicit in time, first order like the steps). A steady state (`t = 0`, a return to
     it) has none: the dark's `n·p = n_i²` emits nothing net, and under light it would need the
     recycled generation's own solution. `profiles`: each step's state on every point (the
-    contacts' included), `TransientResult.profiles` `{"V", "n", "p"}` (batch × steps × points;
-    V in volts, the densities in m⁻³), for band diagrams in time. `ion_flux` (`solver.ION_FLUXES`):
-    how mobile ions bounded by their sites (`N_max_anion`, `N_max_cation`) flow, down their
-    electrochemical potential at a constant mobility (`"electrochemical"`, ChargeTransport.jl's
-    default) or with the drift modified by the free sites' share at a constant diffusivity
-    (`"modified-drift"`, Abdel, Courtier, Farrell 2023; docs/model.md): the same steady states,
-    other transients. Without sites the two are the same.
+    contacts' included), `TransientResult.profiles` `{"V", "n", "p", "anion", "cation"}`
+    (batch × steps × points; V in volts, the densities in m⁻³, the ions 0 outside their regions)
+    for band diagrams in time, with the traps' occupations `"f_bulk"`, `"f_interface"` and each
+    step's `"dti"`, so that `TransientResult.state(k)` is any step's state. `ion_flux`
+    (`solver.ION_FLUXES`): how mobile ions bounded by their sites (`N_max_anion`,
+    `N_max_cation`) flow, down their electrochemical potential at a constant mobility
+    (`"electrochemical"`, ChargeTransport.jl's default) or with the drift modified by the free
+    sites' share at a constant diffusivity (`"modified-drift"`, Abdel, Courtier, Farrell 2023;
+    docs/model.md): the same steady states, other transients. Without sites the two are the
+    same.
+
+    `initial` (jaxdd's, a `TransientState`, e.g. `TransientResult.final` or `.state(k)`): every
+    device starts from it instead of from a steady state, every time of `tvg` after its `t` (the
+    first step's `Δt` from it; a time 0 is still a steady state). A transient split at any step
+    and continued from that step's state gives the unsplit one's currents and states within the
+    Newton tolerance: only the first step's first guess differs (no extrapolation from a step
+    before). ZimT's automatic stop (`Track`) counts from the start again. The device must be the
+    one the state was solved on; a different one is solved from the state's densities as they
+    are.
 
     Differentiable in the batch (`batch.device_tree`): each step's derivatives those of its
     converged solution by the implicit function (`batch._converged_jvp`), carried from step to
@@ -465,18 +610,28 @@ def solve_transient(batch, tvg: TVG | list[TVG], tol=1e-10, max_iter=200, bernou
             recycle = jnp.broadcast_to(recycle, (n, *recycle.shape))
         if recycle.shape != (n, NP, NP):
             raise ValueError(f"recycle: one {NP} × {NP} matrix, or one per device ({n})")
+    init = None if initial is None else _checked_initial(initial, batch, t, bool(ions))
     with _quiet():
-        J, J_ext, V_int, V_ext, ok, its, columns, kept, stop, prof = _solve_batch(
-            batch, t, V, jnp.asarray(oc, dtype=float), G, track, ctl, recycle, tol, max_iter,
-            bernoulli_name, bool(ions), bool(vint), bool(zimt_ion_currents),
+        J, J_ext, V_int, V_ext, ok, its, columns, kept, stop, final, prof = _solve_batch(
+            batch, t, V, jnp.asarray(oc, dtype=float), G, track, ctl, recycle, init, tol,
+            max_iter, bernoulli_name, bool(ions), bool(vint), bool(zimt_ion_currents),
             bool(zimt_current), bool(profiles), ion_flux == "modified-drift",
         )  # fmt: skip
     out = (lambda a: a) if traced else np.asarray
     xp = jnp if traced else np
+
+    def states(full, f_bulk, f_iface):
+        return _states(out(full), out(f_bulk), out(f_iface), batch, bool(ions), xp)
+
     n_layers = xp.asarray(batch["layers"]["cells"]).any(axis=2).sum(axis=1)
+    full_e, fb_e, fi_e, V_e, J_e, dti_e, t_e = final
+    last = TransientState(**states(full_e, fb_e, fi_e), V_int=out(V_e), J_ext=out(J_e),
+                          dti=out(dti_e), t=out(t_e))  # fmt: skip
+    profile = None
+    if prof is not None:
+        full_k, fb_k, fi_k, dti_k = prof
+        profile = {**states(full_k, fb_k, fi_k), "dti": out(dti_k)}
     return TransientResult(*(out(a) for a in (J, J_ext, V_int, V_ext, ok, its)),
                            columns={k: out(v) for k, v in columns.items()},
                            n_layers=n_layers, accepted=out(kept), stop=out(stop),
-                           profiles=None if prof is None else {
-                               "V": out(prof[..., 0]), "n": out(xp.exp(prof[..., 1])),
-                               "p": out(xp.exp(prof[..., 2]))})  # fmt: skip
+                           profiles=profile, t=out(t), final=last)  # fmt: skip

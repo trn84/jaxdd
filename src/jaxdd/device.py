@@ -24,8 +24,8 @@ import numpy as np
 
 from jaxdd import statistics as carrier_statistics
 from jaxdd.constants import EPS_0, K_B, Q
+from jaxdd.optics import HC_Q, optical_data
 from jaxdd.optics import generation as optics_generation
-from jaxdd.optics import optical_data
 from jaxdd.simss_input import Layer, Setup, ion_region_problems, ion_regions
 
 __all__ = [
@@ -478,6 +478,11 @@ ION_SITE_PARAMETERS = ("N_max_anion", "N_max_cation")
 #: none, where a layer file does not name them.
 AUGER_PARAMETERS = ("C_n_Auger", "C_p_Auger")
 
+#: jaxdd's own per-layer parameter, not SIMsalabim's: a shift of the layer's n,k data in photon
+#: energy (eV), positive towards higher energy, a wider gap (`optics.shifted_indices`); used with
+#: `genProfile = calc` only, 0, the data as they are, where a layer file does not name it.
+OPTICS_PARAMETERS = ("dE_nk",)
+
 
 def _named(layer: Layer, name: str) -> bool:
     """Whether a layer's file parameter (`bulkTrapFile`, `intTrapFile`) names a file."""
@@ -578,8 +583,8 @@ def device_parameters(
     statistics: str = "boltzmann",
 ) -> tuple[Structure, dict]:
     """A SIMsalabim input (`check_supported` first) as its `Structure` and its
-    parameters: a dict of `LAYER_PARAMETERS`, `ION_SITE_PARAMETERS` and `AUGER_PARAMETERS`, each
-    an array over the layers, and `T`, `W_L`,
+    parameters: a dict of `LAYER_PARAMETERS`, `ION_SITE_PARAMETERS`, `AUGER_PARAMETERS` and
+    `OPTICS_PARAMETERS`, each an array over the layers, and `T`, `W_L`,
     `W_R`, `G_frac`, `V_pre`, the generation profile's file (`gen_x`, `gen_G`) and the external
     circuit's `R_series` and `R_shunt` (Ω m², `R_shunt` ≤ 0 none). Trap files add their levels,
     layers × levels: `bulk_trap_E`, `bulk_trap_N` (eV, m⁻³) and `int_trap_E`, `int_trap_N`
@@ -764,6 +769,13 @@ def device_parameters(
         params[name] = np.array([float(ly.raw.get(name, "0")) for ly in layers])
         if not np.all(params[name] >= 0):
             raise ValueError(f"{name} must be zero or positive, got {params[name]}")
+    for name in OPTICS_PARAMETERS:
+        params[name] = np.array([float(ly.raw.get(name, "0")) for ly in layers])
+    if mode == "calc":  # λ' finite and positive on every wavelength (`optics.shifted_wavelengths`)
+        top = HC_Q / structure.optics["lambdas"][-1]
+        if not np.all(params["dE_nk"] < top):
+            raise ValueError(f"dE_nk must be below the photon energy of lambda_max, {top:.4g} eV, "
+                             f"got {params['dE_nk']}")  # fmt: skip
     structure = dataclasses.replace(structure, ion_sites=bool(any(
         np.isfinite(params[name]).any() for name in ION_SITE_PARAMETERS)), auger=bool(any(
         (params[name] > 0).any() for name in AUGER_PARAMETERS)))  # fmt: skip
@@ -937,7 +949,7 @@ def device_arrays(structure: Structure, p: dict, xp=np) -> Device:
 
     if st.gen_mode == "calc":
         G = optics_generation(st.optics, x, lid, [p["L"][k] for k in range(len(st.layer_gen))],
-                              st.layer_gen, xp)  # fmt: skip
+                              st.layer_gen, xp, p.get("dE_nk"))  # fmt: skip
     elif st.gen_mode == "none":
         G = p["G_ehp"][lid]  # SIMsalabim's: each layer's own, whatever its `layerGen`
     else:

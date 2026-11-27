@@ -299,6 +299,24 @@ The generation profile (`Init_Generation_Profile`) comes in one of three ways, a
   (`spectrum`); zero in layers with `layerGen = 0`. In JAX (`batch.device_tree`) it is
   differentiable in the layers' thicknesses, which move the optics as well as the grid.
 
+  jaxdd's own, 0 by default: a layer's `dE_nk` (eV; in its file or the parameters' dict,
+  `device.OPTICS_PARAMETERS`) shifts its n,k data in photon energy, positive towards higher
+  energy (a wider gap): `n(λ) = n_data(λ')` with `λ' = λ/(1 − dE_nk·λ/(h·c/q))`, the wavelength
+  of the photon energy `h·c/λ − dE_nk`. The substrate, the TCO and the back electrode keep
+  theirs. The layer's table is kept as read and interpolated at `λ'` as the data are on the
+  wavelengths: linearly, and beyond either end of the data along its first or last interval. A
+  shift reads the data from `λ'` of `lambda_min` to `λ'` of `lambda_max` (827 nm for 800 nm and
+  0.05 eV; below `lambda_min` for a negative one), which they should cover: beyond either end
+  the line through the end points can make `n` or `k` unphysical (`k` negative). `dE_nk` must
+  stay below the photon energy of `lambda_max`. A zero shift gives `λ' = λ` exactly and the
+  profile without a shift, SIMsalabim's, to the bit, and so are its derivatives in the
+  thicknesses (to round-off where the shifts are traced under `jax.jit`). In JAX the
+  profile is differentiable in the shifts, so that a band gap that moves can move the
+  absorption edge with it within a batch; where a `λ'` crosses a data point the derivative
+  jumps, and on a data point it is the one for an increasing shift: with data on the 1 nm
+  wavelengths, as SIMsalabim's are, that is every `λ'` at a zero shift. The photon-recycling
+  kernel (`jaxdd.recycling`) does not follow the shift: its `α(E)` is the caller's.
+
 ### Field-dependent generation (`Calc_Dissociation`, Braun)
 
 In a layer with `fieldDepG = 1` light makes bound pairs at a distance `r` that dissociate with

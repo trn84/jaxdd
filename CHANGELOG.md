@@ -7,6 +7,32 @@ the API, and says so here.
 
 ## [Unreleased]
 
+### Added
+
+Devices at several temperatures (PLAN.md §1 of 0.5.0):
+
+- **Temperature laws** (`jaxdd.temperature`, jaxdd's): `at_temperature(params, T, laws, gap)`
+  maps `device_parameters`' dict from its own `T` to another in front of `device_tree`, pure
+  and differentiable in `T` and the laws' coefficients, batched by `vmap`. A `Law(m, E)` scales
+  a density of states, mobility or rate parameter by `(T/T0)^m·exp(−(E/k)(1/T − 1/T0))`, or the
+  caller's own function does; `textbook_laws` gives `N_c` `m = 3/2`, `ν_int` `1/2` and the ions'
+  mobilities `−1` (an Arrhenius `D`). A `Gap(slope, share)` moves `E_c` and `E_v`; trap levels
+  and fixed work functions stay or follow a band or the mid-gap (`traps`, `contacts`), and
+  `edge=True` moves the absorption edge with it. `check_gaps` checks a mapped dict's levels and
+  work functions against its gaps. At the reference temperature every device is the unmapped
+  one to the bit.
+- **An absorption edge that follows the band gap** (jaxdd's): a per-layer `dE_nk` (eV, 0 by
+  default, `device.OPTICS_PARAMETERS`) shifts the layer's n,k in photon energy under
+  `genProfile = calc`, traced and differentiable, so devices at several temperatures share a
+  `Structure` and a batch. A zero shift gives the device and its derivatives in the thicknesses
+  as before, to the bit.
+
+### Fixed
+
+- **docs/model.md, "Interfaces"**: the Scharfetter–Gummel flux across an interface is thermionic
+  emission at the effective velocity `ν_int·|x|/(1 − e^(−|x|))`, about `ν_int·ΔE/kT` at a large
+  offset, not at `ν_int`; the model was and is SIMsalabim's.
+
 ## [0.5.0] – 2026-11-26
 
 ### Added

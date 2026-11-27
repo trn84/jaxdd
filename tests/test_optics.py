@@ -78,7 +78,9 @@ def test_a_zero_shift_gives_the_unshifted_device_to_the_bit(case: str) -> None:
 def test_a_zero_shift_keeps_the_derivatives_in_the_thicknesses_to_the_bit(case: str) -> None:
     """With `dE_nk` 0 on every layer the derivatives in the thicknesses are those of a dict
     without the key, to the bit: `jax.jvp` of `device_tree` eagerly and under `jit` with the
-    shifts as given, eagerly with the shifts traced too, and `jax.grad` of the generated total."""
+    shifts as given, eagerly with the shifts traced too, and `jax.grad` of the generated total
+    (on a GPU, whose reverse mode differs from one call to the next in the last bits, to
+    1e-14)."""
     st, p = _parts(case)
     without = {k: v for k, v in p.items() if k not in OPTICS_PARAMETERS}
     L0, dL = jnp.asarray(p["L"]), jnp.full(len(p["L"]), 1e-9)
@@ -100,7 +102,10 @@ def test_a_zero_shift_keeps_the_derivatives_in_the_thicknesses_to_the_bit(case: 
         return jnp.sum(device_tree(st, q)["G"])
 
     ref = jax.grad(total)({k: jnp.asarray(v) for k, v in without.items()})["L"]
-    assert np.array_equal(jax.grad(total)(q)["L"], ref)
+    if jax.default_backend() == "gpu":  # a GPU's reverse mode is not the same twice to the bit
+        np.testing.assert_allclose(jax.grad(total)(q)["L"], ref, rtol=1e-14, atol=0.0)
+    else:
+        assert np.array_equal(jax.grad(total)(q)["L"], ref)
 
 
 def _shifted_copies(tmp_path: Path) -> tuple[Path, Path]:

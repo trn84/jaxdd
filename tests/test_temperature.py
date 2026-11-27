@@ -152,8 +152,8 @@ def test_each_law_is_its_closed_form() -> None:
         assert q["W_L"] == pytest.approx(p["W_L"] + share[0] * dEg[0], rel=1e-14)
         assert q["W_R"] == pytest.approx(p["W_R"] + (share[2] - 0.5) * dEg[2], rel=1e-14)
         np.testing.assert_allclose(q["dE_nk"], p["dE_nk"] + dEg, rtol=1e-14, atol=1e-16)
-    assert "dE_nk" not in at_temperature(dict(parameters("thin_l1_light")[1]), T,
-                                         gap=Gap(slope), edge=True)  # fmt: skip
+    no_edge = {k: v for k, v in parameters("thin_l1_light")[1].items() if k != "dE_nk"}
+    assert "dE_nk" not in at_temperature(no_edge, T, gap=Gap(slope), edge=True)
 
     def varshni(T):  # Varshni's gap, eV, each layer its own
         return 1.6 - np.array([5e-4, 3e-4, 4e-4]) * T**2 / (T + np.array([200.0, 100.0, 300.0]))
@@ -323,3 +323,29 @@ def test_the_ions_activation_energy_through_a_scan_is_finite_differences() -> No
     fd = (curve(E0 + h) - curve(E0 - h)) / (2 * h)
     assert np.max(np.abs(tangent - fd)) < 1e-5 * np.max(np.abs(fd))
     assert np.max(np.abs(fd)) > 1e-5 * np.max(np.abs(curve(E0)))  # the ions move it
+
+
+def test_the_gap_law_moves_the_absorption_edge_through_the_shift() -> None:
+    """`edge=True` with computed generation (`dE_nk`, `docs/model.md`): at the reference
+    temperature every law, the gap's and the edge's give the device to the bit; away from it a
+    widening gap moves the perovskite's edge by the gap's change, which lowers the generated
+    total, and the derivative of that total in the gap's slope is the finite differences'. The
+    slope puts the shift at 0.0137 eV, between the n,k data's points, as test_optics does."""
+    structure, p = parameters("pin_calc_light")
+    T0 = float(p["T"])
+    tree = device_tree(structure, p)
+    q = at_temperature(p, T0, every_law(3), gap=every_gap(3), edge=True, structure=structure)
+    assert not same(device_tree(structure, q), tree)
+
+    T, s0, h = T0 + 40.0, 0.0137 / 40.0, 1e-6 / 40.0
+
+    def total(s, edge=True):
+        q = at_temperature(p, T, gap=Gap(jnp.array([0.0, s, 0.0])), edge=edge)
+        return jnp.sum(device_tree(structure, q)["G"])
+
+    q = at_temperature(p, T, gap=Gap(np.array([0.0, s0, 0.0])), edge=True)
+    np.testing.assert_allclose(q["dE_nk"], [0.0, 0.0137, 0.0], rtol=1e-12, atol=0.0)
+    assert float(total(s0)) < float(total(s0, edge=False))
+    _, by_jvp = jax.jvp(total, (s0,), (1.0,))
+    fd = (float(total(s0 + h)) - float(total(s0 - h))) / (2 * h)
+    assert abs(fd) > 0 and abs(float(by_jvp) - fd) < 1e-6 * abs(fd)

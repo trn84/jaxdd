@@ -179,6 +179,7 @@ microseconds per evaluation are needed.
 | `src/jaxdd/impedance.py` | the impedance in the frequency domain at a steady state, one linear solve per frequency: `solve_impedance` |
 | `src/jaxdd/statistics.py` | the carriers' statistics: Boltzmann's, Blakemore's, Fermi–Dirac's `F_{1/2}`, their inverses and excess chemical potentials |
 | `src/jaxdd/recycling.py` | photon recycling: where each point's radiative recombination is absorbed again (`device_kernel`) |
+| `src/jaxdd/temperature.py` | a device's parameters at another temperature, by laws whose coefficients are the caller's: `at_temperature`, `Law`, `Gap`, `textbook_laws`, `check_gaps` |
 | `src/jaxdd/constants.py` | SIMsalabim's physical constants |
 | `tests/` | pytest suite, in parallel (pytest-xdist); `tests/data/` SimSS and ZimT runs (inputs and their `JV.dat`, `tj.dat`) as reference |
 | `validation/` | scripts that compare with SimSS and time the solver ([validation.md](validation.md)) |

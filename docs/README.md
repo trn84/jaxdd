@@ -6,8 +6,8 @@ describes what exists.
 | Page | For |
 |---|---|
 | [Overview](overview.md) | what jaxdd is, why it batches, what it solves and what it refuses, the design decisions, what the speed is for, the repository, licence and attribution |
-| [Tutorial](tutorial.md) | installing; one device from SIMsalabim's files; many devices in a batch; gradients; reading the result; a table over parameters with refined axes; transients; building devices in code; comparing with SimSS; known limits |
-| [The model](model.md) | the device equations and their discretisation: grid, Poisson, Scharfetter–Gummel, interfaces, recombination, ions, the current |
+| [Tutorial](tutorial.md) | installing; one device from SIMsalabim's files; many devices in a batch; gradients; reading the result; a table over parameters with refined axes; transients; building devices in code; a series over temperature; comparing with SimSS; known limits |
+| [The model](model.md) | the device equations and their discretisation: grid, Poisson, Scharfetter–Gummel, interfaces, recombination, ions, the current, temperature laws |
 | [The solver](solver.md) | how a J-V curve is solved: the sequence of solves, the Newton step, the bordered system, the block sweep, convergence; flowcharts and pseudocode |
 | [Batching](batching.md) | the same solver over many devices: pytrees, `vmap`, loops without branches, the lockstep, compilation |
 | [Hardware](hardware.md) | CPU, NVIDIA GPUs, AMD MI50: how to run fast on each, why there is no fused kernel, and how to benchmark a machine |

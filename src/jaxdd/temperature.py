@@ -97,17 +97,14 @@ class Gap:
         return self.slope * (T - T0)
 
 
-def textbook_laws(E_anion=None, E_cation=None) -> dict[str, Law]:
+def textbook_laws(E_anion=0.0, E_cation=0.0) -> dict[str, Law]:
     """The textbook laws, to pass to `at_temperature` (alone, or changed and added to): `N_c`
     as a parabolic band's density of states, `T^{3/2}`; the interface velocities `nu_int_n`,
-    `nu_int_p` as a thermal velocity, `T^{1/2}`; and, for an ion species whose activation
-    energy is given (eV, a number or one per layer), its mobility as an Arrhenius diffusion
-    `D ∝ e^{−E/kT}`, `μ = D/V_T ∝ T^{−1}·e^{−E/kT}`."""
-    laws = {"N_c": Law(m=1.5), "nu_int_n": Law(m=0.5), "nu_int_p": Law(m=0.5)}
-    for species, E in (("anion", E_anion), ("cation", E_cation)):
-        if E is not None:
-            laws[f"mu_{species}"] = Law(m=-1.0, E=E)
-    return laws
+    `nu_int_p` as a thermal velocity, `T^{1/2}`; and each ion species' mobility as an Arrhenius
+    diffusion `D ∝ e^{−E/kT}` with its activation energy (eV, a number or one per layer; 0, a
+    constant `D`, by default), `μ = D/V_T ∝ T^{−1}·e^{−E/kT}`."""
+    return {"N_c": Law(m=1.5), "nu_int_n": Law(m=0.5), "nu_int_p": Law(m=0.5),
+            "mu_anion": Law(m=-1.0, E=E_anion), "mu_cation": Law(m=-1.0, E=E_cation)}
 
 
 def _per_layer(option: str | Sequence[str], n: int, what: str) -> np.ndarray:
@@ -116,6 +113,15 @@ def _per_layer(option: str | Sequence[str], n: int, what: str) -> np.ndarray:
     if len(options) != n or any(o not in FOLLOW for o in options):
         raise ValueError(f"{what} {option!r}: one of {FOLLOW}, or one per layer")
     return np.array(options)
+
+
+def _shaped(new, value, name: str):
+    """A law's result, which has its value's shape (static, under a trace too)."""
+    if np.shape(new) != np.shape(value):
+        raise ValueError(f"a law for {name}: a value of shape {np.shape(new)}, not "
+                         f"{np.shape(value)} as the parameter's (one per layer on a single "
+                         "value?)")  # fmt: skip
+    return new
 
 
 def at_temperature(params: dict, T, laws: Mapping[str, Callable] | None = None,
@@ -130,8 +136,10 @@ def at_temperature(params: dict, T, laws: Mapping[str, Callable] | None = None,
     so for any `g`). Each sees the input's value. Any parameter of the dict but `T` and the
     energies (`ENERGIES`, which `gap` moves): a law on `C_n_bulk`, `C_p_bulk`, `C_n_int` or
     `C_p_int` acts on the trap files' levels' own (`bulk_trap_Cn`, …, layers × levels) as well,
-    unless one is given for those. A negative (infinite) surface recombination velocity stays
-    as it is.
+    unless one is given for those: a `Law` each layer's coefficients for all of its levels, a
+    caller's function on them transposed (levels × layers, so that a factor per layer
+    broadcasts over the layers). A law keeps a value's shape: one per layer on a single value
+    is refused. A negative (infinite) surface recombination velocity stays as it is.
 
     `gap` (`Gap`): the bands' move with `T`. Then `traps` says what every trap level of a layer
     follows (`FOLLOW`, one for all or one per layer): `E_t_bulk`, `bulk_trap_E`, and a layer's
@@ -162,7 +170,7 @@ def at_temperature(params: dict, T, laws: Mapping[str, Callable] | None = None,
         if name not in params:  # the levels' own capture coefficients, which this input lacks
             continue
         value = params[name]
-        new = law(value, T, T0)
+        new = _shaped(law(value, T, T0), value, name)
         if name in SURFACE_PARAMETERS:
             new = _xp(value, new).where(value < 0, value, new)
         if name == "k_direct" and langevin is not None:
@@ -170,7 +178,9 @@ def at_temperature(params: dict, T, laws: Mapping[str, Callable] | None = None,
         p[name] = new
         levels = _LEVELS.get(name)
         if levels in params and levels not in laws:
-            p[levels] = law(params[levels], T, T0)
+            v = params[levels]  # layers × levels
+            new = law(v, T, T0) if isinstance(law, Law) else law(v.T, T, T0).T
+            p[levels] = _shaped(new, v, f"{name} (on {levels})")
     n = len(params["E_c"])
     on_traps = _per_layer(traps, n, "traps")
     on_contacts = _per_layer(contacts, 2, "contacts")

@@ -89,8 +89,9 @@ def test_at_the_reference_temperature_every_law_gives_the_device_to_the_bit(case
 
 def test_each_law_is_its_closed_form() -> None:
     """At 340 K from 298.15 K: `Law`'s factor, the textbook laws (`N_c ∝ T^{3/2}`, `ν_int ∝
-    T^{1/2}`, the ions' Arrhenius `D = μ·V_T`), a law reaching the levels' own capture
-    coefficients, the infinite surfaces kept; the gap's change split as asked, linear or the
+    T^{1/2}`, the ions' Arrhenius `D = μ·V_T`, a constant `D` by default), a law reaching the
+    levels' own capture coefficients (a caller's per layer, levels as many as layers, each
+    layer's own), the infinite surfaces kept; the gap's change split as asked, linear or the
     caller's (Varshni's), and every level and work function following what it is told."""
     structure, p = parameters("pin_iface_light")
     p = dict(p, bulk_trap_Cn=np.array([[1e-14, 2e-14]] * 3), dE_nk=np.array([0.0, 0.01, 0.0]))
@@ -113,6 +114,22 @@ def test_each_law_is_its_closed_form() -> None:
     for species, Ea in (("anion", 0.4), ("cation", np.array([0.2, 0.6, 0.0]))):
         D, D0 = q[f"mu_{species}"] * K_B * T / Q, p[f"mu_{species}"] * K_B * T0 / Q
         np.testing.assert_allclose(D, D0 * np.exp(-Ea * beta), rtol=1e-14)
+    ions = dict(p, mu_anion=np.array([1e-12, 2e-12, 3e-12]), mu_cation=np.full(3, 1e-13))
+    q0 = at_temperature(ions, T, textbook_laws())
+    for species in ("anion", "cation"):
+        mu = ions[f"mu_{species}"]
+        np.testing.assert_allclose(q0[f"mu_{species}"] * T, mu * T0, rtol=1e-14)
+
+    powers = np.array([1.0, 2.0, 3.0])
+
+    def g(T):  # a caller's factor, one per layer
+        return (T / T0) ** powers
+
+    square = dict(p, bulk_trap_Cn=np.array([[1e-14, 2e-14, 3e-14]] * 3))
+    c = at_temperature(square, T, {"C_n_bulk": lambda v, T, T0: v * (g(T) / g(T0))})
+    np.testing.assert_allclose(c["C_n_bulk"], p["C_n_bulk"] * r**powers, rtol=1e-14)
+    np.testing.assert_allclose(c["bulk_trap_Cn"], square["bulk_trap_Cn"] * (r**powers)[:, None],
+                               rtol=1e-14)  # fmt: skip
     assert q["S_n_L"] == -1.0  # infinite: stays
     s = at_temperature(dict(p, S_n_L=20.0), T, laws)["S_n_L"]
     assert s == pytest.approx(20.0 * r * np.exp(-0.1 * beta), rel=1e-14)
@@ -147,11 +164,14 @@ def test_each_law_is_its_closed_form() -> None:
 
 
 def test_the_mapping_refuses_what_it_cannot_do() -> None:
-    """A law on an energy or `T`, on a name the dict lacks, or an option not in `FOLLOW`."""
+    """A law on an energy or `T`, on a name the dict lacks, one per layer on a single value, or
+    an option not in `FOLLOW`."""
     _, p = parameters("thin_l1_light")
     for name in ("E_c", "W_L", "E_t_bulk", "T", "mu_N"):
         with pytest.raises(ValueError, match=name):
             at_temperature(p, 320.0, {name: Law(m=1.0)})
+    with pytest.raises(ValueError, match="S_n_L"):
+        at_temperature(p, 320.0, {"S_n_L": Law(E=np.full(len(p["L"]), 0.1))})
     with pytest.raises(ValueError, match="traps"):
         at_temperature(p, 320.0, traps="E_g")
     with pytest.raises(ValueError, match="traps"):

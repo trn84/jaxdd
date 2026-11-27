@@ -827,10 +827,14 @@ on any parameter of the dict but `T` and the energies: `N_c`, `mu_n`, `mu_p`, `g
 levels' own `bulk_trap_Cn` too, a layer's coefficients for all of its levels, unless one is given
 for those), `C_n_Auger`, `C_p_Auger`, `S_n_L`, …, `mu_anion`, `mu_cation`, `nu_int_n`,
 `nu_int_p`. A law may instead be the caller's function `law(value, T, T0)`: two power-law
-regimes, a phase transition, a disorder model's `exp(−(2σ/3kT)²)`. `textbook_laws` gives the
-textbook ones: `N_c` a parabolic band's `T^{3/2}`, `ν_int` a thermal velocity's `T^{1/2}`, and
-each ion species' mobility from an Arrhenius diffusion with the caller's activation energy,
-`D ∝ exp(−E/kT)`, `μ = D/V_T ∝ T^{−1}·exp(−E/kT)` (computed as `μ`'s factor, not through `D`).
+regimes, a phase transition, a disorder model's `exp(−(2σ/3kT)²)`. Passed on to a trap file's
+levels, the function gets their coefficients levels × layers, so that a factor per layer
+broadcasts over the layers, and its result is transposed back. A law keeps its value's shape:
+one per layer on a single value (`S_n_L`, say) is refused. `textbook_laws` gives the textbook
+ones: `N_c` a parabolic band's `T^{3/2}`, `ν_int` a thermal velocity's `T^{1/2}`, and each ion
+species' mobility from an Arrhenius diffusion with the caller's activation energy (0 by
+default, a constant `D`), `D ∝ exp(−E/kT)`, `μ = D/V_T ∝ T^{−1}·exp(−E/kT)` (computed as `μ`'s
+factor, not through `D`).
 None is applied unless passed. `k_direct` is not tied to the absorption edge: a measured
 `k₂(T)` follows no general law, and its law is the caller's. In a layer with `useLangevin` the
 rate is the mobilities' (with their laws), and `k_direct`'s law does nothing there.
@@ -879,11 +883,14 @@ velocity's `T^{1/2}`, a multiphonon barrier's activation), not an emission's Arr
 
 **At `T0` to the bit.** Every law returns its value unchanged at `T = T0`: the factor is
 `1^m·exp(−0)`, exactly 1, the gap's change `slope·0`, exactly 0. So a mapped dict gives the
-unmapped device leaf for leaf, in NumPy and in JAX, eager and compiled. A caller's law should do
-the same: `v·(g(T)/g(T0))` does for any `g`, `v·g(T)/g(T0)` does not (it rounds twice). Tested
-(`tests/test_temperature.py`): at `T0` with every law on, to the bit, on devices with ions, bulk
-and interface traps, trap files, finite surfaces and Langevin's rate; each law against its
-closed form; the gradients in the powers, the activation energies and the gap's slope and share,
+unmapped device leaf for leaf, in NumPy and in JAX, eager and compiled with the dict and `T`
+arguments of the compiled function. Folded in as a constant, a `T` or a whole dict is rounded
+by XLA's constant folding, a few ulp from the eager values, mapped or not, as any dict whose `T`
+is set by hand. A caller's law should do the same: `v·(g(T)/g(T0))` does for any `g`,
+`v·g(T)/g(T0)` does not (it rounds twice). Tested (`tests/test_temperature.py`): at `T0` with
+every law on, to the bit, on devices with ions, bulk and interface traps, trap files, finite
+surfaces and Langevin's rate; each law against its closed form, a caller's per layer on a trap
+file's levels too; the gradients in the powers, the activation energies and the gap's slope and share,
 30 K from `T0`, through the steady state and through a scan with mobile ions, against central
 finite differences; the gap check against levels and a work function moved out.
 

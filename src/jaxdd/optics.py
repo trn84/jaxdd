@@ -255,9 +255,10 @@ def generation(optics: dict, x, lid, thicknesses, layer_gen, xp=np, dE=None):
         held = [xp.where(zero, sg(d), d) for d in thicknesses]  # at zero t's derivatives in dE only
         moved, moved_weight = _rows(optics, shifted_indices(optics, dE, xp), held, xp)
         weight = pick(weight, moved_weight)
-        rows = [(s, pick(xi, xi_t), dm, pick(a, a_t), pick(b, b_t), m)
-                for (s, xi, dm, a, b, m), (_, xi_t, _, a_t, b_t, _) in zip(rows, moved,
-                                                                           strict=True)]
+        rows = [
+            (s, pick(xi, xi_t), dm, pick(a, a_t), pick(b, b_t), m)
+            for (s, xi, dm, a, b, m), (_, xi_t, _, a_t, b_t, _) in zip(rows, moved, strict=True)
+        ]
 
     # E at each point from its own layer's row.
     def field(row, xs):

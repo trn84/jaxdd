@@ -103,8 +103,13 @@ def textbook_laws(E_anion=0.0, E_cation=0.0) -> dict[str, Law]:
     `nu_int_p` as a thermal velocity, `T^{1/2}`; and each ion species' mobility as an Arrhenius
     diffusion `D ∝ e^{−E/kT}` with its activation energy (eV, a number or one per layer; 0, a
     constant `D`, by default), `μ = D/V_T ∝ T^{−1}·e^{−E/kT}`."""
-    return {"N_c": Law(m=1.5), "nu_int_n": Law(m=0.5), "nu_int_p": Law(m=0.5),
-            "mu_anion": Law(m=-1.0, E=E_anion), "mu_cation": Law(m=-1.0, E=E_cation)}
+    return {
+        "N_c": Law(m=1.5),
+        "nu_int_n": Law(m=0.5),
+        "nu_int_p": Law(m=0.5),
+        "mu_anion": Law(m=-1.0, E=E_anion),
+        "mu_cation": Law(m=-1.0, E=E_cation),
+    }
 
 
 def _per_layer(option: str | Sequence[str], n: int, what: str) -> np.ndarray:

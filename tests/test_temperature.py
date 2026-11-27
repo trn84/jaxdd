@@ -137,7 +137,8 @@ def test_each_law_is_its_closed_form() -> None:
     langevin = dataclasses.replace(structure, langevin=np.array([True, False, True]))
     kd = at_temperature(p, T, laws, structure=langevin)["k_direct"]
     assert np.array_equal(kd[[0, 2]], p["k_direct"][[0, 2]]) and kd[1] == pytest.approx(
-        p["k_direct"][1] / r, rel=1e-14)
+        p["k_direct"][1] / r, rel=1e-14
+    )
 
     slope, share = np.array([2e-4, -3e-4, 1e-4]), np.array([0.0, 0.3, 1.0])
     dEg = slope * (T - T0)
@@ -314,8 +315,7 @@ def test_the_ions_activation_energy_through_a_scan_is_finite_differences() -> No
     def curve(E):
         q = at_temperature(p, p["T"] + 30.0, textbook_laws(E_anion=E, E_cation=0.5))
         batch = jax.tree_util.tree_map(lambda v: v[None], device_tree(structure, q))
-        return solve_transient(batch, tvg, bernoulli_name="simss", ions=True,
-                               vint=False).J_ext[0]
+        return solve_transient(batch, tvg, bernoulli_name="simss", ions=True, vint=False).J_ext[0]
 
     E0 = jnp.asarray(0.4)
     _, tangent = jax.jvp(curve, (E0,), (jnp.ones_like(E0),))

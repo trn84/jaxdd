@@ -107,8 +107,9 @@ def shifted_indices(optics: dict, dE, xp=np):
     shifted in photon energy by its `dE` (eV, over the layers): `n(λ) = n_data(λ')`
     (`shifted_wavelengths`), the layer's table interpolated linearly at `λ'` and beyond either
     end extrapolated along its first or last interval, as on the wavelengths. The TCO and the
-    back electrode keep theirs. Differentiable in `dE` in JAX; a zero shift gives `optics["n"]`
-    to the bit."""
+    back electrode keep theirs. Differentiable in `dE` in JAX, on a data point (with data on the
+    wavelengths, every `λ'` at a zero shift) for an increasing shift; a zero shift gives
+    `optics["n"]` to the bit."""
     lambdas, n = optics["lambdas"], optics["n"]
     first = 1 if optics["L_TCO"] is not None else 0
     rows = [n[j] for j in range(first)]
@@ -229,24 +230,30 @@ def generation(optics: dict, x, lid, thicknesses, layer_gen, xp=np, dE=None):
     """The generation profile (m⁻³ s⁻¹) at the device's grid points `x` (layer `lid` of each),
     for the layers' `thicknesses`: SIMsalabim's `Calc_E` and `Calc_Generation_Rate`; zero in a
     layer with `layerGen = 0`. With `dE` (eV, over the layers) each layer's n,k shifted in
-    photon energy by it (`shifted_indices`). Where every shift is zero the profile is that of
-    the stored indices to the bit: in JAX the field's coefficients are computed from both and
-    the stored indices' taken (`jax.numpy`'s complex division may differ from NumPy's in the last
-    bit), with the derivatives of the shifted ones."""
+    photon energy by it (`shifted_indices`). Where every shift is zero the profile and its
+    derivatives in the thicknesses are those of the stored indices: shifts known to be zero are
+    not used; traced ones (in JAX) give the field's coefficients from both indices and the
+    stored ones' taken (`jax.numpy`'s complex division may differ from NumPy's in the last bit),
+    with the derivatives in the shifts of the shifted ones, whose thicknesses are then held
+    constant."""
     rows, weight = _rows(optics, optics["n"], thicknesses, xp)
+    if dE is not None and xp is not np:
+        import jax
+
+        if not isinstance(dE, jax.core.Tracer) and not np.any(np.asarray(dE)):
+            dE = None  # known to be zero: the stored indices' graph alone
     if dE is not None and xp is np:
         if np.any(dE):
             rows, weight = _rows(optics, shifted_indices(optics, dE), thicknesses, np)
     elif dE is not None:
-        import jax
-
         zero = xp.all(dE == 0)
         sg = jax.lax.stop_gradient
 
-        def pick(s, t):  # the stored value at zero shift, the derivatives the shifted one's
-            return xp.where(zero, sg(s) + (t - sg(t)), t)
+        def pick(s, t):  # at zero shift the stored value and its derivatives, plus t's in dE
+            return xp.where(zero, s + (t - sg(t)), t)
 
-        moved, moved_weight = _rows(optics, shifted_indices(optics, dE, xp), thicknesses, xp)
+        held = [xp.where(zero, sg(d), d) for d in thicknesses]  # at zero t's derivatives in dE only
+        moved, moved_weight = _rows(optics, shifted_indices(optics, dE, xp), held, xp)
         weight = pick(weight, moved_weight)
         rows = [(s, pick(xi, xi_t), dm, pick(a, a_t), pick(b, b_t), m)
                 for (s, xi, dm, a, b, m), (_, xi_t, _, a_t, b_t, _) in zip(rows, moved,

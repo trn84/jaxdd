@@ -74,6 +74,35 @@ def test_a_zero_shift_gives_the_unshifted_device_to_the_bit(case: str) -> None:
         assert np.array_equal(g, r)
 
 
+@pytest.mark.parametrize("case", CALC)
+def test_a_zero_shift_keeps_the_derivatives_in_the_thicknesses_to_the_bit(case: str) -> None:
+    """With `dE_nk` 0 on every layer the derivatives in the thicknesses are those of a dict
+    without the key, to the bit: `jax.jvp` of `device_tree` eagerly and under `jit` with the
+    shifts as given, eagerly with the shifts traced too, and `jax.grad` of the generated total."""
+    st, p = _parts(case)
+    without = {k: v for k, v in p.items() if k not in OPTICS_PARAMETERS}
+    L0, dL = jnp.asarray(p["L"]), jnp.full(len(p["L"]), 1e-9)
+
+    def tangents(q, jit):
+        f = functools.partial(lambda q, L: device_tree(st, dict(q, L=L)), q)
+        return _leaves(jax.jvp(jax.jit(f) if jit else f, (L0,), (dL,))[1])
+
+    for jit in (False, True):
+        for g, r in zip(tangents(p, jit), tangents(without, jit), strict=True):
+            assert np.array_equal(g, r), jit
+    q = {k: jnp.asarray(v) for k, v in p.items()}
+    dq = dict(jax.tree_util.tree_map(jnp.zeros_like, q), L=dL)
+    traced = _leaves(jax.jvp(functools.partial(device_tree, st), (q,), (dq,))[1])
+    for g, r in zip(traced, tangents(without, False), strict=True):
+        assert np.array_equal(g, r)
+
+    def total(q):
+        return jnp.sum(device_tree(st, q)["G"])
+
+    ref = jax.grad(total)({k: jnp.asarray(v) for k, v in without.items()})["L"]
+    assert np.array_equal(jax.grad(total)(q)["L"], ref)
+
+
 def _shifted_copies(tmp_path: Path) -> tuple[Path, Path]:
     """`pin_calc_light` twice: its layers' n,k files shifted beforehand (each data point moved
     to the wavelength of its photon energy plus the layer's shift), and the files as they are
@@ -154,6 +183,23 @@ def test_the_gradient_in_the_shift_is_finite_differences() -> None:
         fd = (float(f(x0 + h)) - float(f(x0 - h))) / (2 * h)
         assert abs(fd) > 0
         assert abs(float(by_jvp) - fd) < tol * abs(fd), f.__name__
+
+
+def test_at_zero_shift_the_gradient_is_the_one_for_an_increasing_shift() -> None:
+    """With data on the 1 nm wavelengths every `λ'` is a data point at zero shift: the
+    derivative there in the perovskite's shift is the one-sided difference towards a positive
+    shift (step 1e-7 eV), not the one towards a negative shift (3.5 % off)."""
+    st, p = _parts("pin_calc_light")
+    assert all(np.isin(st.optics["lambdas"], data[:, 0]).all() for data in st.optics["nk"])
+
+    def total(e):
+        return jnp.sum(device_tree(st, dict(p, dE_nk=jnp.array([0.0, e, 0.0])))["G"])
+
+    h, f0 = 1e-7, float(total(0.0))
+    up, down = (float(total(h)) - f0) / h, (f0 - float(total(-h))) / h
+    for g in (jax.grad(total)(0.0), jax.jit(jax.grad(total))(0.0)):
+        assert abs(float(g) - up) < 1e-5 * abs(up)
+        assert abs(float(g) - down) > 1e-2 * abs(down)
 
 
 def test_devices_of_different_shifts_batch() -> None:

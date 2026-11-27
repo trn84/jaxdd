@@ -8,7 +8,8 @@ solution is SIMsalabim's to its tolerance:
 * Continuity (`Cont_Eq_Elec`, `Cont_Eq_Holes`): Scharfetter–Gummel in the generalised
   potentials `Vgn = V + E_c − E_c[0] + V_T·ln(N_c/N_c[0])` (and `Vgp`), which carry the band
   offsets; at an interface the mobility of the interval across it is `L·h·ν_int/V_T`
-  (`Calc_Elec_Mob`), so the transfer is thermionic at `ν_int`. Where it depends on the field
+  (`Calc_Elec_Mob`), so the transfer is thermionic at the effective velocity
+  `ν_int·|x|/(1 − e^(−|x|))` (docs/model.md, "Interfaces"). Where it depends on the field
   (`mobnDep`, `mobpDep` = 1), each interval's mobility is `μ·exp(γ·√|F|)` in its own field.
 * Recombination: direct `k_direct·(n·p − n_i²)` and bulk SRH through one neutral level.
 * Current (`Calc_Curr_Int`, `currDiffInt = 2`): the integral form of De Mari, averaged over

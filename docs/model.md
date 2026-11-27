@@ -156,9 +156,14 @@ a coarser Taylor series up to |x| = 1.5; `bernoulli_name="simss"` reproduces it
 
 At an interface the interval between the last point of one layer and the first of the next gets
 the mobility `L·h·ν_int / V_T`, with the interface velocity `nu_int_n` or `nu_int_p` of the layer
-on the left. The Scharfetter–Gummel flux across that interval is then thermionic emission at
-velocity `ν_int` over the band offset. A carrier facing a large offset (say 1 eV) is
-effectively blocked.
+on the left. The Scharfetter–Gummel flux across that interval is then, per area,
+`ν_int·[B(x)·n₁ − B(−x)·n₀]`, with `x` the jump of the generalised potential across it over `V_T`
+(the band offset, the potential's drop over the interval and the `N_c` ratio). That is
+thermionic emission over the offset, `v·(n_h − n_l·e^(−|x|))` from the side of the higher band
+(density `n_h`) to that of the lower (`n_l`), at the effective velocity
+`v = ν_int·B(−|x|) = ν_int·|x|/(1 − e^(−|x|))`: `ν_int` for a small offset, about `ν_int·ΔE/kT`
+for a large one (39 `ν_int` at 1 eV and 300 K). The flux vanishes at equal quasi-Fermi levels
+whatever `ν_int` is. A carrier facing a large offset (say 1 eV) is effectively blocked.
 
 ## The field-dependent mobility (`Calc_Elec_Mob`, `Calc_Hole_Mob`)
 

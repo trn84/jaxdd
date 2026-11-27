@@ -804,6 +804,89 @@ and it is how the solve is tested against the transients ([validation.md](valida
 
 Refused: a free end (there is no circuit through it) and ions frozen at a pre-bias.
 
+## Temperature laws (jaxdd's, `jaxdd.temperature`)
+
+SIMsalabim's `T` enters a device only through `V_T = kT/q`: `N_c`, the band edges, the
+mobilities, the rate and capture coefficients, the surface recombination velocities, the ions'
+mobilities and `ν_int` are the input's at any `T`. `at_temperature(params, T, laws, gap)` maps
+`device_parameters`' dict from its own `T`, the reference `T0`, to another `T`, in front of
+`device_tree`; the solver is unchanged. It is a pure function of the dict, in NumPy or
+`jax.numpy`: differentiable in `T` and in every coefficient of its laws, batched by `vmap` over
+`T`, and it composes with `least_squares_many` and the `axes` tables as any function that builds
+the dict does. The forms are jaxdd's, the coefficients the caller's; nothing changes with `T`
+unless a law names it.
+
+**A parameter's law** (`Law(m, E)`, each a number or one per layer):
+
+```
+P(T) = P(T0)·(T/T0)^m·exp(−(E/k)·(1/T − 1/T0))
+```
+
+on any parameter of the dict but `T` and the energies: `N_c`, `mu_n`, `mu_p`, `gamma_n`,
+`gamma_p`, `k_direct`, the capture coefficients (a law on `C_n_bulk` acts on a trap file's
+levels' own `bulk_trap_Cn` too, a layer's coefficients for all of its levels, unless one is given
+for those), `C_n_Auger`, `C_p_Auger`, `S_n_L`, …, `mu_anion`, `mu_cation`, `nu_int_n`,
+`nu_int_p`. A law may instead be the caller's function `law(value, T, T0)`: two power-law
+regimes, a phase transition, a disorder model's `exp(−(2σ/3kT)²)`. `textbook_laws` gives the
+textbook ones: `N_c` a parabolic band's `T^{3/2}`, `ν_int` a thermal velocity's `T^{1/2}`, and
+each ion species' mobility from an Arrhenius diffusion with the caller's activation energy,
+`D ∝ exp(−E/kT)`, `μ = D/V_T ∝ T^{−1}·exp(−E/kT)` (computed as `μ`'s factor, not through `D`).
+None is applied unless passed. `k_direct` is not tied to the absorption edge: a measured
+`k₂(T)` follows no general law, and its law is the caller's. In a layer with `useLangevin` the
+rate is the mobilities' (with their laws), and `k_direct`'s law does nothing there.
+
+**The band gap** (`Gap(slope, share)`, per layer): `E_g(T) = E_g(T0) + slope·(T − T0)`, or the
+caller's `Eg(T)` (Varshni's, say), of which `Eg(T) − Eg(T0)` counts. Its change `ΔE_g` moves
+`E_v` by `share·ΔE_g` and `E_c` by `−(1 − share)·ΔE_g` (energies below the vacuum level: a gap
+that grows takes `E_v` deeper and `E_c` towards the vacuum); `share` 0.5 by default. `n_i`, the
+traps' `n_t0`, `p_t0` and an `sfb` contact's work function follow in the device. The other
+absolute energies follow what they are told (`FOLLOW`), their layer's bands moving:
+
+| | `"fixed"` | `"E_c"` (`"E_v"`) | `"midgap"` |
+|---|---|---|---|
+| trap levels (`traps=`, one for all or one per layer) | the default: their energy stays | their distance to that band stays | their distance to the gap's middle stays |
+| work functions (`contacts=`, one or (left, right)) | the default: the electrode's stays | the distance to the adjacent layer's band stays | the distance to its gap's middle stays |
+
+A layer's trap levels are its `E_t_bulk` or `bulk_trap_E`, and its interface level to the next
+(`E_t_int`, `int_trap_E`), which belongs to the layer on its left as in `device_parameters`.
+Fixed by default: a level's energy below the vacuum is what is known of a deep defect, which
+neither band carries; a shallow level follows its band. An 'sfb' or 'free' end's `W` is not
+read; with the `Structure` given (`structure=`) it is not moved either. With `edge=True` the gap's
+change is added to each layer's `dE_nk` (the shift of its n,k in photon energy, which the
+generation computed by the transfer-matrix method takes), where the dict has it: the absorption
+follows the gap.
+
+**The gap check.** `check_gaps(structure, params)` checks a mapped dict's energies: each layer's
+gap open (`E_v > E_c`), and as `device_parameters` checks the input, each work function (not
+'sfb' or 'free') within its layer's gap, each trap level of a layer with traps strictly inside
+its gap, an interface's inside both layers' (a trap file's levels of density 0 aside);
+`ValueError` naming what is outside. On
+concrete values, outside any trace: a dict, or a stack of them (several temperatures by `vmap`),
+every one checked. Inside a trace nothing checks, as nothing checks a dict changed by hand.
+
+**What stays.** A law scales what the input has; it cannot switch on a mechanism the input
+lacks, which the `Structure` holds: traps on a layer without them, Auger in a device without a
+coefficient, a finite `S` where it is infinite (a negative `S` stays as it is). The `Structure`'s
+own uses of `T` are the input's: the graded grid's `d₀` at the contacts under Fermi–Dirac's or
+Blakemore's statistics (the Debye length at the input's `T` and `N_c`), and `read_tvg`'s bound on a
+voltage over `V_T`. Photon recycling's kernel (`recycling.device_kernel`) is the caller's to build
+at each temperature, with its `T` and its absorption edge.
+
+**Trap re-emission counted once.** A level's emission is detailed balance's, in `n_t0 =
+N_c·exp((E_c − E_t)/V_T)` and `p_t0`: exponential in `T` through `V_T` already, and following
+`N_c`'s law and the bands. A capture coefficient's law is the capture's alone (a thermal
+velocity's `T^{1/2}`, a multiphonon barrier's activation), not an emission's Arrhenius on top.
+
+**At `T0` to the bit.** Every law returns its value unchanged at `T = T0`: the factor is
+`1^m·exp(−0)`, exactly 1, the gap's change `slope·0`, exactly 0. So a mapped dict gives the
+unmapped device leaf for leaf, in NumPy and in JAX, eager and compiled. A caller's law should do
+the same: `v·(g(T)/g(T0))` does for any `g`, `v·g(T)/g(T0)` does not (it rounds twice). Tested
+(`tests/test_temperature.py`): at `T0` with every law on, to the bit, on devices with ions, bulk
+and interface traps, trap files, finite surfaces and Langevin's rate; each law against its
+closed form; the gradients in the powers, the activation energies and the gap's slope and share,
+30 K from `T0`, through the steady state and through a scan with mobile ions, against central
+finite differences; the gap check against levels and a work function moved out.
+
 ## Constants
 
 SIMsalabim's, not CODATA's: `q = 1.6022e-19 C`, `k = 1.3807e-23 J/K`, `ε₀ = 8.8542e-12 F/m`. A

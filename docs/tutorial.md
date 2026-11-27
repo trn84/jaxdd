@@ -453,6 +453,54 @@ dev = build_device(setup)
 Reading and building a device is NumPy work on the host, about 1.5 ms on one desktop core. For
 very large sweeps build the next batch's devices in worker processes while the solver runs.
 
+## A series over temperature
+
+A device's `T` moves only `V_T` unless told otherwise. `jaxdd.temperature` maps the parameters
+from the input's `T` to another by laws whose coefficients are yours
+([model.md](model.md#temperature-laws-jaxdds-jaxddtemperature)), in front of `device_tree`, so a
+series over `T` is one batch. A J-V scan at 0.9 V/50 ms on a device with mobile ions, at five
+temperatures:
+
+```python
+import jax
+import jax.numpy as jnp
+
+from jaxdd import device_parameters, device_tree, read_setup, read_tvg, solve_transient
+from jaxdd.temperature import Gap, Law, at_temperature, check_gaps, textbook_laws
+
+setup = read_setup("tests/data/zimt_ions_fast_light/simulation_setup.txt")  # 0 → 0.9 → 0 V
+structure, params = device_parameters(setup)          # its own T, 298.15 K, is the reference
+params = jax.tree_util.tree_map(jnp.asarray, params)  # JAX arrays, for vmap and jit
+
+laws = textbook_laws(E_anion=0.5, E_cation=0.5) | {   # N_c, ν_int, the ions' Arrhenius (eV)
+    "mu_n": Law(m=-1.5), "mu_p": Law(m=-1.5),         # phonon scattering
+}
+gap = Gap(slope=3e-4)                                 # eV/K, split evenly between the bands
+
+def at(T):
+    return at_temperature(params, T, laws, gap)
+
+T = jnp.array([260.0, 280.0, 300.0, 320.0, 340.0])
+check_gaps(structure, jax.vmap(at)(T))                # every level and work function in its gap
+batch = jax.vmap(lambda t: device_tree(structure, at(t)))(T)   # one device per temperature
+r = solve_transient(batch, read_tvg(setup))
+r.J_ext                                               # temperatures × steps, up and back
+```
+
+`Law(m, E)` is `(T/T0)^m·exp(−(E/k)·(1/T − 1/T0))`, `m` and `E` a number or one per layer; any
+law can be your own function `law(value, T, T0)`. Trap levels and work functions stay where
+they are below the vacuum unless `traps=` or `contacts=` says they follow a band, and
+`check_gaps` refuses what a moved band leaves outside its gap. The whole map is differentiable,
+so the laws' exponents and activation energies can be fitted to a series as any other
+parameter (`jax.grad` through `solve_batch`, `jax.jvp` through `solve_transient`).
+
+One scan rate is not one regime. With an activation energy of 0.5 eV the ions' mobility spans
+more than two decades over these 80 K (6.6e-14 to 9.6e-12 m²/Vs), so the same scan finds them
+nearly frozen at one end of the series and following much of it at the other: the hysteresis
+changes with `T` through the ions' regime as much as through any law. To compare temperatures
+in one regime, scale the scan's duration with the ions' mobility, or scan at several rates per
+temperature.
+
 ## Comparing with SimSS
 
 jaxdd's grid is its own by default, graded towards every layer's ends: at 400 points it meets

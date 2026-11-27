@@ -230,12 +230,13 @@ def generation(optics: dict, x, lid, thicknesses, layer_gen, xp=np, dE=None):
     """The generation profile (m⁻³ s⁻¹) at the device's grid points `x` (layer `lid` of each),
     for the layers' `thicknesses`: SIMsalabim's `Calc_E` and `Calc_Generation_Rate`; zero in a
     layer with `layerGen = 0`. With `dE` (eV, over the layers) each layer's n,k shifted in
-    photon energy by it (`shifted_indices`). Where every shift is zero the profile and its
-    derivatives in the thicknesses are those of the stored indices: shifts known to be zero are
-    not used; traced ones (in JAX) give the field's coefficients from both indices and the
-    stored ones' taken (`jax.numpy`'s complex division may differ from NumPy's in the last bit),
-    with the derivatives in the shifts of the shifted ones, whose thicknesses are then held
-    constant."""
+    photon energy by it (`shifted_indices`). Where every shift is zero the profile is that of
+    the stored indices: shifts known to be zero are not used (and the derivatives in the
+    thicknesses are the stored ones' to the bit); traced ones (in JAX) give the field's
+    coefficients from both indices and the stored ones' taken (`jax.numpy`'s complex division
+    may differ from NumPy's in the last bit), with the derivatives in the shifts of the shifted
+    ones, whose thicknesses are then held constant (the derivatives in the thicknesses the
+    stored ones' to round-off: another graph, which XLA may fuse otherwise)."""
     rows, weight = _rows(optics, optics["n"], thicknesses, xp)
     if dE is not None and xp is not np:
         import jax

@@ -188,7 +188,7 @@ microseconds per evaluation are needed.
 | `simss/` | building SimSS, the reference, with the patch for frozen ions ([README](../simss/README.md)) |
 | `PLAN.md` | what is planned and what may come |
 | `CHANGELOG.md` | what changed from one release to the next |
-| `.github/workflows/ci.yml` | lint, the tests on the newest and the oldest supported JAX, the wheel; a release on a tag |
+| `.github/workflows/ci.yml` | lint, the tests on the newest JAX, the wheel; on a tag also the tests on the oldest supported JAX, and a release |
 | `NOTICE`, `COPYING*` | licence and attribution |
 
 ## Licence and attribution

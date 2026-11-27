@@ -76,11 +76,11 @@ def test_a_zero_shift_gives_the_unshifted_device_to_the_bit(case: str) -> None:
 
 @pytest.mark.parametrize("case", CALC)
 def test_a_zero_shift_keeps_the_derivatives_in_the_thicknesses_to_the_bit(case: str) -> None:
-    """With `dE_nk` 0 on every layer the derivatives in the thicknesses are those of a dict
-    without the key, to the bit: `jax.jvp` of `device_tree` eagerly and under `jit` with the
-    shifts as given, eagerly with the shifts traced too, and `jax.grad` of the generated total
-    (on a GPU, whose reverse mode differs from one call to the next in the last bits, to
-    1e-14)."""
+    """With `dE_nk` 0 on every layer, as `device_parameters` gives it, the derivatives in the
+    thicknesses are those of a dict without the key, to the bit: `jax.jvp` of `device_tree`
+    eagerly and under `jit`. With the shifts traced (zero, but not known to be) the graph is
+    another, which XLA may fuse otherwise (JAX 0.12.1 on the CI's CPUs did): `jax.jvp` and
+    `jax.grad` of the generated total to 1e-13."""
     st, p = _parts(case)
     without = {k: v for k, v in p.items() if k not in OPTICS_PARAMETERS}
     L0, dL = jnp.asarray(p["L"]), jnp.full(len(p["L"]), 1e-9)
@@ -89,6 +89,12 @@ def test_a_zero_shift_keeps_the_derivatives_in_the_thicknesses_to_the_bit(case: 
         f = functools.partial(lambda q, L: device_tree(st, dict(q, L=L)), q)
         return _leaves(jax.jvp(jax.jit(f) if jit else f, (L0,), (dL,))[1])
 
+    def close(g, r):
+        if r.dtype.kind not in "fc" or not r.size:  # an integer leaf's tangent (float0)
+            assert np.shape(g) == np.shape(r)
+            return
+        np.testing.assert_allclose(g, r, rtol=1e-13, atol=1e-13 * np.max(np.abs(r)))
+
     for jit in (False, True):
         for g, r in zip(tangents(p, jit), tangents(without, jit), strict=True):
             assert np.array_equal(g, r), jit
@@ -96,16 +102,15 @@ def test_a_zero_shift_keeps_the_derivatives_in_the_thicknesses_to_the_bit(case: 
     dq = dict(jax.tree_util.tree_map(jnp.zeros_like, q), L=dL)
     traced = _leaves(jax.jvp(functools.partial(device_tree, st), (q,), (dq,))[1])
     for g, r in zip(traced, tangents(without, False), strict=True):
-        assert np.array_equal(g, r)
+        close(g, r)
 
     def total(q):
         return jnp.sum(device_tree(st, q)["G"])
 
-    ref = jax.grad(total)({k: jnp.asarray(v) for k, v in without.items()})["L"]
-    if jax.default_backend() == "gpu":  # a GPU's reverse mode is not the same twice to the bit
-        np.testing.assert_allclose(jax.grad(total)(q)["L"], ref, rtol=1e-14, atol=0.0)
-    else:
-        assert np.array_equal(jax.grad(total)(q)["L"], ref)
+    close(
+        jax.grad(total)(q)["L"],
+        jax.grad(total)({k: jnp.asarray(v) for k, v in without.items()})["L"],
+    )
 
 
 def _shifted_copies(tmp_path: Path) -> tuple[Path, Path]:

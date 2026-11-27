@@ -24,8 +24,9 @@ Devices at several temperatures (PLAN.md §1 of 0.5.0):
 - **An absorption edge that follows the band gap** (jaxdd's): a per-layer `dE_nk` (eV, 0 by
   default, `device.OPTICS_PARAMETERS`) shifts the layer's n,k in photon energy under
   `genProfile = calc`, traced and differentiable, so devices at several temperatures share a
-  `Structure` and a batch. A zero shift gives the device and its derivatives in the thicknesses
-  as before, to the bit.
+  `Structure` and a batch. A zero shift gives the device as before, to the bit, and its
+  derivatives in the thicknesses too where the shift is known to be zero (to round-off where it
+  is traced).
 
 ### Fixed
 

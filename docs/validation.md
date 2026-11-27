@@ -840,8 +840,9 @@ compilation cache (`.pytest_cache/jax`, `tests/conftest.py`) holds the programs;
 about 400 s. What is left is tracing, which JAX does not cache, and the gradients' finite
 differences, about 12 s each for the slowest. The CI (`.github/workflows/ci.yml`) runs them on
 the CPU for a push whose commit message says `[test]` (and always for a tag, a pull request
-and a run started by hand), twice: with the newest JAX on Python 3.13 and with the oldest that
-jaxdd supports (JAX 0.4.31, NumPy 1.26, Python 3.11). The main ones:
+and a run started by hand) with the newest JAX on Python 3.13, and for a tag also with the
+oldest that jaxdd supports (JAX 0.4.31, NumPy 1.26, Python 3.11), whose suite takes the CI's
+runner over an hour. The main ones:
 
 | Test | What it checks |
 |---|---|

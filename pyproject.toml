@@ -22,7 +22,8 @@ classifiers = [
     "Programming Language :: Python :: 3.13",
     "Topic :: Scientific/Engineering :: Physics",
 ]
-# The oldest tested: JAX 0.4.31 with NumPy 1.26 (the CI's oldest job; the AMD MI50's image).
+# The oldest tested: JAX 0.4.31 with NumPy 1.26 (the CI's oldest job, on a tag; the AMD MI50's
+# image).
 dependencies = ["jax>=0.4.31", "numpy>=1.26"]
 
 [project.optional-dependencies]

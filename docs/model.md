@@ -310,7 +310,9 @@ The generation profile (`Init_Generation_Profile`) comes in one of three ways, a
   the line through the end points can make `n` or `k` unphysical (`k` negative). `dE_nk` must
   stay below the photon energy of `lambda_max`. A zero shift gives `λ' = λ` exactly and the
   profile without a shift, SIMsalabim's, to the bit, and so are its derivatives in the
-  thicknesses (to round-off where the shifts are traced under `jax.jit`). In JAX the
+  thicknesses where the shifts are known to be zero (the dict as `device_parameters` gives it);
+  where they are traced, the derivatives to round-off (another graph, which XLA may fuse
+  otherwise). In JAX the
   profile is differentiable in the shifts, so that a band gap that moves can move the
   absorption edge with it within a batch; where a `λ'` crosses a data point the derivative
   jumps, and on a data point it is the one for an increasing shift: with data on the 1 nm

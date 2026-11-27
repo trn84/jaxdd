@@ -1,6 +1,6 @@
-# Lint, the test suite on the CPU (the newest and the oldest supported JAX; on a push to a branch
-# only with `[test]` in the commit message), the wheel built and installed on its own; on a tag
-# v*, the tests always and a release with the wheel and the source distribution.
+# Lint, the test suite on the CPU (the newest JAX; on a push to a branch only with `[test]` in the
+# commit message), the wheel built and installed on its own; on a tag v*, the tests always, also
+# with the oldest supported JAX, and a release with the wheel and the source distribution.
 name: CI
 
 on:
@@ -30,26 +30,21 @@ jobs:
       - run: uvx "$RUFF" format --check $(git ls-files '*.py')
 
   # On a push to a branch only where the (last pushed) commit's message says `[test]`; always on
-  # a tag, a pull request and a run started by hand.
+  # a tag, a pull request and a run started by hand. With the newest JAX on Python 3.13, and on a
+  # tag (a release) also with the oldest that pyproject.toml promises: JAX 0.4.31 (the AMD MI50's
+  # image) and NumPy 1.26 on Python 3.11, whose suite takes the runner's four CPUs over an hour
+  # (78 minutes; the newest's 11 to 22).
   tests:
     name: tests (${{ matrix.name }})
     if: >-
       github.event_name != 'push' || startsWith(github.ref, 'refs/tags/') ||
       contains(github.event.head_commit.message, '[test]')
     runs-on: ubuntu-latest
-    # JAX 0.4.31 takes the suite about 45 minutes on the runner's four CPUs, the newest about 25.
-    timeout-minutes: 90
+    timeout-minutes: 120
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - name: newest
-            python: "3.13"
-            pins: ""
-          # What pyproject.toml promises at least: JAX 0.4.31 (the AMD MI50's image) and NumPy 1.26.
-          - name: oldest
-            python: "3.11"
-            pins: "jax==0.4.31 jaxlib==0.4.31 numpy==1.26.4 scipy==1.11.4"
+        include: ${{ fromJSON(startsWith(github.ref, 'refs/tags/') && '[{"name":"newest","python":"3.13","pins":""},{"name":"oldest","python":"3.11","pins":"jax==0.4.31 jaxlib==0.4.31 numpy==1.26.4 scipy==1.11.4"}]' || '[{"name":"newest","python":"3.13","pins":""}]') }}
     env:
       JAX_PLATFORMS: cpu
       # A worker keeps every program it compiled unless the caches are emptied after each test:

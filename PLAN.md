@@ -70,24 +70,29 @@ describe it. In order of effort:
   reproduced from its published parameters, and the structure of Verschraegen and Burgelman (Thin
   Solid Films 515, 6276 (2007)) within the difference their refinement makes.
 
-### 3.3 The start of ions near their sites' saturation
+### 3.3 A voltage far from the last one, with ions near their sites' saturation
 
 With sites for little more than the ions there are (4e24 m⁻³ of ions on 6e24 sites, the cell of
-`tests/test_chargetransport.py`), the first voltage does not converge within 200 Newton steps,
-in the dark or the light, with 3.6e24 to 4.4e24 of ions alike. With 2e25 sites and more it does.
+`tests/test_chargetransport.py`), a voltage 0.9 V from the last converged one does not converge
+within 200 Newton steps; in steps of 0.3 V and less every voltage does, in at most 9, and with
+2e25 sites the 0.9 V do. A voltage that fails approached again through voltages between, from
+the last converged solution: for the devices that failed only, as `solve_batch`'s second pass
+is, so that a batch without them pays nothing.
 
-**Done when** that cell converges with 5e24 to 1e25 sites, on the CPU and the GPU, the other
-cells' steps and the benchmarks' throughput unchanged.
+**Done when** that cell reaches 0.9 V from 0 V with 5e24 to 1e25 sites, the other cells' steps
+and the benchmarks' throughput unchanged.
 
-### 3.4 Poisson's start on a GPU with 2000 points and more
+### 3.4 Poisson's start of one device alone on a GPU
 
-JAX's tridiagonal solve on an NVIDIA GPU (cuSPARSE) loses every digit on a grid of 2000 points
-(docs/solver.md, "Why a Poisson-only start"), so Poisson's start converges only linearly there
-and stops at `max_iter` on a large grid. A scalar Thomas sweep of jaxdd's own in its place, as
-the block sweep is for Newton.
+JAX's tridiagonal solve of a single system on an NVIDIA GPU (cuSPARSE) loses its digits at some
+sizes where the matrix is barely diagonally dominant (docs/solver.md, "Why a Poisson-only
+start"); in a batch of two or more it does not. Poisson's start of one device on such a grid
+then converges only linearly on a GPU (the solution Newton reaches is the same). A solve that
+does not depend on the batch: jaxdd's own sweep for Poisson's system too, or the single system
+solved as a batch; and the case reported to JAX.
 
-**Done when** Poisson's start takes the CPU's steps on a 2000-point grid on the GPU, and the
-benchmarks' throughput is unchanged.
+**Done when** Poisson's start of one device takes the CPU's steps on a 2000-point grid on the
+GPU, and the benchmarks' throughput is unchanged.
 
 ## 4 Not planned
 

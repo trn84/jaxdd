@@ -137,7 +137,7 @@ def test_poissons_start_with_many_ions_converges(ions, sites) -> None:
     sites: with the normalisations' change in its step and the step damped as a whole it reaches
     its stop (a step of 1e-8 `V_T`) within 25 steps, so that the start does not depend on the
     iteration cap (docs/solver.md, "Why a Poisson-only start"). On 1000 points: on a GPU JAX's
-    tridiagonal solve loses its digits on 2000."""
+    tridiagonal solve of a single system loses its digits on 2000."""
     import jax
 
     from jaxdd.batch import _initial, _poisson_solve, _unbounded

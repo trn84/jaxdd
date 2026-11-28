@@ -116,12 +116,14 @@ undoes, and Poisson walks at the cap (Ex103's cell, below, takes 201 steps, and 
 `validation/hard.py`'s devices do not reach the stop in 400); scaled to 10 `V_T` alone, 308 of
 those devices do not. So damped, Poisson converges in 12–15 steps on ChargeTransport.jl's cells,
 in at most 15 on 1536 of `validation/bench.py`'s devices with ions (8 on average) and 19 on 1024
-of `hard.py`'s (10). On an NVIDIA GPU JAX's tridiagonal solve (cuSPARSE; JAX 0.12.0.1) loses
-every digit on a 2000-point grid (a 2001-point Laplacian to 1 relative, 1500 points to 7e-12),
-so there Poisson converges only linearly, ChargeTransport.jl's cells (2000 points) in 99 to 243
-steps; Newton then takes the CPU's steps. The same solve with two right-hand sides at once
-takes 140 times one with one there (8192 systems of 400 points, RTX 4070 Ti SUPER), so the
-slots' columns are solved one by one.
+of `hard.py`'s (10). On an NVIDIA GPU JAX's tridiagonal solve of a single system (cuSPARSE;
+JAX 0.12.0.1) loses its digits at some sizes where the matrix is barely diagonally dominant (a
+Laplacian of 1800 or 2001 points to 1 relative, of 1500 or 4000 to 1e-11; with a diagonal of 3
+in place of 2, to 6e-14), in a batch of two or more it does not: ChargeTransport.jl's cells
+(2000 points) take 99 to 243 Poisson steps there alone, the one with 4e24 m⁻³ of ions 118 as a
+batch of one and the CPU's 13 in a batch of two; Newton takes the CPU's steps either way. The same solve with two
+right-hand sides at once takes 140 times one with one there (8192 systems of 400 points, RTX
+4070 Ti SUPER), so the slots' columns are solved one by one.
 
 **Why charged bulk traps start neutral.** With charged bulk traps of a density close to the free
 carriers' (3.9e21 m⁻³ at mid-gap in a 500 nm absorber), coupled Newton from that start does not

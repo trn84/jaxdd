@@ -56,11 +56,9 @@ from jaxdd.solver import (
     _ion_logs,
     _ion_setup,
     _ions_on_grid,
-    _on_points,
     _point_logs,
     _point_rates,
-    _poisson_jac,
-    _poisson_val,
+    _poisson_delta,
     _recombination,
     _scaled_ions,
     _slot_columns,
@@ -493,16 +491,7 @@ def _poisson_solve(y, d, s, ion, Vint, max_iter):
 
     def body(carry):
         y, _, it = carry
-        full = _full(bounds, y)
-        V = full[:, 0]
-        la, lc = _point_logs(_ion_logs(V, ion), ion)
-        args = (_on_points(s), Vt, full[:-2], full[1:-1], full[2:], la, lc)
-        F = _poisson_val(V[:-2], V[1:-1], V[2:], *args)
-        lo, mid, up = _poisson_jac(V[:-2], V[1:-1], V[2:], *args)
-        dV = jax.lax.linalg.tridiagonal_solve(
-            lo.at[0].set(0.0), mid, up.at[-1].set(0.0), -F[:, None]
-        )[:, 0]
-        dV = jnp.clip(dV, -STEP_CAPS[0] * Vt, STEP_CAPS[0] * Vt)
+        dV = _poisson_delta(_full(bounds, y), s, ion, Vt)
         shift = dV / Vt
         return y + jnp.stack([dV, shift, -shift], axis=-1), jnp.max(jnp.abs(shift)), it + 1
 
@@ -845,8 +834,9 @@ def _newton_loop(y, logs, d, s, ion, Vint, g_frac, B, tol, max_iter, strict, vin
         return y, logs, size_hist, J_hist, it, done, branch
 
     def cond(carry):
-        *_, it, done, _ = carry
-        return (~done) & (it < max_iter)
+        _, _, size_hist, _, it, done, _ = carry
+        # A step that is not a number ends the loop: no later one is (the iterate is lost).
+        return (~done) & (it < max_iter) & ~jnp.isnan(size_hist[-1])
 
     if not contacts:
         branch0 = jnp.zeros(4)
@@ -888,10 +878,10 @@ def _start(d0, s0, ion0, first0, g_frac, B, tol, start_iter, strict=False):
     already. Poisson's solution; with charged bulk traps from there the solution with them
     neutral (`solver.solve_jv`); Boltzmann's ions' solution, and where that does not converge
     and the device has mobile ions, the same through `ION_DENSITY_STAGES` (from Poisson's start
-    a share of the ions, each stage from the last; a device with many ions cycles from Poisson's
-    start, docs/solver.md); with ions bounded by their sites from there the bounded ions'
-    solution, else solved from Poisson's with the bounded ions. A device that converges at once
-    takes no stage: they skip (`_newton_solve`)."""
+    a share of the ions, each stage from the last; from a start far off Newton can cycle on a
+    device with many ions, docs/solver.md); with ions bounded by their sites from there the
+    bounded ions' solution, else solved from Poisson's with the bounded ions. A device that
+    converges at once takes no stage: they skip (`_newton_solve`)."""
     bounds = _bounds(d0, first0)
 
     def poisson_start(s_, ion_):
@@ -912,15 +902,24 @@ def _start(d0, s0, ion0, first0, g_frac, B, tol, start_iter, strict=False):
     y_f, logs_f, _, ok_f, _ = solve(y, logs, s0, ion0)
     mobile = jnp.any(jnp.concatenate([ion0["a_totals"], ion0["c_totals"]]) > 0)
     done = ok_f | ~mobile
+
+    def finite(y_, logs_):
+        return jnp.all(jnp.isfinite(y_)) & jnp.all(jnp.isfinite(logs_))
+
     y_c, logs_c, before = y, logs, 1.0
     for share in ION_DENSITY_STAGES:
         s_k, ion_k = _scaled_ions(s0, ion0, share)
         logs_c = logs_c + jnp.log(share / before)  # Boltzmann's normalisations, with the number
-        y_c, logs_c, _, ok_c, _ = solve(y_c, logs_c, s_k, ion_k, skip=done)
+        y_k, logs_k, _, ok_c, _ = solve(y_c, logs_c, s_k, ion_k, skip=done)
+        # A stage that ends without a number is no start: the next one starts where it did.
+        kept = finite(y_k, logs_k)
+        y_c, logs_c = jnp.where(kept, y_k, y_c), jnp.where(kept, logs_k, logs_c)
         before = share
     staged = ~done & ok_c  # converged through the stages (a skipping device reports so too)
-    y = jnp.where(staged, y_c, y_f)
-    logs = jnp.where(staged, logs_c, logs_f)
+    # Boltzmann's solution or last iterate; Poisson's where that iterate is not a number.
+    kept = finite(y_f, logs_f)
+    y = jnp.where(staged, y_c, jnp.where(kept, y_f, y))
+    logs = jnp.where(staged, logs_c, jnp.where(kept, logs_f, logs))
     ok = ok_f | staged
     if "a_inv" in sb:
         # From Boltzmann's solution or last iterate, and where that bounded solve fails, from

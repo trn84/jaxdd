@@ -30,6 +30,17 @@ Devices at several temperatures (PLAN.md §1 of 0.5.0):
 
 ### Fixed
 
+- **The start of a device with many mobile ions no longer depends on round-off or on
+  `max_iter`.** Poisson's start held the ions' normalisations in its Jacobian, so with many ions
+  (4e24 m⁻³ and more) it crawled, never reached its stop and was whichever iterate `max_iter`
+  selected; coupled Newton from there walked at its step caps, and the last bit decided whether
+  it converged (`tests/test_chargetransport.py`'s cell with 4e24 ions on 2e25 sites: 9 of 12
+  runs with the generation moved by 1e-13 on JAX 0.12.1, 12 of 12 now, on JAX 0.4.31, 0.12.0.1
+  and 0.12.1). Poisson's step now has the normalisations' change with the potential (a bordered
+  tridiagonal system) and is damped as a whole; it converges in 12–15 steps there, and Newton
+  from it in 12. A Newton loop ends at a step that is not a number, and no stage of the start
+  begins from such an iterate. Devices without mobile ions start as before; the benchmarks'
+  throughput is unchanged (docs/solver.md, "Why a Poisson-only start", "Many ions").
 - **docs/model.md, "Interfaces"**: the Scharfetter–Gummel flux across an interface is thermionic
   emission at the effective velocity `ν_int·|x|/(1 − e^(−|x|))`, about `ν_int·ΔE/kT` at a large
   offset, not at `ν_int`; the model was and is SIMsalabim's.

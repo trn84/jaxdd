@@ -96,7 +96,32 @@ function solve_one(device, voltages):                   # voltages ascending
 **Why a Poisson-only start.** The linear initial guess is far from the solution in a device with
 doped layers or ions. A few Newton steps on Poisson's equation alone, with `n ∝ exp(V/V_T)` and
 `p ∝ exp(−V/V_T)` following the potential (SimSS's `Solve_Poisson` does the same), bring the
-potential close before the coupled system starts; it is a scalar tridiagonal solve per step.
+potential close before the coupled system starts; it is a scalar tridiagonal solve per step,
+each point's step held to 10 `V_T` (SimSS's `maxDelV`).
+
+With mobile ions each step re-fits their normalisations to the potential (`_ion_logs`), and its
+Jacobian has their change with it: a normalisation moves every point of its region, so the
+tridiagonal system is bordered by the K slots and solved as Newton's
+([below](#the-bordered-system), on a scalar tridiagonal; `solver._poisson_delta`). With the
+normalisations held in the Jacobian the ions would screen every change of the potential that the
+re-fit then undoes: with 4e24 m⁻³ of ions the step falls by 0.3 % per iteration (0.03 `V_T`
+after 200), the start never reaches its stop (a step of 1e-8 `V_T`) and is whichever iterate
+`max_iter` selects, and coupled Newton from there walks at its caps for tens to hundreds of
+steps, round-off deciding whether it converges. Such a step moves the potential of a region as
+a whole, so it is damped as a whole, its direction kept: scaled so that its largest entry `m`
+becomes `V_T·ln(1 + m/V_T)`, at most 10 `V_T`, as far as the charge, exponential in the
+potential, follows its linearisation (near the solution the factor is `1 − m/(2V_T)`, and Newton
+stays quadratic). Clipped point by point it breaks the ions' number, which the next re-fit
+undoes, and Poisson walks at the cap (Ex103's cell, below, takes 201 steps, and 260 of 1024 of
+`validation/hard.py`'s devices do not reach the stop in 400); scaled to 10 `V_T` alone, 308 of
+those devices do not. So damped, Poisson converges in 12–15 steps on ChargeTransport.jl's cells,
+in at most 15 on 1536 of `validation/bench.py`'s devices with ions (8 on average) and 19 on 1024
+of `hard.py`'s (10). On an NVIDIA GPU JAX's tridiagonal solve (cuSPARSE; JAX 0.12.0.1) loses
+every digit on a 2000-point grid (a 2001-point Laplacian to 1 relative, 1500 points to 7e-12),
+so there Poisson converges only linearly, ChargeTransport.jl's cells (2000 points) in 99 to 243
+steps; Newton then takes the CPU's steps. The same solve with two right-hand sides at once
+takes 140 times one with one there (8192 systems of 400 points, RTX 4070 Ti SUPER), so the
+slots' columns are solved one by one.
 
 **Why charged bulk traps start neutral.** With charged bulk traps of a density close to the free
 carriers' (3.9e21 m⁻³ at mid-gap in a 500 nm absorber), coupled Newton from that start does not
@@ -117,31 +142,33 @@ first solved at its first voltage with Boltzmann's ions, then with the bounded o
 Where the bound changes the solution much (ions piled by Boltzmann's 50–80 times beyond their
 sites, at a few times their mean density in sites) that second solve may not converge; it is
 then solved again from Poisson's solution with the bounded ions, which is closer. The bounded
-solve starts from Boltzmann's solution, or its last iterate where that did not converge, and a
-bounded solution that converges either way is the start. Devices without sites skip all of it,
+solve starts from Boltzmann's solution, or its last iterate where that did not converge (from
+Poisson's where that iterate is not a number), and a bounded solution that converges either way
+is the start. Devices without sites skip all of it,
 to the bit. The normalisations of a start (`_ion_logs`) are the bounded ions' too, by a few
 Newton steps on their number from Boltzmann's closed form. `solve_states`, `solve_batch` and
 `solve_transient`'s steady state at its first step take the same start (`batch._start`; the
 single-device solver its own, `_scan`, the same steps).
 
 **Many ions.** Where the mobile ions far outnumber the doping (ChargeTransport.jl's Ex103 cell,
-1.6e25 m⁻³ of vacancies against 1e24 of doping, `tests/test_chargetransport.py`), Newton from
-Poisson's start does not converge even in equilibrium, with Boltzmann's ions or bounded ones:
-the ions' normalisation steps by its cap, +5 and −5 in turn, and the potential by its 10 `V_T`
-at every step, a cycle (a step in `ln C` multiplies the ions' charge, which the potential
-overshoots). With a sixty-fourth of them it converges, and from there with four times as many,
-and so on (`ION_DENSITY_STAGES`: 1/64, 1/16, 1/4, 1 of every ion's density, mobile and fixed
-alike, so that each layer stays neutral; each stage from the last, its normalisations raised
-with the number): Ex103's cell in 21, 22, 7 and 4 steps, then 3 to its sites. A device takes
-the stages only where Boltzmann's ions do not converge at once and it has mobile ions; the
-others skip them (`_newton_solve(..., skip=)`: under `vmap` a skipping device costs nothing, and
-where every device skips the loop takes no step). Where the start is the solution already the
-pre-bias's solve takes no step either (its derivatives are the solution's, `_converged_jvp`), so
-a batch that needs no stage pays nothing for them (`validation/hard.py 4096 4096`, RTX 4070 Ti
-SUPER: 585 curves/s and 5.23 Newton steps per voltage with and without). With 4e24 m⁻³ of ions
-(Boltzmann's needs 30–70 steps there) Boltzmann's start alone fails on a GPU in about one run of
-two, round-off deciding where its Newton ends; the stages converge in every run, a cold start at
-−0.3 V too.
+1.6e25 m⁻³ of vacancies against 1e24 of doping, `tests/test_chargetransport.py`), Newton
+converges from Poisson's start with Boltzmann's ions in 12 steps in the light and 1 to 4 in the
+dark, then in 3 to the ions' sites; with 4e24 m⁻³ on 2e25 sites in 12 and 4, on JAX 0.4.31,
+0.12.0.1 and 0.12.1 alike, and with the generation moved by 1e-13 too. From a start further off
+Newton can
+cycle: the ions' normalisation steps by its cap, +5 and −5 in turn, and the potential by its
+10 `V_T` at every step (a step in `ln C` multiplies the ions' charge, which the potential
+overshoots). So a device with mobile ions whose Boltzmann's solve does not converge at once
+takes stages: a sixty-fourth of the ions, from there four times as many, and so on
+(`ION_DENSITY_STAGES`: 1/64, 1/16, 1/4, 1 of every ion's density, mobile and fixed alike, so
+that each layer stays neutral; each stage from the last, its normalisations raised with the
+number); a stage that ends without a number (an iterate lost to overflow) is no start, and the
+next one starts where it did, as the bounded solve starts from Poisson's where Boltzmann's last
+iterate is none. ChargeTransport.jl's cells take no stage. The others skip them
+(`_newton_solve(..., skip=)`: under `vmap` a skipping device costs nothing, and where every
+device skips the loop takes no step). Where the start is the solution already the pre-bias's
+solve takes no step either (its derivatives are the solution's, `_converged_jvp`), so a batch
+that needs no stage pays nothing for them.
 
 **Why extrapolate.** Along a J-V curve the solution changes smoothly with the voltage. Starting
 each voltage from the linear extrapolation of the last two solutions (SIMsalabim's
@@ -526,6 +553,10 @@ shortcuts: together they save about a quarter of the Newton steps (2.60 per volt
 of 3.51). Checked against `strict=True` on 2014 devices of a perovskite parameter table and the
 ion cases, they change `J` by at most 1.2e-10 of the generation current, in the median by 4e-12
 (`validation/shortcuts.py`).
+
+A step that is not a number ends the loop too, unconverged: the iterate is lost (an overflow
+far from the solution), no later step is a number, and a batch would pay each of them to
+`max_iter`.
 
 ### A floor above 1e-6
 

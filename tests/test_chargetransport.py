@@ -131,8 +131,25 @@ def test_steady_states_with_sites_are_chargetransport_jl(ions, sites) -> None:
 
 
 #: The voltage steps: ions, sites, the step (V); the ions' mobility the reference's 1e-12 m²/Vs.
-#: 1.6e25 on 1e27 sites is Ex103's own cell, which needs the start's stages in the ions' density
-#: (`batch._start`).
+@pytest.mark.parametrize("ions, sites", [(4e24, 2e25), (1.6e25, 1e27)])
+def test_poissons_start_with_many_ions_converges(ions, sites) -> None:
+    """Poisson's start (`batch._poisson_solve`) with many ions, Boltzmann's and bounded by their
+    sites: with the normalisations' change in its step and the step damped as a whole it reaches
+    its stop (a step of 1e-8 `V_T`) within 25 steps, so that the start does not depend on the
+    iteration cap (docs/solver.md, "Why a Poisson-only start"). On 1000 points: on a GPU JAX's
+    tridiagonal solve loses its digits on 2000."""
+    import jax
+
+    from jaxdd.batch import _initial, _poisson_solve, _unbounded
+
+    d = jax.tree_util.tree_map(lambda a: a[0], prepare([device(ions, sites, 1.0, NP=1000)]))
+    y0 = _initial(d, 0.0)[1:-1]
+    for s, ion in ((d["s"], d["ion"]), _unbounded(d["s"], d["ion"])):
+        short, long = (np.asarray(_poisson_solve(y0, d, s, ion, 0.0, k)) for k in (25, 200))
+        assert np.array_equal(short, long)
+
+
+#: 1.6e25 on 1e27 sites is Ex103's own cell.
 STEPS = ((1e24, 1e25, 1.0), (4e24, 2e25, 0.6), (4e24, 2e25, 1.0), (1.6e25, 1e27, 1.0))
 
 

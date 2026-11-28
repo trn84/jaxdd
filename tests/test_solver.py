@@ -2110,3 +2110,21 @@ def test_the_ions_blocks_in_time_are_autodiff(dti: float) -> None:
         assert np.max(np.abs(got - ref) / np.maximum(scale, 1e-300)) < 1e-10, name
     Ul = np.asarray(jax.jacfwd(residual, argnums=1)(full[1:-1], logs))
     assert np.max(np.abs(np.asarray(U) - Ul)) < 1e-10 * max(np.max(np.abs(Ul)), 1e-300)
+
+
+def test_newton_ends_at_a_step_that_is_not_a_number() -> None:
+    """A Newton loop whose iterate is lost ends there, unconverged, not at `max_iter`: no later
+    step is a number either, and a batch would pay every one of them (`batch._newton_loop`)."""
+    from jaxdd.batch import BERNOULLI, _initial, _newton_solve, prepare
+    from jaxdd.solver import _ion_logs
+
+    dev = build_device(read_setup(DATA / "steady_1e17_thin_light" / "simulation_setup.txt"))
+    d = jax.tree_util.tree_map(lambda a: a[0], prepare([dev]))
+    full = _initial(d, 0.0)
+    y, logs = full[1:-1], _ion_logs(full[:, 0], d["ion"])
+    solve = jax.jit(lambda y: _newton_solve(y, logs, d, d["s"], d["ion"], 0.0, d["g_frac"],
+                                            BERNOULLI["exact"], 1e-10, 50))  # fmt: skip
+    *_, ok, it = solve(y)
+    assert bool(ok) and 1 < int(it) < 50
+    *_, ok, it = solve(y.at[7, 1].set(jnp.nan))
+    assert not bool(ok) and int(it) == 1

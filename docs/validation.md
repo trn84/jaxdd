@@ -430,10 +430,9 @@ so that the solver is never the larger error in what is computed from it.
   itself (−160.074 against −160.072 A/m² at short circuit). What is left is the two grids':
   refined (2017 nodes, 0.02 nm at the interfaces; jaxdd's 4000) spiro's falls to 0.3 % and the
   potential to 0.06 mV. Ex103's own cell, 1.6e25 m⁻³ of vacancies (1.6e19 cm⁻³, four times
-  `hard.py`'s largest) on its 1e27 sites, which jaxdd's steady state reaches only through the
-  start's stages in the ions' density (docs/solver.md, "Many ions"), agrees as well: the vacancies
-  to 0.1 % (their peak 2.78e25 against 2.78e25 in equilibrium), `n` and `p` to 0.1–3 %, the
-  potential to 0.8 mV, the current to 2e-5–4e-4.
+  `hard.py`'s largest) on its 1e27 sites (docs/solver.md, "Many ions"), agrees as well: the
+  vacancies to 0.1 % (their peak 2.78e25 against 2.78e25 in equilibrium), `n` and `p` to 0.1–3 %,
+  the potential to 0.8 mV, the current to 2e-5–4e-4.
 
   **The carriers' statistics** (docs/model.md): the same cell with its transport
   layers doped 3e25 m⁻³ against their `N_c` of 5e25 (degenerate, the Fermi level 0.3 eV within
@@ -854,7 +853,7 @@ runner over an hour. The main ones:
 | `tests/test_steric.py` | ions bounded by their sites: Boltzmann's curve to the bit without sites and to 1e-10 with 1e35 m⁻³; at 10–100× the mean density no density above the sites, one electrochemical potential over the layer, the number kept; the start's normalisation; the blocks against autodiff in saturation; batch against one device, frozen against free at the pre-bias; the gradient in `N_max`; a hard device that cycled from Poisson's start converges from Boltzmann's; in time with sites at 1e35 Boltzmann's transient to 1e-9 with either ion flux, with 1e26 not, the modified drift without sites Boltzmann's to the bit; refused below the mean density |
 | `tests/test_impedance.py` | impedance: at 1e-7 Hz the steady slope to 1e-5, with and without ions; at 1e14 Hz the geometric capacitance; with `dt` `solve_transient`'s response to a small sine to 1e-7 (ions 1e-6), dark and lit; the series resistance and the shunt; interface traps against the transient's sine to 1e-7, dark and lit; refused at a free end |
 | `tests/test_statistics.py` | the carriers' statistics: TeSCA's `F_{1/2}` within 1 % of the integral, its inverse and `w`'s derivative, Blakemore's; the Jacobian with them against autodiff, row by row to 1e-12, a blocking contact's Newton, a degenerate layer's interface traps and a free end included; in the dark at 0 V each carrier's quasi-Fermi level flat to 1e-9 V with interface traps and free surfaces (with Boltzmann's `n_t0` at the interface traps not); Boltzmann's the default |
-| `tests/test_chargetransport.py` | ions bounded by their sites against ChargeTransport.jl's Ex103 cell (1e24 on 1e25 sites, 4e24 on 2e25, and Ex103's own 1.6e25 on 1e27): equilibrium, dark and lit steady states, the densities, ions, potential and current on its nodes; voltages' steps in time on its times, the current, three states and the steady end, with the electrochemical flux and the modified drift; degenerate transport layers with Fermi–Dirac's and Blakemore's statistics, steady and after a voltage's step |
+| `tests/test_chargetransport.py` | ions bounded by their sites against ChargeTransport.jl's Ex103 cell (1e24 on 1e25 sites, 4e24 on 2e25, and Ex103's own 1.6e25 on 1e27): equilibrium, dark and lit steady states, the densities, ions, potential and current on its nodes; Poisson's start with 4e24 and 1.6e25 converged within 25 steps, whatever the cap; voltages' steps in time on its times, the current, three states and the steady end, with the electrochemical flux and the modified drift; degenerate transport layers with Fermi–Dirac's and Blakemore's statistics, steady and after a voltage's step |
 | `test_the_block_sweep_solves_the_block_tridiagonal_system` | the sweep against a dense solve |
 | `test_short_circuit_current_never_exceeds_the_generation` | an invariant |
 | `test_bernoulli_*` | finite value and derivative at 0, `B(−x) = B(x) + x`, SimSS's series within its own error |

@@ -274,7 +274,9 @@ def test_gradients_in_the_laws_away_from_the_reference_are_finite_differences() 
     energies (`N_c`, the mobilities, the capture coefficients of the bulk and the interfaces,
     `ν_int`) and the gap's slope and share, the levels and work functions following mid-gap:
     through `device_tree` and `solve_batch`, against central finite differences along a random
-    direction."""
+    direction. Their step is 1e-4: the curves are converged to about 1e-10, which a step of 1e-6
+    turns into 1e-6 of the difference (it differs from one start to another; on a GPU from run
+    to run), and at 1e-4 the difference's own error is 4e-9."""
     structure, p = parameters("pin_iface_light")
     V = np.round(np.arange(-0.1, 0.95 + 1e-9, 0.05), 6)
     w = jnp.asarray(np.random.default_rng(0).normal(size=len(V)))
@@ -294,7 +296,7 @@ def test_gradients_in_the_laws_away_from_the_reference_are_finite_differences() 
     a0 = jnp.ones(7)
     direction = jnp.asarray(np.random.default_rng(1).normal(size=7))
     by_grad = float(jax.grad(loss)(a0) @ direction)
-    h = 1e-6
+    h = 1e-4
     fd = (float(loss(a0 + h * direction)) - float(loss(a0 - h * direction))) / (2 * h)
     assert abs(by_grad - fd) < 1e-6 * abs(fd)
 

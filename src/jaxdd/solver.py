@@ -1751,20 +1751,60 @@ def _noise_step(y, logs, bounds, s, ion, Vt, g_frac, bernoulli_name="exact"):
     return jnp.maximum(jnp.max(jnp.abs(X[:, 0])) / Vt, jnp.max(jnp.abs(X[:, 1:]) * weight))
 
 
-@jax.jit
-def _poisson_step(y, bounds, s, ion, Vt):
-    """One Newton step of Poisson's equation alone; the densities follow the potential, the
-    mobile ions' normalisations are re-fitted to it (held during the step)."""
-    full = jnp.concatenate([bounds[0][None], y, bounds[1][None]])
+_poisson_ion_jac = jax.vmap(jax.jacfwd(_poisson_row, argnums=(8, 9)), in_axes=_P_AXES)
+
+
+def _poisson_delta(full, s, ion, Vt, coupled=True):
+    """Newton's step in the potential of Poisson's equation alone at `full` (NP + 2 × 3): the
+    densities follow the potential, the mobile ions' normalisations are re-fitted to it
+    (`_ion_logs`). Without mobile ions each point's step held to 10 V_T, as SimSS's `maxDelV`.
+
+    With mobile ions the step has the normalisations' change with the potential: each moves
+    every point of its region, so the tridiagonal Jacobian is bordered by the slots and solved
+    as Newton's (Sherman–Morrison–Woodbury, docs/solver.md). Held in the Jacobian, the ions
+    would screen every change of the potential that their re-fit undoes, and Poisson would
+    crawl. Such a step moves the potential of a region as a whole, so it is damped as a whole,
+    its direction kept: scaled so that its largest entry `m` becomes `V_T·ln(1 + m/V_T)` (at
+    most 10 V_T), as far as the charge, exponential in the potential, follows its
+    linearisation. Clipped point by point it breaks the ions' number, which the next re-fit
+    undoes, and Poisson walks at the cap (docs/solver.md, "Why a Poisson-only start").
+    `coupled` False: a device known to have no mobile ions, the tridiagonal step alone."""
     V = full[:, 0]
-    la, lc = _point_logs(_ion_logs(V, ion), ion)
-    args = (_on_points(s), Vt, full[:-2], full[1:-1], full[2:], la, lc)
+    logs = _ion_logs(V, ion)
+    args = (_on_points(s), Vt, full[:-2], full[1:-1], full[2:], *_point_logs(logs, ion))
     F = _poisson_val(V[:-2], V[1:-1], V[2:], *args)
     lo, mid, up = _poisson_jac(V[:-2], V[1:-1], V[2:], *args)
-    dV = jax.lax.linalg.tridiagonal_solve(lo.at[0].set(0.0), mid, up.at[-1].set(0.0), -F[:, None])[
-        :, 0
-    ]
-    dV = jnp.clip(dV, -STEP_CAPS[0] * Vt, STEP_CAPS[0] * Vt)
+    lo, up = lo.at[0].set(0.0), up.at[-1].set(0.0)
+    dV = jax.lax.linalg.tridiagonal_solve(lo, mid, up, -F[:, None])[:, 0]
+    cap = STEP_CAPS[0] * Vt
+    if not coupled:
+        return jnp.clip(dV, -cap, cap)
+
+    def constraints(V_interior, logs_):
+        return _ion_constraints(jnp.concatenate([V[:1], V_interior, V[-1:]]), logs_, ion)
+
+    U = _slot_columns(jnp.stack(_poisson_ion_jac(V[:-2], V[1:-1], V[2:], *args), -1)[:, None],
+                      ion)[:, 0]  # fmt: skip
+    W, D = jax.jacrev(constraints, argnums=(0, 1))(V[1:-1], logs)  # K × NP, K × K
+    # One column at a time: on a GPU a batched solve of several right-hand sides at once takes
+    # 150 times one of a single one (JAX 0.12, cuSPARSE; docs/solver.md).
+    XU = jnp.concatenate(
+        [jax.lax.linalg.tridiagonal_solve(lo, mid, up, U[:, k, None]) for k in range(U.shape[1])],
+        axis=-1,
+    )
+    z = jnp.linalg.solve(D + jnp.diag(_held(ion)) - W @ XU, -constraints(V[1:-1], logs) - W @ dV)
+    step = dV - XU @ z
+    m = jnp.max(jnp.abs(step)) / Vt
+    safe = jnp.where(m > 0, m, 1.0)
+    step = step * jnp.where(m > 0, jnp.minimum(jnp.log1p(safe), STEP_CAPS[0]) / safe, 1.0)
+    return jnp.where(jnp.any(_slots(ion)[1] > 0), step, jnp.clip(dV, -cap, cap))
+
+
+@functools.partial(jax.jit, static_argnames="coupled")
+def _poisson_step(y, bounds, s, ion, Vt, coupled=True):
+    """One Newton step of Poisson's equation alone (`_poisson_delta`)."""
+    full = jnp.concatenate([bounds[0][None], y, bounds[1][None]])
+    dV = _poisson_delta(full, s, ion, Vt, coupled)
     shift = dV / Vt
     new = y + jnp.stack([dV, shift, -shift], axis=-1)
     return new, jnp.max(jnp.abs(shift))
@@ -1964,8 +2004,8 @@ def _inverse_sites(n_max, size, xp=np):
 
 
 #: The ions' density in the stages of a start that does not converge at once (`_scan`,
-#: `batch._start`), each a share of the device's, its mobile and immobile ions alike: from
-#: Poisson's start Newton cycles on a device with many ions (docs/solver.md, "Many ions").
+#: `batch._start`), each a share of the device's, its mobile and immobile ions alike: from a
+#: start far off Newton can cycle on a device with many ions (docs/solver.md, "Many ions").
 ION_DENSITY_STAGES = (1 / 64, 1 / 16, 1 / 4, 1.0)
 
 
@@ -2113,6 +2153,8 @@ def _scan(dev: Device, voltages, g_frac, tol, max_iter, bernoulli_name):
                                          bernoulli_name)  # fmt: skip
             steps += 1
             sizes.append(float(size))
+            if np.isnan(sizes[-1]):  # no later step is a number either: the iterate is lost
+                return y, logs, False, steps
             recent = sizes[-STALL_STEPS - 1 :]
             done = sizes[-1] < tol or (
                 len(recent) > STALL_STEPS and max(recent) < ROUND_OFF_FLOOR
@@ -2130,9 +2172,13 @@ def _scan(dev: Device, voltages, g_frac, tol, max_iter, bernoulli_name):
                 return y, logs, True, steps
         return y, logs, False, steps
 
+    mobile = bool(
+        np.any(np.asarray(ion["a_totals"]) > 0) or np.any(np.asarray(ion["c_totals"]) > 0)
+    )
+
     def poisson_start(y, s_, ion_):
         for _ in range(max_iter):
-            y, size = _poisson_step(y, bounds_at(first), s_, ion_, dev.Vt)
+            y, size = _poisson_step(y, bounds_at(first), s_, ion_, dev.Vt, coupled=mobile)
             if float(size) < 1e-8:
                 break
         b = bounds_at(first)
@@ -2151,12 +2197,9 @@ def _scan(dev: Device, voltages, g_frac, tol, max_iter, bernoulli_name):
         y_n, logs_n, ok, _ = settle(y, logs, neutral, ion_free, first)
         if ok:
             y, logs = y_n, logs_n
-    mobile = bool(
-        np.any(np.asarray(ion["a_totals"]) > 0) or np.any(np.asarray(ion["c_totals"]) > 0)
-    )
     if mobile or "a_inv" in s:
-        # Boltzmann's ions at once, else through a share of them (`ION_DENSITY_STAGES`: from
-        # Poisson's start a device with many ions cycles, docs/solver.md, "Many ions").
+        # Boltzmann's ions at once, else through a share of them (`ION_DENSITY_STAGES`: from a
+        # start far off Newton can cycle on a device with many ions, docs/solver.md, "Many ions").
         y_f, logs_f, ok, _ = settle(y, logs, s_free, ion_free, first)
         if not ok and mobile:
             y_c, logs_c, before = y, logs, 1.0

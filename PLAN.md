@@ -70,6 +70,25 @@ describe it. In order of effort:
   reproduced from its published parameters, and the structure of Verschraegen and Burgelman (Thin
   Solid Films 515, 6276 (2007)) within the difference their refinement makes.
 
+### 3.3 The start of ions near their sites' saturation
+
+With sites for little more than the ions there are (4e24 m⁻³ of ions on 6e24 sites, the cell of
+`tests/test_chargetransport.py`), the first voltage does not converge within 200 Newton steps,
+in the dark or the light, with 3.6e24 to 4.4e24 of ions alike. With 2e25 sites and more it does.
+
+**Done when** that cell converges with 5e24 to 1e25 sites, on the CPU and the GPU, the other
+cells' steps and the benchmarks' throughput unchanged.
+
+### 3.4 Poisson's start on a GPU with 2000 points and more
+
+JAX's tridiagonal solve on an NVIDIA GPU (cuSPARSE) loses every digit on a grid of 2000 points
+(docs/solver.md, "Why a Poisson-only start"), so Poisson's start converges only linearly there
+and stops at `max_iter` on a large grid. A scalar Thomas sweep of jaxdd's own in its place, as
+the block sweep is for Newton.
+
+**Done when** Poisson's start takes the CPU's steps on a 2000-point grid on the GPU, and the
+benchmarks' throughput is unchanged.
+
 ## 4 Not planned
 
 - **A fused CUDA kernel**: decided against for now; why, and when it comes back, is in
